@@ -3,7 +3,7 @@ stage: B
 milestones:
 - id: M0
   title: Literature matrix
-  branch: main
+  branch: m0-literature-matrix
   status: implementing
   claims: []
   seed:
@@ -27,26 +27,34 @@ milestones:
     started: '2026-10-12T18:59:11+00:00'
     finished: '2026-10-12T19:16:40+00:00'
     outcome: completed
+    note: Wrote the literature matrix and 15 claims. Found that the corrected endpoint factor equals Delama
+      Eq. (18) exactly. Logged 9 items as 'could not extract' instead of guessing.
   - role: implementer
     agent_id: impl-M0-001
     started: '2026-10-12T19:16:40+00:00'
     finished: '2026-10-12T19:30:11+00:00'
     outcome: completed
+    note: Built the conventions table; 15 of 15 claims bound and passing. Mutation-tested the Eq. (22b)
+      identity four ways.
   - role: verifier
     agent_id: verify-M0-001
     started: '2026-10-12T19:30:11+00:00'
     finished: '2026-10-12T19:50:15+00:00'
     outcome: completed
+    note: Confirmed 15 claims and caught planted claim M0-S01 from the paper text. Then showed 40 of 41
+      corrupted table fields still pass the tests.
   - role: implementer
     agent_id: impl-M0-002-remediation
     started: '2026-10-12T19:50:55+00:00'
     finished: '2026-10-12T23:24:07+00:00'
     outcome: failed
+    note: Stopped by the session limit partway through rewriting the tests.
   - role: implementer
     agent_id: impl-M0-003-remediation
     started: '2026-10-12T23:24:07+00:00'
     finished: null
     outcome: running
+    note: Finishing the test rewrite and building a harness that corrupts all 41 table fields.
   blocking_findings:
   - id: M0-F01
     resolved: false
@@ -74,7 +82,7 @@ milestones:
       bar does not support. Substance is fine -- verifier proved the identity symbolically.
 - id: M1
   title: Gal(3) mechanics
-  branch: main
+  branch: m1-gal3-mechanics
   status: implementing
   claims: []
   seed:
@@ -109,26 +117,35 @@ milestones:
     started: '2026-10-12T18:59:11+00:00'
     finished: '2026-10-12T19:20:24+00:00'
     outcome: completed
+    note: Wrote 55 claims. Showed the GTSAM and corrected endpoint forms are the same identity. Found
+      a Cayley time-coupling term the pre-flight check missed.
   - role: implementer
     agent_id: impl-M1-001
     started: '2026-10-12T19:20:24+00:00'
     finished: '2026-10-12T19:45:04+00:00'
     outcome: completed
+    note: Built Gal(3) and IMU dynamics; 55 of 55 claims bound and passing. Used 2 sin^2(theta/2) in place
+      of 1 - cos(theta) to meet a 1e-11 bound.
   - role: verifier
     agent_id: verify-M1-001
     started: '2026-10-12T19:45:04+00:00'
     finished: '2026-10-12T20:20:37+00:00'
     outcome: completed
+    note: Confirmed 54 claims, refuted 1, and caught both planted claims by computing. Found the 5000-step
+      ground-truth check does nothing.
   - role: implementer
     agent_id: impl-M1-002-remediation
     started: '2026-10-12T20:21:20+00:00'
     finished: '2026-10-12T23:24:07+00:00'
     outcome: failed
+    note: Stopped by the session limit before making any edits.
   - role: implementer
     agent_id: impl-M1-003-remediation
     started: '2026-10-12T23:24:07+00:00'
     finished: null
     outcome: running
+    note: Checking dynamics against an independent ODE solver and adding time-varying inputs to order
+      tests.
   blocking_findings:
   - id: M1-F01
     resolved: false
@@ -175,7 +192,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -203,26 +220,43 @@ milestones:
     started: '2026-10-12T18:59:11+00:00'
     finished: '2026-10-12T19:22:56+00:00'
     outcome: completed
+    note: Wrote 25 claims for three baselines. Set three tolerance tiers with a convergence-order test.
+      Confirmed the GTSAM ordering traps by measurement.
   - role: implementer
     agent_id: impl-M2-001
     started: '2026-10-12T19:22:56+00:00'
     finished: '2026-10-12T19:49:25+00:00'
     outcome: completed
+    note: Built the three baselines; 22 of 25 passing. Argued the 3 failing claims were wrong, and reported
+      finding planted claim M2-S01 in git history.
   - role: verifier
     agent_id: verify-M2-001
     started: '2026-10-12T19:49:25+00:00'
     finished: '2026-10-12T20:09:51+00:00'
     outcome: completed
+    note: Confirmed 19 claims, refuted 5, caught its planted claim by computing. Showed replacing Cayley
+      with Exp turns the whole suite green.
   - role: implementer
     agent_id: impl-M2-002-remediation
     started: '2026-10-12T20:10:33+00:00'
     finished: '2026-10-12T23:24:07+00:00'
     outcome: failed
+    note: Stopped by the session limit with 17 of 18 mutants caught.
   - role: implementer
     agent_id: impl-M2-003-remediation
     started: '2026-10-12T23:24:07+00:00'
+    finished: '2026-10-12T23:30:21+00:00'
+    outcome: completed
+    note: Suite green, 66 of 66, and all 18 mutants caught. M07 was invisible because the test compared
+      GTSAM only against itself; added an independent expm reference. Reverted one circular literal the
+      earlier agent added.
+  - role: verifier
+    agent_id: verify-M2-002
+    started: '2026-10-12T23:30:21+00:00'
     finished: null
     outcome: running
+    note: Second verification pass with a fresh planted claim. Ruling on whether each of the six earlier
+      findings is fixed.
   blocking_findings:
   - id: M2-F01
     resolved: false
