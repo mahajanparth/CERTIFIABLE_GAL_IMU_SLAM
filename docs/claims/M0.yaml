@@ -41,10 +41,14 @@ claims:
   kind: DERIVED
   test_hint: 'Draw 1e4 independent samples: R_i, R_j, dRbar uniform on SO(3) (scipy Rotation.random);
     J^R a 3x3 standard-normal matrix (it need NOT be a valid Jacobian for the identity to hold); b_g,
-    bbar_g standard-normal 3-vectors. Compute both expressions and assert max elementwise abs difference
-    < 1e-12. Observed here: 3.6e-15. If this fails, the lifting in Eq. (28) is NOT exact and every downstream
-    QCQP claim is void.'
+    bbar_g standard-normal 3-vectors; repeat with J^R and both biases scaled by 1, 1e-8 and 1e4. Compute
+    both expressions and assert the max elementwise difference, RELATIVE to max(1, max elementwise |Eq.
+    (19)|) per draw, is < 1e-12. The bar must be relative: the absolute floating-point difference grows
+    with |J^R||b_g| (4.8e-7 at the 1e4 scale) while the relative one stays at machine level. If this fails,
+    the lifting in Eq. (28) is NOT exact and every downstream QCQP claim is void.'
   domain: Pure algebra -- holds for arbitrary 3x3 J^R and arbitrary b_g; no small-angle or chart restriction.
+    The 1e-12 bar is relative to max(1, max|Eq. (19)|), since an absolute bar cannot hold at arbitrary
+    scale in floating point.
   verdict: CONFIRMED
   attack: see docs/verification/m0-literature-matrix.md
 - id: M0-C04
@@ -222,13 +226,15 @@ claims:
   source: GTSAM galileanimufactor Eqs. (15), (16), (17)
   kind: VERIFIED-PUBLISHED
   test_hint: params = PreintegrationParams.MakeSharedU(9.81) (gives g = [0,0,-9.81]); build PreintegratedImuMeasurementsG
-    at a nonzero bias; integrate >= 50 samples with nonzero acc and omega over dt_ij ~ 0.5 s. X_j = pim.predict(X_i,
-    bias) for a nontrivial X_i with nonzero velocity. Assert norm(X_j.localCoordinates(W.compose(phi).compose(U)))
-    < 1e-12 (observed 9.4e-17) AND norm(X_j.localCoordinates(W.compose(X_i).compose(U))) > 1e-2 (observed
-    0.229). The second assertion is what makes the claim falsifiable -- without it a trivially-equal U
-    would pass.
-  domain: Inertial navigation frame (omegaCoriolis unset). The rotating-frame form is eq (47) and is out
-    of Stage B scope. W_ij uses NavState(R, p, v) argument order.
+    at a nonzero bias; integrate >= 50 samples with nonzero acc and omega over the dt_ij the domain pins.
+    X_j = pim.predict(X_i, bias) for a nontrivial X_i whose velocity satisfies the domain's floor. Assert
+    norm(X_j.localCoordinates(W.compose(phi).compose(U))) <= 1e-12 AND norm(X_j.localCoordinates(W.compose(X_i).compose(U)))
+    > 1e-2. The second error is exactly ||v_i|| * dt_ij, which is why the domain pins both; it is what
+    makes the claim falsifiable -- without it a trivially-equal U would pass.
+  domain: 'Inertial navigation frame (omegaCoriolis unset); the rotating-frame form is eq (47) and is
+    out of Stage B scope. W_ij uses NavState(R, p, v) argument order. The > 1e-2 bar holds only in the
+    regime dt_ij ~ 0.5 s with ||v_i|| > 0.1 m/s: the coasting-free error is exactly ||v_i|| * dt_ij, so
+    it falls below 1e-2 at dt_ij <= 0.09 s for ||v_i|| = 0.11.'
   verdict: CONFIRMED
   attack: see docs/verification/m0-literature-matrix.md
 - id: M0-C15
@@ -238,12 +244,15 @@ claims:
     relation therefore reproduces a published equation rather than merely passing a numerical test.
   source: DERIVED from Delama et al. Eq. (18) and docs/00_preflight_findings.md F2
   kind: DERIVED
-  test_hint: For >= 100 random (g, dt) with dt != 0 and g != 0, build Gamma_ij directly from Delama Eq.
-    (18) and build T(-dt) @ H' from the F2 forms; assert numpy.array_equal(Gamma, T @ Hp) OR norm(Gamma
-    - T @ Hp) == 0.0 exactly (observed 0.0, not merely small). Then assert norm(Gamma - Hp @ T) > 1e-6
-    for dt != 0 (observed 2.45 at dt = 0.5, g = 9.81) -- side placement is load-bearing. A test that only
-    checks the first half would pass for a commuting pair and is insufficient.
-  domain: 5x5 Gal(3) matrices; dt != 0. Exactness (not tolerance) is expected because both expressions
-    are built from the same literals.
+  test_hint: For >= 100 random (g, dt) inside the domain, build Gamma_ij directly from Delama Eq. (18)
+    and build T(-dt) @ H' from the F2 forms; assert numpy.array_equal(Gamma, T @ Hp) (zero difference,
+    not merely small). Then assert norm(Gamma - Hp @ T) > 1e-6 -- side placement is load-bearing. The
+    reversed-product error is exactly ||g||*dt^2, so the 1e-6 bar is a property of the domain's dt floor,
+    not of dt != 0 alone. A test that only checks the first half would pass for a commuting pair and is
+    insufficient.
+  domain: 5x5 Gal(3) matrices with |dt| >= 0.05 and ||g|| >= 1 (so ||g||*dt^2 >= 2.5e-3 clears the 1e-6
+    bar; at ||g|| = 9.81 the reversed error drops below 1e-6 for |dt| <= 3.2e-4, e.g. a 10 kHz sample
+    interval). Exactness (not tolerance) is expected because both expressions are built from the same
+    literals.
   verdict: CONFIRMED
   attack: see docs/verification/m0-literature-matrix.md
