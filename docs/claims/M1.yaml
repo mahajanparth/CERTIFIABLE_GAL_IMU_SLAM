@@ -1,0 +1,423 @@
+milestone: M1
+title: "Gal(3) mechanics, conventions, and GTSAM 4.3.0 cross-validation"
+derivation: "docs/01_conventions_and_gal3.md"
+conventions:
+  group: "X(R,v,p,t) = [[R, v, p], [0_1x3, 1, t], [0_1x3, 0, 1]], 5x5, R in SO(3); column 3 = velocity, column 4 = position, time at entry (3,4)."
+  algebra: "xi = (phi, u, w, alpha) in R^10; xi^ = [[ [phi]x, u, w ], [0,0,alpha], [0,0,0]]; block order (rot, vel, pos, time)."
+  bias: "b = [b_g ; b_a] (gyro first) throughout this project."
+  gravity: "g in the world frame; all claims hold for arbitrary g unless they name a numeric value. Tests use g = (0, 0, -9.81)."
+  rng: "All sample counts are independent draws from numpy.random.default_rng with a fixed, recorded seed. Random rotations: Exp_SO3 of N(0, I3) unless a |phi| range is stated. Random v, p ~ N(0, I3) scaled as stated; random t ~ N(0,1)."
+
+claims:
+
+  # ---------------- 1. group axioms ----------------
+  - id: M1-C01
+    statement: "For all X1=(R1,v1,p1,t1), X2=(R2,v2,p2,t2) in Gal(3), the 5x5 matrix product equals (R1R2, v1+R1v2, p1+R1p2+v1*t2, t1+t2)."
+    source: "DERIVED (block multiplication); pre-flight F4"
+    kind: DERIVED
+    test_hint: "2000 random pairs (R from Exp_SO3(N(0,I)), v~N(0,I), p~3*N(0,I), t~N(0,1)). Compare the 5x5 matrix product against the closed form entrywise. max abs err <= 1e-12 (measured 3.6e-15). The v1*t2 term is load-bearing: a test that only uses t2=0 does not bind this claim."
+    domain: "Total. No restriction."
+
+  - id: M1-C02
+    statement: "Gal(3) is closed under the matrix product: for random X1, X2 the product P satisfies P[0:3,0:3] in SO(3) (P_R^T P_R = I, det = +1), P[3,0:3] = 0, P[4,0:4] = 0, P[3,3] = 1, P[4,4] = 1."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random pairs as in M1-C01. max over all structural residuals <= 1e-12 (measured 1.6e-15)."
+    domain: "Total."
+
+  - id: M1-C03
+    statement: "The Gal(3) product is associative: (X1 X2) X3 = X1 (X2 X3) entrywise, including the time block."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random triples. max abs err <= 1e-10 (measured 3.6e-15). Must be run through the IMPLEMENTATION's compose(), not through numpy matmul, or it tests nothing."
+    domain: "Total."
+
+  - id: M1-C04
+    statement: "I5 = (I, 0, 0, 0) is a two-sided identity: I5 X = X I5 = X for all X in Gal(3)."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random X. max abs err <= 1e-14 (measured 0.0 exactly)."
+    domain: "Total."
+
+  - id: M1-C05
+    statement: "X^-1 = (R^T, -R^T v, -R^T (p - t v), -t) is a two-sided inverse: X X^-1 = X^-1 X = I5, and in particular the (3,4) time entry of X X^-1 is exactly 0."
+    source: "DERIVED; pre-flight F4"
+    kind: DERIVED
+    test_hint: "2000 random X (including |t| up to ~3). max abs err of both products vs I5 <= 1e-10 (measured 4.4e-15); |(X X^-1)[3,4]| <= 1e-12 (measured 0.0). A test must include nonzero t AND nonzero v, or the -R^T(p - t v) term is untested."
+    domain: "Total. R^T always exists."
+
+  - id: M1-C06
+    statement: "Gal(3) is non-abelian: there exist X1, X2 with max|X1 X2 - X2 X1| >= 1e-3."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Exhibit at least one witness pair from the fixed-seed stream; measured max|commutator difference| = 5.0. This rejects an implementation whose compose() is accidentally additive/commutative."
+    domain: "Total."
+
+  - id: M1-C07
+    statement: "The time block is additive under composition: t(X1 X2) = t1 + t2 exactly, and t(X^-1) = -t exactly."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random pairs. abs err <= 1e-12 (measured 0.0). Stated separately from M1-C01 because the project's prior math contract was wrong specifically in this entry."
+    domain: "Total."
+
+  # ---------------- 2. algebra ----------------
+  - id: M1-C08
+    statement: "wedge and vee are mutually inverse: vee(wedge(xi)) = xi for all xi in R^10, and wedge(vee(A)) = A for all A in gal(3), with wedge placing u in matrix column 3 (velocity) and w in column 4 (position)."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random xi ~ N(0,I10). max abs err <= 1e-14 (measured 0.0). Also assert wedge(e4)[0:3,3] = e1 and wedge(e7)[0:3,4] = e1 to pin the (vel, pos) block order, 0-indexed e3..e5 -> velocity, e6..e8 -> position."
+    domain: "Total."
+
+  - id: M1-C09
+    statement: "ad_xi for xi = (phi,u,w,alpha) is the 10x10 matrix with blocks [[ [phi]x,0,0,0 ],[ [u]x,[phi]x,0,0 ],[ [w]x, -alpha*I3, [phi]x, u ],[ 0,0,0,0 ]], and wedge(ad_xi eta) = xi^ eta^ - eta^ xi^ for all xi, eta."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random (xi, eta) ~ N(0,I10). max abs err of the commutator identity <= 1e-10 (measured 1.8e-15). Separately assert the last row of ad_xi is identically zero and the (6:9, 9) column equals u."
+    domain: "Total."
+
+  - id: M1-C10
+    statement: "ad is a Lie-algebra homomorphism and the bracket satisfies Jacobi: ad_{ad_xi eta} = ad_xi ad_eta - ad_eta ad_xi, and ad_x(ad_y z) + ad_y(ad_z x) + ad_z(ad_x y) = 0."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random pairs/triples ~ N(0,I10). max abs err <= 1e-12 (measured 3.6e-15 and 1.1e-14)."
+    domain: "Total."
+
+  - id: M1-C11
+    statement: "Ad_X(xi) = vee(X xi^ X^-1) has the closed form phi' = R phi; u' = R u + [v]x R phi; w' = R w - t R u + [p - t v]x R phi + alpha v; alpha' = alpha."
+    source: "DERIVED; pre-flight F8"
+    kind: DERIVED
+    test_hint: "2000 random (X, xi), X with nonzero t and v. Compare wedge(Ad_X xi) against X wedge(xi) X^-1: max abs err <= 1e-9 (measured 1.1e-14). The -t R u term requires t != 0 in the test set."
+    domain: "Total."
+
+  - id: M1-C12
+    statement: "Ad is a group homomorphism: Ad_{X Y} = Ad_X Ad_Y as 10x10 matrices."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random pairs. max abs err <= 1e-8 (measured 7.1e-15)."
+    domain: "Total."
+
+  - id: M1-C13
+    statement: "Ad_{X^-1} = (Ad_X)^-1 as 10x10 matrices, i.e. the closed form of M1-C11 evaluated at X^-1 equals the numerical inverse of Ad_X."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random X. max abs err <= 1e-8 (measured 1.3e-14). Ad_X is never singular (det = 1, see M1-C17)."
+    domain: "Total."
+
+  - id: M1-C14
+    statement: "Ad-ad compatibility: Ad_X ad_xi (Ad_X)^-1 = ad_{Ad_X xi} for all X in Gal(3) and xi in gal(3); equivalently Ad_X(ad_xi(eta)) = ad_{Ad_X xi}(Ad_X eta)."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random (X, xi, eta) with xi, eta ~ 0.5*N(0,I10). max abs err <= 1e-7 for both forms (measured 1.8e-14 and 2.1e-14)."
+    domain: "Total."
+
+  - id: M1-C15
+    statement: "Ad_{exp(xi)} = expm(ad_xi), where expm is the 10x10 matrix exponential."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "500 random xi ~ 0.6*N(0,I10) with |phi| drawn in (0.05, 2.9). max abs err <= 1e-8 (measured 1.8e-14)."
+    domain: "Total, but the numerical test should keep ||xi|| <= ~3 so that expm is well conditioned."
+
+  - id: M1-C16
+    statement: "The time coordinate is Ad-invariant: the last row of Ad_X equals e_10^T for every X, i.e. alpha' = alpha exactly, independent of (R, v, p, t)."
+    source: "DERIVED; pre-flight F8"
+    kind: DERIVED
+    test_hint: "2000 random X. max abs deviation of Ad_X[9,:] from (0,...,0,1) <= 1e-14 (measured 0.0)."
+    domain: "Total."
+
+  - id: M1-C17
+    statement: "Gal(3) is unimodular: det(Ad_X) = 1 for every X, and trace(ad_xi) = 0 for every xi."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "500 random X: |det(Ad_X) - 1| <= 1e-12 (measured 2.9e-15). 500 random xi: |trace(ad_xi)| <= 1e-14 (measured 0.0)."
+    domain: "Total."
+
+  # ---------------- 3. exp / log ----------------
+  - id: M1-C18
+    statement: "With theta = ||phi|| and Phi = [phi]x, Gamma1(phi) = I + kappa1 Phi + kappa2 Phi^2 and Gamma2(phi) = (1/2) I + kappa2 Phi + kappa3 Phi^2, where kappa1 = (1-cos theta)/theta^2, kappa2 = (theta - sin theta)/theta^3, kappa3 = (theta^2 + 2 cos theta - 2)/(2 theta^4); equivalently Gamma_m(phi) = sum_{n>=0} Phi^n/(n+m)!."
+    source: "DERIVED (Delama et al. present the same Gamma1/Gamma2, kappa1..3 form; equation numbers could not extract)"
+    kind: DERIVED
+    test_hint: "2000 random phi with |phi| in (1e-3, 3.0): compare the kappa form against the truncated series sum_{n=0..40} Phi^n/(n+m)!; max abs err <= 1e-12 (measured 2.5e-14 over 2000 samples)."
+    domain: "theta > 0; at theta = 0 the limits are Gamma1 = I, Gamma2 = I/2. See M1-C24 for the small-angle branch."
+
+  - id: M1-C19
+    statement: "exp(phi, u, w, alpha) = (Exp_SO3(phi), Gamma1(phi) u, Gamma1(phi) w + alpha Gamma2(phi) u, alpha), and this equals scipy.linalg.expm(wedge(xi)) entrywise."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random xi with |phi| drawn uniformly in (0.05, 2.9), u, w ~ N(0,I3), alpha ~ N(0,1). max abs err vs expm <= 1e-9 (measured 3.9e-14). alpha != 0 and u != 0 are both required or the alpha*Gamma2*u coupling is untested."
+    domain: "Total on gal(3)."
+
+  - id: M1-C20
+    statement: "The time block of exp(xi) equals alpha exactly: exp(xi)[3,4] = alpha, not merely to first order."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random xi including |alpha| up to ~3. abs err <= 1e-12 (measured 0.0)."
+    domain: "Total."
+
+  - id: M1-C21
+    statement: "log(R,v,p,t) = (phi, u, w, alpha) with phi = Log_SO3(R), u = Gamma1(phi)^-1 v, w = Gamma1(phi)^-1 (p - t Gamma2(phi) u), alpha = t, where Gamma1(phi)^-1 = I - Phi/2 + c2(theta) Phi^2 and c2(theta) = (1 - theta sin(theta) / (2 (1 - cos theta))) / theta^2."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "20000 random phi with |phi| in (1e-9, pi]: max abs of Gamma1inv(phi) @ Gamma1(phi) - I <= 1e-9 (measured 9.8e-10 WITHOUT the small-angle branch, dominated by the |phi| ~ 1e-6 samples; WITH the M1-C24 Taylor branch, measured 4.0e-14 -- assert <= 1e-13). The equivalent form c2 = 1/theta^2 - (1+cos theta)/(2 theta sin theta) must NOT be used: assert it is not, or assert finiteness at theta = pi exactly."
+    domain: "Requires Gamma1(phi) invertible, i.e. theta != 2*pi*k. Log_SO3 requires theta < pi for a unique branch."
+
+  - id: M1-C22
+    statement: "log(exp(xi)) = xi for every xi in gal(3) with ||phi|| < pi."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "2000 random xi with |phi| uniform in (0.05, pi - 1e-3), u, w ~ N(0,I3), alpha ~ N(0,1). max abs err <= 1e-9 (measured 5.6e-15). Also assert it FAILS (returns the other branch) for |phi| > pi, e.g. |phi| = 3.5 returns |phi'| = 2*pi - 3.5 = 2.783."
+    domain: "||phi|| < pi. At ||phi|| = pi the SO(3) log is two-valued; above pi, log returns the wrapped branch."
+
+  - id: M1-C23
+    statement: "exp(log(X)) = X for EVERY X in Gal(3) (exp is surjective onto Gal(3)), including rotations with |phi| arbitrarily close to pi."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "5000 random X with R = Exp_SO3(5*N(0,I3)) (so the wrapped |phi| covers (0, pi]), v, p ~ N(0,I3), t ~ N(0,1). max abs err <= 1e-9 (measured 7.5e-14)."
+    domain: "Total. Surjectivity holds because Gamma1 is invertible on [0, pi]."
+
+  - id: M1-C24
+    statement: "Gamma1(phi) is invertible for all theta in [0, 2*pi), with det Gamma1 = 1.0 at theta = 0, 0.4053 at theta = pi, 2.21e-3 at theta = 6.0, and 0 at theta = 2*pi; cond(Gamma1) at theta = pi is pi/2 = 1.5708. The implementation switches to the 3-term Taylor branch kappa1 = 1/2 - th^2/24 + th^4/720, kappa2 = 1/6 - th^2/120 + th^4/5040, kappa3 = 1/24 - th^2/720 + th^4/40320, c2 = 1/12 + th^2/720 + th^4/30240 for theta < 5e-2."
+    source: "DERIVED + measured"
+    kind: DERIVED
+    test_hint: "Assert the four tabulated det/cond values to 4 significant figures. Then assert max relative error of each coefficient against 50-digit mpmath arithmetic <= 1e-11 over theta in {1e-9, 1e-6, 1e-4, 1e-2, 5e-2, 1e-1, 1.0, 3.0} -- this FAILS (kappa3 rel err 1.0, c2 rel err 6.3) if the Taylor branch is absent."
+    domain: "Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision below theta ~ 1e-4."
+
+  # ---------------- 4. Cayley ----------------
+  - id: M1-C25
+    statement: "Cay(xi) = (I5 - xi^/2)^-1 (I5 + xi^/2) has the closed form (S^-1 (I + [phi]x/2), S^-1 u, S^-1 (w + (alpha/2) u), alpha) with S = I - [phi]x/2."
+    source: "DERIVED (generalises pre-flight F3 to alpha != 0)"
+    kind: DERIVED
+    test_hint: "2000 random xi with |phi| in (0.05, 2.9), u, w ~ N(0,I3), alpha ~ N(0,1). max abs err vs the explicit 5x5 Cayley <= 1e-9 (measured 8.9e-16). alpha != 0 AND u != 0 are REQUIRED; at alpha = 0 the term under test vanishes identically."
+    domain: "Total on gal(3) (see M1-C26)."
+
+  - id: M1-C26
+    statement: "det(I5 - xi^/2) = 1 + ||phi||^2 / 4 > 0 for every xi in gal(3); hence Cayley is total on gal(3) -> Gal(3) and its sole denominator never vanishes."
+    source: "DERIVED; pre-flight F8"
+    kind: DERIVED
+    test_hint: "2000 random xi, including |alpha| up to ~3 and large |u|, |w|. max |det - (1 + |phi|^2/4)| <= 1e-10 (measured 1.3e-15). Also assert 20000 Cayley evaluations with nonzero alpha all succeed (zero linalg failures)."
+    domain: "Total. The determinant is independent of u, w, alpha -- only phi enters."
+
+  - id: M1-C27
+    statement: "Cay(xi) lands in Gal(3): its rotation block Re satisfies Re^T Re = I and det Re = +1 automatically (no determinant constraint is needed), and its time block equals alpha exactly."
+    source: "DERIVED; pre-flight F3"
+    kind: DERIVED
+    test_hint: "2000 random xi. max orthogonality/det residual <= 1e-10 (measured 6.7e-16); |Cay(xi)[3,4] - alpha| <= 1e-12 (measured 0.0)."
+    domain: "Total."
+
+  - id: M1-C28
+    statement: "The rotation Cay([c]x) has axis c/||c|| and angle theta with ||c|| = 2 tan(theta/2); numerically ||c|| = 0.5107 at theta = 0.5, 1.0926 at 1.0, 3.1148 at 2.0, 28.203 at 3.0, 4.3172e4 at 3.1415 rad."
+    source: "DERIVED; pre-flight F3"
+    kind: DERIVED
+    test_hint: "2000 random c with ||c|| uniform in (0.01, 5.0): | ||c|| - 2 tan(theta/2) | <= 1e-8 where theta = ||Log_SO3(Cay([c]x))|| (measured 6.2e-15). Plus the five tabulated values to 4 significant figures."
+    domain: "Cayley cannot represent theta = pi and is numerically unusable for theta > ~3 rad. Absolute rotations R_i, R_j must NOT be Cayley-parameterised."
+
+  - id: M1-C29
+    statement: "Cayley and exp agree to second order and differ at third: log(Cay(s*xi)) = s*xi + (s^3/12) vee((xi^)^3) + O(s^5); in particular ||log(Cay(s*xi)) - s*xi|| / s^3 stays bounded as s -> 0 and the residual after subtracting the s^3 term scales as s^5."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "300 unit-norm xi (||xi||_2 = 1), s in {1e-1, 5e-2}: max over samples of ||log(Cay(s xi)) - s xi||_inf / s^3 <= 1.0 (measured 0.052). Then 300 unit xi at s = 1e-2: max of ||log(Cay(s xi)) - s xi - (s^3/12) vee((xi^)^3)||_inf / s^5 <= 1.0 (measured 7.1e-3). A test that only asserts 'the difference is small' does not bind this claim -- the SCALING must be checked."
+    domain: "Asymptotic as s -> 0; the s^5 remainder test is meaningful only for s <= ~0.05 in double precision."
+
+  - id: M1-C30
+    statement: "The Cayley residual admits a degree-<=2 constraint block in the independently lifted variables (phi, Re, ve, pe, u, w, alpha): (I - [phi]x/2) Re = I + [phi]x/2, (I - [phi]x/2) ve = u, and (I - [phi]x/2) pe = w + (alpha/2) u."
+    source: "DERIVED (first two and the alpha=0 case of the third: pre-flight F3; the (alpha/2) u coupling is new here)"
+    kind: DERIVED
+    test_hint: "2000 random xi with alpha != 0: substitute (Re, ve, pe) = Cay(xi) blocks and assert all three residuals <= 1e-10 (measured 8.9e-16). Additionally assert each of the 15 scalar equalities has sympy total_degree <= 2 in the lifted variables (phi, u, w, alpha, Re, ve, pe) -- measured max total degree exactly 2."
+    domain: "Total. The (alpha/2) u product is degree 2, not 3, because alpha and u are independent lifted variables."
+
+  # ---------------- 5. endpoint relation ----------------
+  - id: M1-C31
+    statement: "For a keyframe state X_i = (R_i, v_i, p_i, 0) and increment D_ij = (dR, dv, dp, Dt), X_j = T(-Dt) . H' . X_i . D_ij holds exactly on all 25 entries, with H' = (I, g*Dt, -0.5*g*Dt^2, 0) and T(-Dt) = (I, 0, 0, -Dt) applied on the LEFT; the result has time block exactly 0."
+    source: "DERIVED; pre-flight F2"
+    kind: DERIVED
+    test_hint: "200 random instances; ground truth by forward integration of Rdot = R[omega]x, vdot = g + R a, pdot = v with 5000 Euler steps at dt = 1e-4 (Dt = 0.5), random omega ~ 0.8*N(0,I3), a ~ 2*N(0,I3), v_i ~ 2*N(0,I3), p_i ~ 5*N(0,I3). max abs err on the full 5x5 <= 1e-5 (measured 6.6e-14 against the ALGEBRAIC Forster endpoint, 6.8e-14 when ground truth is the integrator)."
+    domain: "Requires t_i = 0 exactly (see M1-C36). Holds for arbitrary g."
+
+  - id: M1-C32
+    statement: "T(-Dt) . H' equals the single Gal(3) element G(Dt) = (I, g*Dt, -0.5*g*Dt^2, -Dt), and G(Dt) = exp(Dt * zeta_g) with the FIXED generator zeta_g = (0, g, 0, -1) in gal(3) (independent of Dt); hence X_j = exp(Dt*zeta_g) . X_i . D_ij."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "200 random Dt in (0.05, 1.0): max|G(Dt) - T(-Dt)H'| <= 1e-12 and max|G(Dt) - exp(Dt*(0,g,0,-1))| <= 1e-10 (both measured 0.0). Note the opposite fusion order H' . T(-Dt) = (I, g Dt, -1.5 g Dt^2, -Dt) is DIFFERENT -- assert that too."
+    domain: "Total in Dt."
+
+  - id: M1-C33
+    statement: "G(s) = (I, g*s, -0.5*g*s^2, -s) is a one-parameter subgroup: G(s1) G(s2) = G(s1 + s2) for all real s1, s2."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "500 random (s1, s2) ~ 2*N(0,1), including negative values. max abs err <= 1e-10 (measured 1.1e-13)."
+    domain: "Total."
+
+  - id: M1-C34
+    statement: "The uncorrected form X_j =? H . X_i . D_ij with H = (I, g*Dt, +0.5*g*Dt^2, 0) is wrong TWICE: its time block equals Dt (not 0), and its position block equals p_j + g*Dt^2 (not p_j); its rotation and velocity blocks are correct."
+    source: "DERIVED; pre-flight F2 (error in the project's CLAUDE.md)"
+    kind: DERIVED
+    test_hint: "200 random instances as in M1-C31. Assert |RHS[3,4] - Dt| <= 1e-12 (measured 0.0) and max|RHS[0:3,4] - (p_j + g*Dt^2)| <= 1e-5 (measured 6.8e-14), while the R and v blocks match p_j's counterparts to 1e-5. This is a claim that a specific published formula is FALSE in a specific, quantified way."
+    domain: "t_i = 0."
+
+  - id: M1-C35
+    statement: "Side matters: applying T(-Dt) on the RIGHT, i.e. H' . X_i . D_ij . T(-Dt), clears the time block but corrupts the position block by exactly -v_j*Dt."
+    source: "DERIVED; pre-flight F2"
+    kind: DERIVED
+    test_hint: "500 random instances. max|RHS[0:3,4] - (p_j - v_j*Dt)| <= 1e-10 and |RHS[3,4]| <= 1e-12 (both measured 3.6e-15)."
+    domain: "t_i = 0."
+
+  - id: M1-C36
+    statement: "The endpoint relation of M1-C31 is valid ONLY on the slice t_i = 0. For general t_i the position block of T(-Dt) H' X_i D_ij equals p_j + g*Dt*t_i and the time block equals t_i (not 0); the R and v blocks remain correct."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "500 random instances with t_i ~ 2*N(0,1). max|RHS[0:3,4] - (p_j + g*Dt*t_i)| <= 1e-10 and |RHS[3,4] - t_i| <= 1e-12 (measured 3.6e-15). Implementation must assert t_i == 0 on keyframe states."
+    domain: "Stated for all t_i; the correction g*Dt*t_i vanishes iff t_i = 0 or Dt = 0 or g = 0."
+
+  - id: M1-C37
+    statement: "GTSAM 4.3.0's endpoint form X_j = W_ij . Phi_Dt(X_i) . U_ij, with W_ij = NavState(I, 0.5*g*Dt^2, g*Dt) (constructor order R, position, velocity), Phi_Dt(R,p,v) = (R, p + v*Dt, v), and U_ij = NavState(dR, dp, dv), reproduces (R_j, p_j, v_j)."
+    source: "VERIFIED-PUBLISHED (measured on the installed gtsam 4.3.0 NavState)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "200 random instances against the same integrator ground truth as M1-C31. max abs err on R, p, v <= 1e-5 (measured 6.8e-14); 2000 random instances against the algebraic Forster endpoint: <= 1e-12 (measured 1.8e-15). Note W_ij's position entry is +0.5*g*Dt^2 (PLUS)."
+    domain: "NavState has no time coordinate, so no t_i restriction arises; the restriction reappears on lifting to Gal(3) (M1-C36)."
+
+  - id: M1-C38
+    statement: "Forms (a) and (b) agree: lifting W_ij and U_ij into Gal(3) with time block 0 gives W_g = T(-Dt) H' T(Dt) EXACTLY, and T(Dt) U_g = D_ij exactly, so W_g . (T(-Dt) X_i T(Dt)) . U_g = T(-Dt) H' X_i D_ij; numerically the two forms agree on (R, v, p) and both have time block 0."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Assert max|T(-Dt) H' T(Dt) - W_g| <= 1e-12 (measured 0.0) and max|T(Dt) U_g - D_ij| <= 1e-12 (measured 0.0) for 500 random Dt. Then 200 random instances: max over (R, v, p) of |form(a) - form(b)| <= 1e-9 (measured 3.6e-15), and |form(a)[3,4]| <= 1e-12. The sign difference between W_g's +0.5 g Dt^2 and H's -0.5 g Dt^2 is EXACTLY conjugation by T(Dt) and is not a disagreement."
+    domain: "t_i = 0."
+
+  - id: M1-C39
+    statement: "gtsam.NavState composition is (R1 R2, p1 + R1 p2, v1 + R1 v2) -- with NO v1*Dt coupling term; NavState is SE_2(3), not Gal(3)."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random NavState pairs (R = Exp_SO3(N(0,I3)), p, v ~ N(0,I3)). max abs err vs the closed form <= 1e-12 (measured 4.4e-16). Form (b) of the endpoint relation depends on this, so it must be pinned separately."
+    domain: "Total."
+
+  - id: M1-C40
+    statement: "Phi_Dt(R,p,v) = (R, p + v*Dt, v) is NOT left or right translation by any fixed NavState (a factor fitted on one element fails on a second with residual > 0.5), but it IS a group automorphism of NavState; in Gal(3) it is the inner automorphism X -> T(-Dt) X T(Dt) restricted to the t = 0 slice, exactly."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "(i) Fit N_L = Phi_Dt(X) X^-1 from one random X, apply to a second random Y: max|N_L Y - Phi_Dt(Y)| >= 0.5 (measured 1.177); same for the right factor (measured 0.725). (ii) 2000 random pairs: max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured 4.4e-16). (iii) 2000 random (R,v,p): max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12 (measured 0.0)."
+    domain: "Conjugation statement requires t(X) = 0."
+
+  # ---------------- 6. preintegration increment ----------------
+  - id: M1-C41
+    statement: "The gravity-free increment satisfies the left-invariant ODE Ddot = D . xi^ with xi = (omega, a, 0, 1) and D(0) = I5; hence for constant (omega, a) over [0, Dt], D(Dt) = exp(Dt * (omega, a, 0, 1))."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "200 random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3), Dt uniform in (0.02, 0.4)). Ground truth by Euler integration of dRdot = dR[omega]x, dvdot = dR a, dpdot = dv. The Euler error is FIRST ORDER in dt (measured err/dt = 0.2494, constant across n = 1e3..6.4e4), so the tolerance must be tied to dt: use n with dt <= 5e-6 and tolerance 1e-5 (measured 2.7e-6 over 10 random configurations with Dt in (0.02, 0.4)). Separately assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^| <= 1e-8 by central difference at h = 1e-6 (measured 2.1e-10)."
+    domain: "Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the ordered product of per-sample exponentials, which is M1-C45."
+
+  - id: M1-C42
+    statement: "For constant (omega, a): dR = Exp_SO3(omega*Dt), dv = Dt * Gamma1(omega*Dt) a, dp = Dt^2 * Gamma2(omega*Dt) a, and the increment's time block is Dt."
+    source: "DERIVED (follows from M1-C19 and M1-C41)"
+    kind: DERIVED
+    test_hint: "500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured 4.4e-16). Note dp has NO Gamma1*w term because the generator's w slot is 0: position is driven entirely by the alpha*Gamma2*u coupling."
+    domain: "(omega, a) constant on the interval."
+
+  - id: M1-C43
+    statement: "The endpoint relation is equivalent to the Forster component equations R_j = R_i dR, v_j = v_i + g*Dt + R_i dv, p_j = p_i + v_i*Dt + 0.5*g*Dt^2 + R_i dp."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "200 random instances against the 5000-step integrator ground truth: max abs err <= 1e-5 (measured 6.8e-14 when the increment comes from the SAME integrator). Then assert the block decomposition of M1-C31's left-hand side reproduces these three equations symbolically or to 1e-12."
+    domain: "t_i = 0."
+
+  - id: M1-C44
+    statement: "Bias-corrected IMU inputs are omega = omega_m - b_g and a = a_m - b_a (noise-free), given the measurement model omega_m = omega + b_g + n_g, a_m = a + b_a + n_a, with b = [b_g ; b_a]."
+    source: "DERIVED (the project's stated measurement model)"
+    kind: ASSUMPTION
+    test_hint: "Feed (omega_m, a_m, b) with known omega, a into the implementation's correction routine and assert exact recovery (<= 1e-14) for 1000 random triples. Also assert the SIGN: a bias of +b_g must be SUBTRACTED, i.e. the routine applied with b -> -b returns omega_m + b_g."
+    domain: "Noise-free. Scale-factor and misalignment errors are out of scope."
+
+  - id: M1-C45
+    statement: "Preintegration chaining IS the Gal(3) product: D_ij D_jk = D_ik, i.e. dR_ik = dR_ij dR_jk, dv_ik = dv_ij + dR_ij dv_jk, dp_ik = dp_ij + dR_ij dp_jk + dv_ij * Dt_jk, Dt_ik = Dt_ij + Dt_jk -- note the position term uses the FIRST segment's velocity and the SECOND segment's duration."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "300 instances: integrate a segment with (omega1, a1) for n1 = 800 steps then (omega2, a2) for n2 = 1200 steps at dt = 5e-5, forming D_ij, D_jk and D_ik from the same integrator. max|D_ij D_jk - D_ik| <= 1e-12 (measured 7.7e-15). Plus 2000 purely algebraic random triples at <= 1e-14 (measured 8.9e-16). A test that uses dv_jk * Dt_ij instead must FAIL."
+    domain: "Total. Requires the increments to be adjacent and expressed in the same body frame convention."
+
+  # ---------------- 7. GTSAM cross-validation ----------------
+  - id: M1-C46
+    statement: "gtsam.Gal3.matrix() uses the project's layout: column 3 is VELOCITY, column 4 is POSITION, entry (3,4) is time, entry (3,3) = 1, row 4 = (0,0,0,0,1)."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random (R, v, p, t). max|gtsam.Gal3(Rot3(R), p, v, t).matrix() - gal(R,v,p,t)| <= 1e-12 (measured 0.0). Separately assert matrix()[0:3,3] equals velocity and NOT position, by exhibiting a case with max|matrix()[0:3,3] - p| >= 1e-3."
+    domain: "gtsam 4.3.0 as installed. Re-check on any version bump."
+
+  - id: M1-C47
+    statement: "The gtsam.Gal3 constructor signature is Gal3(R: Rot3, r: Vector3, v: Vector3, t: float) with r = POSITION and v = VELOCITY -- position before velocity, the OPPOSITE order to the matrix columns. Accessors: .position() = .translation() = r, .velocity() = v, .time() = t, .rotation() = .attitude() = R."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random (R, v, p, t) with p and v drawn from clearly separated distributions (e.g. p ~ 3*N(0,I3)+10, v ~ N(0,I3)). Assert X.position() == p, X.velocity() == v, X.time() == t, X.translation() == p, all to 1e-12 (measured 0.0). Assert X.position() != v with margin >= 1e-3."
+    domain: "gtsam 4.3.0 as installed."
+
+  - id: M1-C48
+    statement: "gtsam.Gal3's tangent ordering is (omega, nu, rho, alpha) = (rot, vel, pos, time), identical to the project's (phi, u, w, alpha): gtsam.Gal3.Hat(xi) equals the project's wedge(xi) bit-for-bit, and gtsam.Gal3.Vee is its inverse."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random xi: max|gtsam.Gal3.Hat(xi) - wedge(xi)| <= 1e-14 (measured 0.0) and max|gtsam.Gal3.Vee(wedge(xi)) - xi| <= 1e-14 (measured 0.0). Also basis-wise: Hat(e3)[0:3,3] = e0 (velocity column) and Hat(e6)[0:3,4] = e0 (position column), 0-indexed; and gtsam.Gal3.Expmap(1e-4*e3).velocity() = 1e-4*e0 with .position() = 0."
+    domain: "gtsam 4.3.0 as installed."
+
+  - id: M1-C49
+    statement: "gtsam.NavState uses the OPPOSITE inner ordering to gtsam.Gal3 in both representations: NavState.matrix() has position in column 3 and velocity in column 4, and the NavState tangent order is (rot, pos, vel) -- NavState().retract(1e-3*e3) moves POSITION while Gal3.Expmap(1e-3*e3) moves VELOCITY."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Assert NavState(Rot3(R), p, v).matrix()[0:3,3] == p and [0:3,4] == v to 1e-12 (measured 0.0), with max|matrix()[0:3,3] - v| >= 1e-3 as the discriminating witness. Assert NavState().retract(1e-4*e3).position() == 1e-4*e0 and .velocity() == 0, and Gal3.Expmap(1e-4*e3).velocity() == 1e-4*e0 and .position() == 0, each to 1e-12 (measured 0.0)."
+    domain: "gtsam 4.3.0 as installed."
+
+  - id: M1-C50
+    statement: "The 9x10 permutation P with rows 0:3 selecting columns 0:3, rows 3:6 selecting columns 6:9, and rows 6:9 selecting columns 3:6 converts a Gal(3) tangent to NavState ordering; omitting it silently swaps position and velocity, producing an O(1) relative error."
+    source: "DERIVED + measured"
+    kind: DERIVED
+    test_hint: "Draw d ~ 1e-5*N(0,I10). Assert max over (R, p, v) of |Gal3.Expmap(d) - NavState.Expmap(P @ d)| <= 1e-9 (measured 3.9e-11, first-order agreement at this scale). Assert the UNPERMUTED version differs: max|Gal3.Expmap(d) - NavState.Expmap(d[0:9])| >= 1e-6 (measured 2.8e-5, i.e. O(1) relative to the 1e-5 perturbation)."
+    domain: "The permuted agreement is first-order only (the two groups differ at second order in d); use ||d|| <= 1e-4 for the test."
+
+  - id: M1-C51
+    statement: "The project's closed forms agree with the installed gtsam.Gal3: Expmap matches M1-C19, Logmap matches M1-C21, AdjointMap matches M1-C11, and adjointMap matches M1-C09."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random samples each. Tolerances: Expmap <= 1e-9 (measured 3.9e-14); Logmap <= 1e-9 for |phi| < pi - 1e-3 (measured 1.0e-13); AdjointMap <= 1e-10 (measured 1.8e-15); adjointMap <= 1e-12 (measured 0.0). Construct the gtsam element as Gal3(Rot3(R), p, v, t) -- POSITION SECOND."
+    domain: "gtsam 4.3.0 as installed; Logmap comparison restricted to |phi| < pi."
+
+  - id: M1-C52
+    statement: "gtsam.Gal3's group operations agree with 5x5 matrix arithmetic in the project's layout: compose and __mul__ equal the matrix product, inverse equals the matrix inverse, between(B) equals A^-1 B, localCoordinates(B) equals Logmap(A^-1 B), and retract(d) equals A * Expmap(d) (LEFT-invariant / right-multiplicative retraction)."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random pairs: compose/__mul__/inverse <= 1e-10 (measured 6.2e-15); between <= 1e-12 (measured 8.9e-16); localCoordinates <= 1e-12 (measured 0.0); retract(d) with d ~ 0.1*N(0,I10) <= 1e-12 (measured 2.8e-17). The retraction convention matters: X Exp(d), NOT Exp(d) X."
+    domain: "gtsam 4.3.0 as installed."
+
+  - id: M1-C53
+    statement: "gtsam's own PreintegratedImuMeasurements.predict(state_i, bias) agrees with BOTH endpoint forms: with Dt = deltaTij(), dR = deltaRij(), dv = deltaVij(), dp = deltaPij(), the prediction equals W_ij Phi_Dt(X_i) U_ij and equals T(-Dt) H' X_i D_ij on (R, v, p)."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "PreintegrationParams.MakeSharedU(9.81) (so g = (0,0,-9.81)), zero bias, 500 integrateMeasurement calls at dt = 1e-3 with omega = (0.3,-0.2,0.5), acc = (0.4,0.2,10.11). max abs err on (R, v, p) <= 1e-9 for both forms (measured 4.4e-16 for both). Also assert |form(a)[3,4]| <= 1e-12."
+    domain: "gtsam 4.3.0 as installed; requires MakeSharedU so that gravity is -z."
+
+  # ---------------- 8. bias ordering ----------------
+  - id: M1-C54
+    statement: "gtsam.imuBias.ConstantBias has constructor ConstantBias(biasAcc, biasGyro) -- ACCELEROMETER FIRST -- and .vector() returns [b_a ; b_g], with .accelerometer() and .gyroscope() returning the respective halves."
+    source: "VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "1000 random (b_a, b_g) from clearly separated distributions. Assert cb.accelerometer() == b_a, cb.gyroscope() == b_g, cb.vector() == concat(b_a, b_g), all to 1e-14 (measured 0.0). Assert cb.vector()[0:3] != b_g with margin >= 1e-3."
+    domain: "gtsam 4.3.0 as installed."
+
+  - id: M1-C55
+    statement: "The conversion between the project's b = [b_g ; b_a] and GTSAM's ConstantBias is the involutive block-swap S = [[0, I3], [I3, 0]]: ConstantBias(b[3:6], b[0:3]).vector() = S b, S S = I6, and the round trip concat(cb.gyroscope(), cb.accelerometer()) recovers b exactly."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "1000 random b ~ N(0,I6). All three residuals <= 1e-14 (measured 0.0). Additionally assert the NAIVE conversion ConstantBias(b[0:3], b[3:6]) does NOT round-trip: max|concat(gyro, accel) - b| >= 1e-3 for b with distinct halves."
+    domain: "Total. Must live in exactly one place in src/."
+
+seed:
+  id: M1-S01
+  statement: >
+    For xi = (phi, u, w, alpha) in gal(3) with alpha != 0, the Cayley map has position block
+    pe = (I - [phi]x/2)^-1 (w - (alpha/2) u); equivalently the degree-2 lifting constraint is
+    (I - [phi]x/2) pe + (alpha/2) u = w for all xi in gal(3). The time-coordinate coupling therefore
+    enters the Cayley position block with the SAME negative sign as the -0.5*g*Dt^2 entry of H' in
+    the corrected endpoint relation, which is what makes Cayley consistent with the project's
+    convention that a gravity-like term standing to the left of an un-advanced state carries a minus.
+  source: "DERIVED (generalisation of pre-flight F3 to nonzero time block)"
+  kind: DERIVED
+  test_hint: >
+    2000 random xi with |phi| in (0.05, 2.9), u, w ~ N(0,I3) and alpha ~ N(0,1) drawn so that
+    alpha != 0 and u != 0. Compare the position block against the explicit 5x5
+    (I5 - xi^/2)^-1 (I5 + xi^/2); max abs err <= 1e-9. The alpha = 0 slice is NOT a valid test of
+    this claim -- the term under test vanishes identically there, which is why pre-flight F3 did not
+    settle it.
+  domain: "Total on gal(3); the sole denominator det(I - [phi]x/2) = 1 + ||phi||^2/4 > 0 always."
