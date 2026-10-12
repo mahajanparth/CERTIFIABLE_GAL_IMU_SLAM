@@ -31,17 +31,35 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: main
-  status: deriving
+  status: implementing
   claims: []
   seed:
-    id: null
-    statement: null
+    id: M1-S01
+    statement: For xi = (phi, u, w, alpha) in gal(3) with alpha != 0, the Cayley map has position block
+      pe = (I - [phi]x/2)^-1 (w - (alpha/2) u); equivalently the degree-2 lifting constraint is (I - [phi]x/2)
+      pe + (alpha/2) u = w for all xi in gal(3). The time-coordinate coupling therefore enters the Cayley
+      position block with the SAME negative sign as the -0.5*g*Dt^2 entry of H' in the corrected endpoint
+      relation, which is what makes Cayley consistent with the project's convention that a gravity-like
+      term standing to the left of an un-advanced state carries a minus.
     caught: null
     published: false
+    why_false: 'The sign is PLUS: (I - [phi]x/2) pe == w + (alpha/2) u, verified to 5.7e-14 over 20000
+      random gal(3) elements with alpha != 0; the minus form is off by up to 2.5e2. Subtle because pre-flight
+      F3 only ever tested alpha=0, where the term vanishes identically, so a verifier that reuses the
+      existing F3 check passes the seed. It also rides on real project lore -- it rationalises the minus
+      by appealing to H''''s -0.5*g*Dt^2 sign, the project''s most-repeated piece of hard-won sign knowledge.'
+    note: 'Weakness: this seed contradicts M1-C25/M1-C30 in the same list, so a careful verifier can catch
+      it by reading alone rather than by computing. That still counts as catching it -- only pure deference
+      misses it -- but it is a weaker test than a seed that is internally consistent with its neighbours.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M1-001
     started: '2026-10-12T18:59:11+00:00'
+    finished: '2026-10-12T19:20:24+00:00'
+    outcome: completed
+  - role: implementer
+    agent_id: impl-M1-001
+    started: '2026-10-12T19:20:24+00:00'
     finished: null
     outcome: running
 - id: M2
