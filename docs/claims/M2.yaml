@@ -12,7 +12,7 @@ claims:
     not allclose) on both the gyro and accel streams and on all scalar constants.
   domain: Noise-free limit only. The noisy ablation is out of M2 scope and will need a named seed constant.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C02
   statement: For constant body twist the exact increment is dR=Exp(w T), dv=M1(T)a, dp=M2(T)a with M1(T)=T
     I+((1-cos(th T))/th)K+(T-sin(th T)/th)K^2 and M2(T)=(T^2/2)I+((T-sin(th T)/th)/th)K+(T^2/2-(1-cos(th
@@ -29,7 +29,7 @@ claims:
   domain: Requires ||w|| > 0; both fixture edges have ||w|| ~ 0.4. Use the series form for ||w|| < 1e-8.
     This is the exact-arithmetic reference -- no discretization enters.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C03
   statement: The component endpoint relation R_j=R_i dR_ij, v_j=v_i+g_W Dt_ij+R_i dv_ij, p_j=p_i+v_i Dt_ij+0.5
     g_W Dt_ij^2+R_i dp_ij reproduces gtsam.PreintegratedImuMeasurementsG.predict(state_i, biasHat) to
@@ -41,7 +41,7 @@ claims:
   domain: g_W is the gravity VECTOR (GTSAM n_gravity), = [0,0,-9.81] for z-up. Holds for any state; no
     time-coordinate restriction.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C04
   statement: 'The Forster increment recursion dR_ij = prod Exp((omega_k-b_g)dt), dv_ij = sum dR_ik (a_k-b_a)
     dt, dp_ij = sum [dv_ik dt + 0.5 dR_ik (a_k-b_a) dt^2] is FIRST order in dt: its dv and dp error against
@@ -54,7 +54,7 @@ claims:
   domain: Error is O(dt) in dv and dp. dR is EXACT here only because the fixture's w is constant per edge
     so the product telescopes to Exp(w T); do not generalize that.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C05
   statement: Baseline 1's first-order bias correction has the mixed-chart form dR_ij(b)=dR_ij(bbar)Exp(J^R
     db_g) (right group composition) while dv_ij(b)=dv_ij(bbar)+J^{vg}db_g+J^{va}db_a and dp_ij(b)=dp_ij(bbar)+J^{pg}db_g+J^{pa}db_a
@@ -69,7 +69,7 @@ claims:
   domain: Frozen at bbar. Validity degrades as ||db|| grows; the quadratic law is what is being pinned,
     not any absolute accuracy.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C06
   statement: Baseline 1's propagated 9x9 covariance is symmetric to 1e-14 and positive semidefinite (min
     eigenvalue >= -1e-12) at every step, and tr(Sigma) is nondecreasing across the edge when the gyro
@@ -82,7 +82,7 @@ claims:
   domain: GTSAM's preintMeasCov() is in NavState block order (rot, pos, vel), NOT (rot, vel, pos); compare
     like with like before asserting agreement.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C07
   statement: Rai Eq. (3) Cay(phi)=(I-phi^/2)^-1(I+phi^/2) with phi=2 tan(theta/2) a satisfies Cay(2 tan(theta/2)
     a)=Exp(theta a) to 1e-13 over 2000 random axes with theta in (0,3); and Rai Eq. (4) J_Cay(phi)=(I-phi^/2)/(1+||phi||^2/4)
@@ -97,7 +97,7 @@ claims:
   domain: 'Breaks down as theta -> pi: ||phi||=2 tan(theta/2) is 1.09 at 1 rad, 28.2 at 3 rad, 4.3e4 at
     3.1415 rad (pre-flight F3). Restrict to theta < 3. Part (b) is first order in d only.'
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C08
   statement: Rai Eq. (17) det(I - xi^/2) = 1 + ||xi||^2/4 holds to 1e-12 for 5000 random xi with ||xi||
     up to 5, and the right-hand side is strictly >= 1, so the Cayley denominator is never singular and
@@ -109,7 +109,7 @@ claims:
   domain: Totality on so(3). Pre-flight F8 measured the exact gal(3) analogue det(I5-A/2)=1+||phi||^2/4
     to 9.1e-13.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C09
   statement: Rai Eq. (19) r^R_ij = (R_j - R_i dRbar_ij) - 0.5 (R_j + R_i dRbar_ij) xi_ij^, with xi_ij
     = J^R_ij db_g, vanishes to 1e-12 exactly when Eq. (16) R_j = R_i dRbar_ij (I - xi^/2)^-1 (I + xi^/2)
@@ -121,7 +121,7 @@ claims:
   domain: xi must satisfy the M2-C07 chart restriction. r^R is degree <= 2 in (R_i, R_j, b_g), which is
     what makes it QCQP-representable.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C10
   statement: 'Rai Eq. (21b) r^v_ij = R_i^T(v_j - v_i - g_W Dt_ij) - dvbar_ij - A^{vg}db_g - A^{va}db_a
     and Eq. (21c) r^p_ij = R_i^T(p_j - p_i - v_i Dt_ij - 0.5 g_W Dt_ij^2) - dpbar_ij - A^{pg}db_g - A^{pa}db_a,
@@ -139,8 +139,8 @@ claims:
     1e-9 at ground truth, which is wrong by six orders of magnitude.'
   domain: Unlike Eq. (19), these are FIRST order in db and additive. The asymmetry with the rotation residual
     is inherited from Forster and is intentional.
-  verdict: REFUTED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  verdict: CONFIRMED
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C11
   statement: Rai Eq. (22b) r^R_ij = R_j(I + Gamma_ij/2) - R_i Rbreve_ij - 0.5(Y_ij + Y'_ij), with Gamma_ij=(J^R
     bbar_g)^, Rbreve_ij=dRbar_ij(I - Gamma_ij/2), Y_ij=R_i dRbar_ij (J^R b_g)^ and Y'_ij=R_j (J^R b_g)^,
@@ -153,7 +153,7 @@ claims:
   domain: Exact identity, no approximation. Y and Y' are auxiliary lifted variables that make r^R affine;
     the paper states this is their purpose.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C12
   statement: 'The isotropic precision of Rai Eq. (23), tau^-1 = (1/3) tr Sigma, is structurally forced
     and not a convenience: the identity ||r||^2 = ||R_i r||^2 that lets R_i^T be moved out of Eq. (21b)/(21c)
@@ -167,7 +167,7 @@ claims:
     removes rotation-state products -- NOT the SDP structure; the paper does not claim the latter. The
     paper acknowledges the approximation drops cross-correlations and directional weighting.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C13
   statement: 'Baseline 2 freezes the bias Jacobians while keeping the Cayley retraction exact: preintegration
     is computed ONCE at bbar and never re-linearized, so the map db_g -> xi_ij = J^R_ij db_g is linear
@@ -182,7 +182,7 @@ claims:
     at the nominal bias'', ''the change is approximated to first order''. The exactness is in the retraction,
     not in the bias dependence.'
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C14
   statement: 'gtsam.Gal3 stores X=[[R, v, r],[0, 1, t],[0, 0, 1]] -- VELOCITY before POSITION in the matrix
     columns -- while its constructor is Gal3(R: Rot3, r: Vector3, v: Vector3, t: float) -- POSITION before
@@ -197,7 +197,7 @@ claims:
   domain: 'Footgun: matrix column order and constructor argument order disagree. Prefer the named accessors
     over positional unpacking everywhere. GTSAM 4.3.0 specifically.'
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C15
   statement: 'The gtsam.Gal3 tangent order is (omega, nu, rho, alpha) = (rotation, VELOCITY, POSITION,
     time): Gal3.Hat(e_k) places indices 0:3 in the rotation block, 3:6 in matrix column 3 (velocity),
@@ -212,7 +212,7 @@ claims:
   domain: NavState tangent is (rot, pos, vel). The symbol kGal3BlockForNavState is NOT exported to the
     Python extension; the table is reconstructed from the measured block semantics.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C16
   statement: 'The {0,6,3} remap of M2-C15 is a block-index permutation ONLY and does not make the charts
     agree: for the fixture KF0 and KF2 lifted to Gal(3) with zero time coordinate, Gal3.Logmap(X_i^-1
@@ -231,7 +231,7 @@ claims:
   domain: Guards the natural follow-on error after getting the remap right. Applies to the charts; the
     block permutation itself (M2-C15) is correct.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C17
   statement: 'gtsam.imuBias.ConstantBias orders (accelerometer, gyroscope): ConstantBias(a, g).accelerometer()==a,
     .gyroscope()==g, .vector()==[a; g], and PreintegratedImuMeasurementsG.biasHatVector()==[b_a; b_g];
@@ -243,7 +243,7 @@ claims:
     is NOT the identity.'
   domain: 'Applies to bias Jacobian COLUMN order too: any GTSAM-facing Jacobian has (accel, gyro) columns.'
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C18
   statement: With U_ij = Gal3(dR, dp, dv, Dt), the endpoint relation X_j = W_ij(t_i) . X_i . U_ij with
     W_ij(t_i) = Gal3(I, 0.5 g Dt^2 - g Dt (t_i + Dt), g Dt, 0) reproduces the component relation of M2-C03
@@ -258,7 +258,7 @@ claims:
     for GTSAM because NavState carries no clock, but a live hazard for M3/M4 where Gal(3) states are decision
     variables.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C19
   statement: 'The GalileanPreintegration increment is EXACT zero-order-hold and accumulates by RIGHT composition:
     on both fixture edges PreintegratedImuMeasurementsG reproduces the M2-C02 closed-form dR, dv, dp to
@@ -276,7 +276,7 @@ claims:
     A CONSTANT-input stream cannot distinguish left from right accumulation -- the increments commute
     -- so part (b) must NOT use the fixture's own per-edge constant inputs.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C20
   statement: 'The GalileanPreintegration bias correction uses a frozen first-order Jacobian composed EXACTLY
     on the right in Gal(3): with J in R^{10x6} fixed at bbar, U(db) = Uhat . Expmap_Gal3(J db) holds with
@@ -294,7 +294,7 @@ claims:
     is exact in. Against re-integration both are O(||db||^2); Galilean coefficient ~0.67, about 2.8x smaller
     than Tangent's.
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C21
   statement: The Gal(3) bias Jacobian recursion is J_{k+1} = Ad_{V_k^-1} J_k + C_k with J_i = 0, where
     V_k is the single-step Gal(3) increment and C_k = d/d(db) Log(Vhat_k^-1 V_k(db)) is that step's own
@@ -309,7 +309,7 @@ claims:
     the derivative w.r.t. the MEASUREMENT, which differs by the sign in (a_k - b_a). Fix the convention
     before comparing signs.'
   verdict: CONFIRMED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C22
   statement: 'TIER 1 -- same discretization. Baselines 1 and 2 share Rai Eq. (9) and differ only in the
     rotation retraction, so at KF2 on the fixture they agree to 1e-6 in v, p AND R under the raw reading
@@ -331,8 +331,8 @@ claims:
     under any other reading, and Eq. (4) is the right Jacobian of the raw map to 4.7e-11 while being
     wrong by up to 0.36 for the reparameterized one. 1e-10 in R is not merely unmet for the raw reading,
     it is unattainable: reaching it needs dt ~ 3.9e-5, a 64x refinement of the dt pinned by M2-C01.'
-  verdict: REFUTED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  verdict: CONFIRMED
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C23
   statement: 'TIER 2 -- different discretization. Baselines 1 and 2 differ from Baseline 3 at KF2 by at
     most 5e-3 in v and p at dt = 2.5e-3 (rotations agree to 1e-6: Baseline 1 to 3.1e-15 and Baseline 2
@@ -348,8 +348,8 @@ claims:
     ALONE would pass for a baseline wrong by a constant 1e-3; the order test is the one with teeth.
   domain: The gap is O(dt) truncation of the Euler sums in Baselines 1-2, not an error in any baseline.
     Baseline 3 is exact ZOH (M2-C19) and is the reference side of this comparison.
-  verdict: REFUTED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  verdict: CONFIRMED
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C24
   statement: 'TIER 0 -- against exact ground truth. Baseline 3 reproduces the M2-C02 closed-form reference
     at KF1 and KF2 to 1e-10 in R, v and p. Baseline 1 reproduces the reference ROTATIONS to 1e-10 (9.8e-15);
@@ -365,8 +365,8 @@ claims:
     REPARAMETERIZED variant, which is Exp -- i.e. on a different Baseline 2 than the spec fixes.'
   domain: Baseline 3 is the ground truth on this fixture to machine precision, which is precisely why
     the three baselines cannot share one tolerance.
-  verdict: REFUTED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  verdict: CONFIRMED
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
 - id: M2-C25
   statement: 'The fixture is bias-observable with NO bias prior: with per-keyframe bias (state dim 3 x
     (6 pose + 3 vel + 6 bias) = 45), two GalileanCombinedImuFactor edges, a pose and a velocity prior
@@ -393,5 +393,5 @@ claims:
   domain: 'Rank is invariant to positive reweighting, so this does not depend on the noise model. The
     CONDITION number does and is NOT claimed: measured 7.5e7 with tight covariances and 7.6e6 with realistic
     MEMS densities.'
-  verdict: REFUTED
-  attack: see docs/verification/stage-b_m2-baselines.md
+  verdict: CONFIRMED
+  attack: see docs/verification/stage-b_m2-baselines_pass2.md
