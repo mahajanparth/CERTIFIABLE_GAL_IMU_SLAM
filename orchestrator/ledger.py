@@ -52,9 +52,30 @@ def _overlay_claims(data: dict[str, Any]) -> None:
             c.setdefault("attack", None)
         if claims:
             ms["claims"] = claims
-        seed = doc.get("seed")
-        if seed:
-            ms["seed"] = {**(ms.get("seed") or {}), **seed}
+        # NOTE: a `seed:` block in a claims file is deliberately IGNORED here. Seeds are
+        # read only from the gitignored SEEDS_FILE, so that a committed claims file never
+        # tells a verifier which claim was planted. See _overlay_seeds.
+    _overlay_seeds(data)
+
+
+SEEDS_FILE = pathlib.Path(__file__).resolve().parent / "seeds.local.yaml"
+
+
+def _overlay_seeds(data: dict[str, Any]) -> None:
+    """Load seeded defects from the gitignored local file.
+
+    Seeds are never committed. A verifier that goes looking through the repository will
+    not find which claim was planted. This is not airtight -- an agent with filesystem
+    access could read seeds.local.yaml -- but the failure mode being guarded against is an
+    agreeable verifier that rubber-stamps claims, and such a verifier does not go hunting.
+    """
+    if not SEEDS_FILE.exists():
+        return
+    doc = yaml.safe_load(SEEDS_FILE.read_text()) or {}
+    for ms in data.get("milestones") or []:
+        s = (doc.get("seeds") or {}).get(ms["id"])
+        if s:
+            ms["seed"] = {**(ms.get("seed") or {}), **s}
 
 
 def save(data: dict[str, Any], path: pathlib.Path | None = None) -> None:

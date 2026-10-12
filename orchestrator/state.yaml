@@ -4,17 +4,28 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: main
-  status: deriving
+  status: implementing
   claims: []
   seed:
-    id: null
-    statement: null
+    id: M0-S01
+    statement: Delama et al. define phi as a LEFT group action of G on M, consistent with G being the
+      left-trivialized tangent group of Gal(3); the navigation error log(Upsilon_k Upsilonhat_k^-1) is
+      correspondingly left-invariant.
     caught: null
     published: false
+    why_false: 'The action is a RIGHT action -- stated explicitly in the sentence immediately after Eq.
+      (24): "phi is a transitive and free right group action of G on M." The group being LEFT-trivialized
+      while the action is RIGHT is exactly the conflation a careless verifier makes, which is what makes
+      this a fair test rather than a gotcha.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M0-001
     started: '2026-10-12T18:59:11+00:00'
+    finished: '2026-10-12T19:16:40+00:00'
+    outcome: completed
+  - role: implementer
+    agent_id: impl-M0-001
+    started: '2026-10-12T19:16:40+00:00'
     finished: null
     outcome: running
 - id: M1

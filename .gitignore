@@ -11,3 +11,4 @@ references/*.pdf
 *.log
 .ipynb_checkpoints/
 .DS_Store
+orchestrator/seeds.local.yaml
