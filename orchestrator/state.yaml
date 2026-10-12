@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: m0-literature-matrix
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M0-S01
@@ -52,9 +52,17 @@ milestones:
   - role: implementer
     agent_id: impl-M0-003-remediation
     started: '2026-10-12T23:24:07+00:00'
+    finished: '2026-10-12T23:54:40+00:00'
+    outcome: completed
+    note: 'Suite rewritten: 88 passed, 41/41 table mutants killed. All 14 earlier failures were test bugs,
+      none a table error. I relabelled Barfoot''s Cayley equation by hand and the sourcing test failed.'
+  - role: verifier
+    agent_id: verify-M0-002
+    started: '2026-10-12T23:54:40+00:00'
     finished: null
     outcome: running
-    note: Finishing the test rewrite and building a harness that corrupts all 41 table fields.
+    note: Second verification pass with a fresh planted claim; independent source checks and its own 30+
+      mutant sweep.
   blocking_findings:
   - id: M0-F01
     resolved: false
@@ -83,7 +91,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -142,10 +150,18 @@ milestones:
   - role: implementer
     agent_id: impl-M1-003-remediation
     started: '2026-10-12T23:24:07+00:00'
+    finished: '2026-10-12T23:54:40+00:00'
+    outcome: completed
+    note: 'ODE ground truth (DOP853, independent of src), time-varying non-commuting streams, 9/9 mutants
+      killed, 84 passed. I swapped the rotation order by hand: 4 tests fail with residual 0.70. I updated
+      five stale test_hints.'
+  - role: verifier
+    agent_id: verify-M1-002
+    started: '2026-10-12T23:54:40+00:00'
     finished: null
     outcome: running
-    note: Checking dynamics against an independent ODE solver and adding time-varying inputs to order
-      tests.
+    note: Second verification pass with a fresh planted claim; rulings on F01-F06 and its own 25+ mutant
+      sweep.
   blocking_findings:
   - id: M1-F01
     resolved: false
