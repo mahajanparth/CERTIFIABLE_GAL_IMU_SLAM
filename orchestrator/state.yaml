@@ -65,17 +65,33 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: deriving
+  status: implementing
   claims: []
   seed:
-    id: null
-    statement: null
+    id: M2-S01
+    statement: In Baseline 1 the position bias Jacobians are an exact multiple of the velocity ones, J^{pa}_ij
+      = 0.5 Dt_ij J^{va}_ij and J^{pg}_ij = 0.5 Dt_ij J^{vg}_ij, agreeing to 1e-6 on both fixture edges,
+      because dp accumulates dv over the interval with the same frozen rotation sequence; only the velocity
+      Jacobians therefore need to be propagated and the position ones can be formed by scaling.
     caught: null
     published: false
+    why_false: 'J^pa is NOT 0.5*Dt*J^va. Independently measured max relative error 10.1% on J^pa and 49.7%
+      on J^pg (deriver measured 3% / 50% on its own fixture -- different trajectory, same verdict). Structurally:
+      J^pa accumulates sum(J^va_k dt) - 0.5 sum(dR_k dt^2), so the second term has no 0.5*Dt*J^va form.
+      Subtle because the diagonals agree to ~3 digits; only the off-diagonals diverge, so a spot-check
+      of a diagonal entry passes.'
+    note: 'Stronger than the M1 seed: it is internally CONSISTENT with every sibling claim, so it cannot
+      be caught by reading for contradiction. It must be caught by computing. The deriver discarded an
+      earlier candidate for exactly that reason.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M2-001
     started: '2026-10-12T18:59:11+00:00'
+    finished: '2026-10-12T19:22:56+00:00'
+    outcome: completed
+  - role: implementer
+    agent_id: impl-M2-001
+    started: '2026-10-12T19:22:56+00:00'
     finished: null
     outcome: running
 - id: M3
