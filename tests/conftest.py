@@ -37,6 +37,18 @@ def rand_rot(r, n=None, scale=1.0):
     return np.array([_rotvec_to_matrix(scale * r.normal(size=3)) for _ in range(n)])
 
 
+def assert_term_exercised(mags, margin=1e-3, min_frac=0.99):
+    """Coverage guard: the load-bearing term had magnitude >= margin on >= min_frac
+    of the draws (and a median well above it).  ``min(|t|) > 0`` on a continuous
+    draw cannot fail; this can.
+    """
+    mags = np.asarray(mags, dtype=float)
+    frac = float(np.mean(mags >= margin))
+    assert frac >= min_frac, (frac, float(mags.min()))
+    assert float(np.median(mags)) >= 100.0 * margin, float(np.median(mags))
+    return frac
+
+
 def rand_axis(r, n=None):
     a = r.normal(size=3 if n is None else (n, 3))
     return a / np.linalg.norm(a, axis=-1, keepdims=True)

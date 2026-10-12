@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import scipy.linalg as sla
+from scipy.spatial.transform import Rotation
 
 from src import gal3
 from src.gal3 import (
@@ -43,6 +44,7 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     rand_xi_bounded_phi,
     rng,
     assert_discrete_converges,
+    assert_term_exercised,
 )
 
 I3 = np.eye(3)
@@ -58,7 +60,7 @@ def test_product_closed_form():
     """X1 X2 = (R1 R2, v1 + R1 v2, p1 + R1 p2 + v1 t2, t1 + t2)."""
     r = rng(1)
     worst = 0.0
-    min_abs_t2 = np.inf
+    term = []
     for _ in range(2000):
         X1, X2 = rand_gal(r), rand_gal(r)
         R1, v1, p1, t1 = unpack(X1)
@@ -66,9 +68,9 @@ def test_product_closed_form():
         closed = gal(R1 @ R2, v1 + R1 @ v2, p1 + R1 @ p2 + v1 * t2, t1 + t2)
         worst = max(worst, float(np.abs(X1 @ X2 - closed).max()))
         worst = max(worst, float(np.abs(compose(X1, X2) - closed).max()))
-        min_abs_t2 = min(min_abs_t2, abs(t2))
-    # the v1*t2 term is load-bearing: the sample set must actually carry t2 != 0
-    assert min_abs_t2 > 0.0
+        term.append(float(np.abs(v1 * t2).max()))
+    # the v1*t2 term is load-bearing: it must be non-negligible on the sample set
+    assert_term_exercised(term)
     assert worst <= 1e-12, worst
 
 
@@ -115,7 +117,7 @@ def test_inverse_two_sided():
     r = rng(5)
     worst = 0.0
     worst_time = 0.0
-    min_t, min_v = np.inf, np.inf
+    term = []
     for _ in range(2000):
         X = rand_gal(r, t_scale=3.0)
         Xi = inverse(X)
@@ -123,10 +125,9 @@ def test_inverse_two_sided():
         worst = max(worst, float(np.abs(A - I5).max()), float(np.abs(B - I5).max()))
         worst_time = max(worst_time, abs(float(A[3, 4])))
         _, v, _, t = unpack(X)
-        min_t = min(min_t, abs(t))
-        min_v = min(min_v, float(np.abs(v).max()))
-    # the -R^T (p - t v) term is only exercised when t != 0 and v != 0
-    assert min_t > 0.0 and min_v > 0.0
+        term.append(float(np.abs(t * v).max()))
+    # the -R^T (p - t v) term is only exercised when t v is non-negligible
+    assert_term_exercised(term)
     assert worst <= 1e-10, worst
     assert worst_time <= 1e-12, worst_time
 
@@ -230,17 +231,17 @@ def test_Ad_closed_form():
     """Ad_X(xi) = vee(X xi^ X^-1) with the stated closed form; needs t != 0."""
     r = rng(11)
     worst = 0.0
-    min_t = np.inf
+    term = []
     for _ in range(2000):
         X = rand_gal(r, t_scale=1.5)
         xi = rand_xi(r)
-        min_t = min(min_t, abs(float(X[3, 4])))
+        term.append(float(np.abs(float(X[3, 4]) * xi[3:6]).max()))   # the -t R u term
         lhs = wedge(Ad_apply(X, xi))
         rhs = X @ wedge(xi) @ inverse(X)
         worst = max(worst, float(np.abs(lhs - rhs).max()))
         # the matrix form must agree with the componentwise one
         worst = max(worst, float(np.abs(Ad(X) @ xi - Ad_apply(X, xi)).max()))
-    assert min_t > 0.0
+    assert_term_exercised(term)
     assert worst <= 1e-9, worst
 
 
@@ -356,17 +357,16 @@ def test_exp_closed_form():
     """exp(xi) = (Exp(phi), G1 u, G1 w + alpha G2 u, alpha) = expm(xi^)."""
     r = rng(19)
     worst = 0.0
-    min_alpha = min_u = np.inf
+    term = []
     for _ in range(2000):
         xi = rand_xi_bounded_phi(r, 0.05, 2.9)
         phi, u, w, al = xi[0:3], xi[3:6], xi[6:9], xi[9]
-        min_alpha = min(min_alpha, abs(al))
-        min_u = min(min_u, float(np.abs(u).max()))
+        term.append(float(np.abs(al * (gamma2(phi) @ u)).max()))
         closed = gal(so3_exp(phi), gamma1(phi) @ u,
                      gamma1(phi) @ w + al * (gamma2(phi) @ u), al)
         worst = max(worst, float(np.abs(exp(xi) - closed).max()))
         worst = max(worst, float(np.abs(exp(xi) - sla.expm(wedge(xi))).max()))
-    assert min_alpha > 0.0 and min_u > 0.0   # the alpha*G2*u coupling is exercised
+    assert_term_exercised(term)   # the alpha*G2*u coupling is exercised
     assert worst <= 1e-9, worst
 
 
@@ -530,11 +530,10 @@ def test_cayley_closed_form():
     """Cay(xi) = (S^-1(I+[phi]x/2), S^-1 u, S^-1(w + (alpha/2) u), alpha)."""
     r = rng(25)
     worst = 0.0
-    min_alpha = min_u = np.inf
+    term = []
     for _ in range(2000):
         xi = rand_xi_bounded_phi(r, 0.05, 2.9)
-        min_alpha = min(min_alpha, abs(float(xi[9])))
-        min_u = min(min_u, float(np.abs(xi[3:6]).max()))
+        term.append(float(np.abs(0.5 * xi[9] * xi[3:6]).max()))
         worst = max(worst, float(np.abs(cay(xi) - cay_matrix(xi)).max()))
         # and the stated blocks, written out
         phi, u, w, al = xi[0:3], xi[3:6], xi[6:9], xi[9]
@@ -542,7 +541,7 @@ def test_cayley_closed_form():
         Si = np.linalg.inv(S)
         ref = gal(Si @ (I3 + skew(phi) / 2.0), Si @ u, Si @ (w + 0.5 * al * u), al)
         worst = max(worst, float(np.abs(cay(xi) - ref).max()))
-    assert min_alpha > 0.0 and min_u > 0.0     # the (alpha/2) u term is exercised
+    assert_term_exercised(term)     # the (alpha/2) u term is exercised
     assert worst <= 1e-9, worst
 
     # the MINUS form is wrong, and by a lot
@@ -572,16 +571,27 @@ def test_cayley_denominator_never_vanishes():
         assert d > 0.0
     assert worst <= 1e-10, worst
 
-    failures = 0
+    # Totality, in a form that can fail: on 20000 draws with |phi| up to 50 and
+    # |u|, |w| ~ 1e3 (alpha != 0), cay returns a finite Gal(3) element equal to the
+    # defining (I5 - xi^/2)^-1 (I5 + xi^/2).  ("No LinAlgError" alone is vacuous:
+    # det(I - [phi]x/2) = 1 + theta^2/4 >= 1 by construction.)
     r2 = rng(2600)
+    worst_rel = worst_struct = 0.0
+    min_det = np.inf
     for _ in range(20000):
         xi = r2.normal(size=gal3.DIM)
+        xi[0:3] *= r2.uniform(0.0, 50.0) / np.linalg.norm(xi[0:3])
+        xi[3:9] *= 1e3
         xi[9] = r2.normal() + np.sign(r2.normal()) * 0.5   # alpha != 0
-        try:
-            cay(xi)
-        except np.linalg.LinAlgError:
-            failures += 1
-    assert failures == 0, failures
+        C = cay(xi)
+        assert np.all(np.isfinite(C))
+        M = cay_matrix(xi)
+        worst_rel = max(worst_rel, float(np.abs(C - M).max()) / max(1.0, float(np.abs(M).max())))
+        worst_struct = max(worst_struct, gal3.structural_residual(C))
+        min_det = min(min_det, float(np.linalg.det(gal3.cay_denominator(xi))))
+    assert worst_rel <= 1e-12, worst_rel
+    assert worst_struct <= 1e-12, worst_struct
+    assert min_det >= 1.0 - 1e-12, min_det
 
 
 @pytest.mark.claim("M1-C27")
@@ -616,10 +626,40 @@ def test_cayley_rotation_tangent_half_angle():
         assert np.abs(phi / theta - c / np.linalg.norm(c)).max() <= 1e-9
     assert worst <= 1e-8, worst
 
+    # the sampler above covers theta in (0.01, 2.38) only; the large-angle regime,
+    # theta up to 3.1415, through REAL cay round trips (angle and axis read back
+    # with scipy, independently of so3_log): ||c|| log-uniform in (5, 5e4)
+    worst_big = 0.0
+    for _ in range(2000):
+        cn = float(np.exp(r.uniform(np.log(5.0), np.log(5e4))))
+        ax = rand_axis(r)
+        xi = np.zeros(gal3.DIM)
+        xi[0:3] = cn * ax
+        rv = Rotation.from_matrix(cay(xi)[0:3, 0:3]).as_rotvec()
+        th = float(np.linalg.norm(rv))
+        worst_big = max(worst_big, abs(th - 2.0 * np.arctan(cn / 2.0)))
+        assert np.abs(rv / th - ax).max() <= 1e-9
+    assert worst_big <= 1e-9, worst_big
+
+    # the tabulated values: transcription check, then each pushed through cay
     for theta, tabulated in [(0.5, 0.5107), (1.0, 1.0926), (2.0, 3.1148),
                              (3.0, 28.203), (3.1415, 4.3172e4)]:
-        got = 2.0 * np.tan(theta / 2.0)
-        assert abs(got - tabulated) <= 5e-5 * max(1.0, abs(tabulated)), (theta, got)
+        assert abs(2.0 * np.tan(theta / 2.0) - tabulated) <= 5e-5 * max(1.0, abs(tabulated))
+        # the tabulation tolerance dc = 5e-5 max(1, c) pins theta to 2 dc / (4 + c^2)
+        tol_theta = 2.0 * 5e-5 * max(1.0, tabulated) / (4.0 + tabulated ** 2) + 1e-12
+        for _ in range(20):
+            ax = rand_axis(r)
+            for cn, tol in ((tabulated, tol_theta), (2.0 * np.tan(theta / 2.0), 1e-9)):
+                xi = np.zeros(gal3.DIM)
+                xi[0:3] = cn * ax
+                Re = cay(xi)[0:3, 0:3]
+                # orthogonality degrades as cond(S) ~ ||c||^2/4: ~2e-15 at theta = 3.0
+                # but ~3e-12 at theta = 3.1415 -- the 'unusable above ~3 rad' domain
+                assert np.abs(Re.T @ Re - I3).max() <= 1e-10
+                rv = Rotation.from_matrix(Re).as_rotvec()
+                th = float(np.linalg.norm(rv))
+                assert abs(th - theta) <= tol, (theta, cn, th)
+                assert np.abs(rv / th - ax).max() <= 1e-9
 
 
 @pytest.mark.claim("M1-C29")
@@ -1112,7 +1152,8 @@ def test_gtsam_gal3_group_operations():
 
     r = rng(52)
     w_comp = w_inv = w_bet = w_loc = w_ret = w_wrong = 0.0
-    w_loc_ours = 0.0
+    w_loc_edge = 0.0
+    n_loc = 0
     for _ in range(2000):
         Ra, va, pa, ta = rand_rot(r), r.normal(size=3), 3.0 * r.normal(size=3), float(r.normal())
         Rb, vb, pb, tb = rand_rot(r), r.normal(size=3), 3.0 * r.normal(size=3), float(r.normal())
@@ -1130,19 +1171,30 @@ def test_gtsam_gal3_group_operations():
         w_wrong = max(w_wrong, float(np.abs(A.retract(d).matrix()
                                             - compose(exp(d), Am)).max()))
 
-        # localCoordinates(B) == Logmap(A^-1 B): a statement about gtsam's own API
-        w_loc = max(w_loc, float(np.abs(A.localCoordinates(B)
-                                        - gtsam.Gal3.Logmap(A.between(B))).max()))
-        # and the same quantity against our closed form, inside the Logmap domain
-        # of M1-C51 (the relative rotation must stay off the |phi| = pi edge)
+        # localCoordinates(B) == Logmap(A^-1 B), with Logmap the project's
+        # INDEPENDENT closed form log (M1-C21), on M1-C51's Logmap domain (the
+        # relative rotation off the |phi| = pi edge).  Comparing against
+        # gtsam.Gal3.Logmap(A.between(B)) instead would be gtsam against itself
+        # (exactly 0.0 always) and could not fail.
         rel = compose(inverse(Am), Bm)
         if float(np.linalg.norm(gal3.so3_log(rel[0:3, 0:3]))) < np.pi - 1e-3:
-            w_loc_ours = max(w_loc_ours,
-                             float(np.abs(A.localCoordinates(B) - log(rel)).max()))
+            n_loc += 1
+            w_loc = max(w_loc, float(np.abs(A.localCoordinates(B) - log(rel)).max()))
+
+    # the domain edge itself: |phi_rel| in (pi - 1e-2, pi - 1.001e-3)
+    for _ in range(400):
+        Ra, va, pa, ta = rand_rot(r), r.normal(size=3), 3.0 * r.normal(size=3), float(r.normal())
+        Rrel = _rotvec_to_matrix((np.pi - r.uniform(1.001e-3, 1e-2)) * rand_axis(r))
+        Rb, vb, pb, tb = Ra @ Rrel, r.normal(size=3), 3.0 * r.normal(size=3), float(r.normal())
+        A = gtsam.Gal3(gtsam.Rot3(Ra), pa, va, ta)
+        B = gtsam.Gal3(gtsam.Rot3(Rb), pb, vb, tb)
+        rel = compose(inverse(gal(Ra, va, pa, ta)), gal(Rb, vb, pb, tb))
+        w_loc_edge = max(w_loc_edge, float(np.abs(A.localCoordinates(B) - log(rel)).max()))
     assert w_comp <= 1e-10, w_comp
     assert w_inv <= 1e-10, w_inv
     assert w_bet <= 1e-12, w_bet
+    assert n_loc >= 1000, n_loc
     assert w_loc <= 1e-12, w_loc
-    assert w_loc_ours <= 1e-9, w_loc_ours
+    assert w_loc_edge <= 1e-12, w_loc_edge
     assert w_ret <= 1e-12, w_ret
     assert w_wrong >= 1e-6, w_wrong
