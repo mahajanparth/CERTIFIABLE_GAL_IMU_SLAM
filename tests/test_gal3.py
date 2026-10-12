@@ -42,6 +42,7 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     rand_xi,
     rand_xi_bounded_phi,
     rng,
+    assert_discrete_converges,
 )
 
 I3 = np.eye(3)
@@ -671,24 +672,44 @@ def test_cayley_constraints_degree_two():
 # ==========================================================================
 # the endpoint relation
 # ==========================================================================
+def _endpoint_residuals(d, src):
+    """max |endpoint(X_i, D) - X_j| and max |endpoint - Forster| over the dataset."""
+    worst_xj = worst_forster = worst_time = 0.0
+    for k in range(d["n"]):
+        X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
+        D = gal(src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"])
+        lhs = gal3.endpoint(X_i, D, d["g"])
+        X_j = gal(src["R_j"][k], src["v_j"][k], src["p_j"][k], 0.0)
+        worst_xj = max(worst_xj, float(np.abs(lhs - X_j).max()))
+        R_f, v_f, p_f = gal3.forster_endpoint(
+            d["R_i"][k], d["v_i"][k], d["p_i"][k],
+            src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"], d["g"])
+        worst_forster = max(worst_forster,
+                            float(np.abs(lhs - gal(R_f, v_f, p_f, 0.0)).max()))
+        worst_time = max(worst_time, abs(float(lhs[3, 4])))
+    return worst_xj, worst_forster, worst_time
+
+
 @pytest.mark.claim("M1-C31")
 def test_endpoint_relation(endpoint_dataset):
     """X_j = T(-Dt) H' X_i D_ij, exactly, on all 25 entries."""
     d = endpoint_dataset
-    worst_int = worst_alg = 0.0
-    for k in range(d["n"]):
-        X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
-        D = gal(d["dR"][k], d["dv"][k], d["dp"][k], d["Dt"])
-        lhs = gal3.endpoint(X_i, D, d["g"])
-        X_j = gal(d["R_j"][k], d["v_j"][k], d["p_j"][k], 0.0)
-        worst_int = max(worst_int, float(np.abs(lhs - X_j).max()))
-        R_f, v_f, p_f = gal3.forster_endpoint(
-            d["R_i"][k], d["v_i"][k], d["p_i"][k],
-            d["dR"][k], d["dv"][k], d["dp"][k], d["Dt"], d["g"])
-        worst_alg = max(worst_alg, float(np.abs(lhs - gal(R_f, v_f, p_f, 0.0)).max()))
-        assert abs(float(lhs[3, 4])) <= 1e-12
-    assert worst_alg <= 1e-5, worst_alg
-    assert worst_int <= 1e-5, worst_int
+
+    # ACCURACY: against the continuous truth -- X_j and D_ij from two separate
+    # DOP853 solves (rtol = atol = 1e-13) with time-varying inputs.
+    worst_ode, worst_alg, worst_time = _endpoint_residuals(d, d)
+    assert worst_ode <= 1e-9, worst_ode
+    assert worst_alg <= 1e-12, worst_alg
+    assert worst_time <= 1e-12, worst_time
+
+    # IDENTITY CHECK (not an accuracy check): the relation is an exact algebraic
+    # identity of the project's discrete recursion, for any dt.
+    worst_id, _, worst_time_id = _endpoint_residuals(d, d["disc"])
+    assert worst_id <= 1e-12, worst_id
+    assert worst_time_id <= 1e-12, worst_time_id
+
+    # and that recursion really is a first-order discretisation of the ODE
+    assert_discrete_converges(d)
 
 
 @pytest.mark.claim("M1-C32")
@@ -730,21 +751,36 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset):
     """H X_i D_ij has time block Dt (not 0) and position p_j + g Dt^2 (not p_j)."""
     d = endpoint_dataset
     Dt = d["Dt"]
-    worst_t = worst_p = worst_rv = 0.0
-    for k in range(d["n"]):
-        X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
-        D = gal(d["dR"][k], d["dv"][k], d["dp"][k], Dt)
-        rhs = gal3.endpoint_uncorrected(X_i, D, d["g"])
-        worst_t = max(worst_t, abs(float(rhs[3, 4]) - Dt))
-        worst_p = max(worst_p,
-                      float(np.abs(rhs[0:3, 4] - (d["p_j"][k] + d["g"] * Dt ** 2)).max()))
-        worst_rv = max(worst_rv, float(np.abs(rhs[0:3, 0:3] - d["R_j"][k]).max()))
-        worst_rv = max(worst_rv, float(np.abs(rhs[0:3, 3] - d["v_j"][k]).max()))
-        # and it really is wrong: the position error is O(g Dt^2)
-        assert float(np.abs(rhs[0:3, 4] - d["p_j"][k]).max()) >= 1e-3
+
+    def residuals(src):
+        worst_t = worst_p = worst_rv = 0.0
+        least_wrong = np.inf
+        for k in range(d["n"]):
+            X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
+            D = gal(src["dR"][k], src["dv"][k], src["dp"][k], Dt)
+            rhs = gal3.endpoint_uncorrected(X_i, D, d["g"])
+            worst_t = max(worst_t, abs(float(rhs[3, 4]) - Dt))
+            worst_p = max(worst_p, float(np.abs(
+                rhs[0:3, 4] - (src["p_j"][k] + d["g"] * Dt ** 2)).max()))
+            worst_rv = max(worst_rv, float(np.abs(rhs[0:3, 0:3] - src["R_j"][k]).max()),
+                           float(np.abs(rhs[0:3, 3] - src["v_j"][k]).max()))
+            # and it really is wrong: the position error is O(g Dt^2)
+            least_wrong = min(least_wrong,
+                              float(np.abs(rhs[0:3, 4] - src["p_j"][k]).max()))
+        return worst_t, worst_p, worst_rv, least_wrong
+
+    # ACCURACY: against the DOP853 continuous truth
+    worst_t, worst_p, worst_rv, least_wrong = residuals(d)
     assert worst_t <= 1e-12, worst_t
-    assert worst_p <= 1e-5, worst_p
-    assert worst_rv <= 1e-5, worst_rv
+    assert worst_p <= 1e-9, worst_p
+    assert worst_rv <= 1e-9, worst_rv
+    assert least_wrong >= 1e-3, least_wrong
+
+    # IDENTITY CHECK on the discrete recursion (not an accuracy check)
+    worst_t, worst_p, worst_rv, _ = residuals(d["disc"])
+    assert worst_t <= 1e-12, worst_t
+    assert worst_p <= 1e-12, worst_p
+    assert worst_rv <= 1e-12, worst_rv
 
 
 @pytest.mark.claim("M1-C35")

@@ -12,6 +12,8 @@ from scipy.spatial.transform import Rotation
 from src import gal3
 from src import imu_dynamics as imu
 
+from . import ode_truth
+
 #: the fixed, recorded seed for every randomized claim test
 SEED = 20241012
 
@@ -71,15 +73,29 @@ def rand_xi_bounded_phi(r, lo=0.05, hi=2.9, scale=1.0):
 
 
 # --------------------------------------------------------------------------
-# the shared integrator ground truth (M1-C31, C34, C37, C43)
+# the shared endpoint dataset (M1-C31, C34, C37, C43)
 # --------------------------------------------------------------------------
+#: first-order bound on the discrete recursion vs the ODE truth at dt = 1e-4
+#: (measured 7.7e-4 on the navigation state, 8.6e-4 on the increment).
+DISCRETE_ACCURACY_TOL = 2e-3
+
+
 @pytest.fixture(scope="session")
 def endpoint_dataset():
-    """200 instances integrated with 5000 Euler steps at dt = 1e-4, Dt = 0.5.
+    """200 instances with TIME-VARYING, non-commuting (omega(t), a(t)), Dt = 0.5.
 
-    The navigation state and the gravity-free increment come from the SAME
-    stepping scheme, so the endpoint relation should hold to roundoff rather
-    than to the integrator's truncation error.
+    Two independent sources of (X_j, D_ij):
+
+    * ``R_j, v_j, p_j, dR, dv, dp`` -- the CONTINUOUS truth: the navigation ODE
+      and the increment ODE solved SEPARATELY by scipy DOP853 at rtol = atol =
+      1e-13 (``tests/ode_truth.py``; nothing from ``src``).  Accuracy claims are
+      checked against these.
+    * ``disc`` -- the project's first-order recursion ``integrate_truth`` on the
+      same stream (zero-order hold), 5000 steps at dt = 1e-4.  The endpoint
+      relation holds for it as an exact ALGEBRAIC IDENTITY of the recursion for any
+      dt, so it supports identity checks only.  It is also checked against the ODE
+      truth (first order, see ``assert_discrete_converges``) so that a degraded
+      fixture -- e.g. 2 steps at dt = 0.25 -- is caught.
     """
     r = rng(1031)
     n_inst, n_steps, dt = 200, 5000, 1e-4
@@ -87,19 +103,45 @@ def endpoint_dataset():
     R_i = rand_rot(r, n_inst)
     v_i = 2.0 * r.normal(size=(n_inst, 3))
     p_i = 5.0 * r.normal(size=(n_inst, 3))
-    omega = 0.8 * r.normal(size=(n_inst, 3))
-    acc = 2.0 * r.normal(size=(n_inst, 3))
-    (R_j, v_j, p_j), (dR, dv, dp, Dt_out) = imu.integrate_truth(
-        R_i, v_i, p_i, omega, acc, dt, n_steps, G
-    )
-    assert abs(Dt_out - Dt) < 1e-12
+    stream = ode_truth.Stream.random(r, n_inst)
+
+    R_j, v_j, p_j = ode_truth.solve_nav(stream, R_i, v_i, p_i, Dt, G)
+    dR, dv, dp = ode_truth.solve_increment(stream, Dt)
+
+    def discrete(n, h):
+        om_s, acc_s = stream.sampled(h, n)
+        (Rd, vd, pd), (dRd, dvd, dpd, Dt_out) = imu.integrate_truth(
+            R_i, v_i, p_i, om_s, acc_s, h, n, G, per_step=True)
+        return dict(R_j=Rd, v_j=vd, p_j=pd, dR=dRd, dv=dvd, dp=dpd, Dt=Dt_out)
+
+    disc = discrete(n_steps, dt)
+    disc_half = discrete(max(n_steps // 2, 1), Dt / max(n_steps // 2, 1))
     return dict(
-        n=n_inst, Dt=Dt, g=G,
+        n=n_inst, Dt=Dt, g=G, dt=dt,
         R_i=R_i, v_i=v_i, p_i=p_i,
         R_j=R_j, v_j=v_j, p_j=p_j,
         dR=dR, dv=dv, dp=dp,
-        omega=omega, acc=acc,
+        stream=stream, disc=disc, disc_half=disc_half,
     )
+
+
+def _discrete_error(d, disc):
+    return max(float(np.abs(disc[k] - d[k]).max())
+               for k in ("R_j", "v_j", "p_j", "dR", "dv", "dp"))
+
+
+def assert_discrete_converges(d):
+    """The discrete recursion is a first-order discretisation of the ODE truth.
+
+    err(dt) <= DISCRETE_ACCURACY_TOL, err(2 dt) / err(dt) in [1.8, 2.2], and the
+    recursion's Dt equals the ODE's.  Fails for a degraded fixture.
+    """
+    assert abs(d["disc"]["Dt"] - d["Dt"]) <= 1e-12
+    e1 = _discrete_error(d, d["disc"])
+    e2 = _discrete_error(d, d["disc_half"])
+    assert e1 <= DISCRETE_ACCURACY_TOL, e1
+    assert 1.8 <= e2 / e1 <= 2.2, (e1, e2)
+    return e1
 
 
 @pytest.fixture(scope="session")

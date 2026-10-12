@@ -11,7 +11,8 @@ from src import gal3
 from src import imu_dynamics as imu
 from src.gal3 import compose, exp, gal, unpack, wedge
 
-from .conftest import G, rand_axis, rand_rot, rng
+from . import ode_truth
+from .conftest import G, assert_discrete_converges, rand_axis, rand_rot, rng
 
 I3 = np.eye(3)
 
@@ -36,15 +37,24 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset):
     """X_j = W_ij Phi_Dt(X_i) U_ij reproduces (R_j, p_j, v_j) on gtsam 4.3.0."""
     d = endpoint_dataset
     Dt, g = d["Dt"], d["g"]
-    worst = 0.0
-    for k in range(d["n"]):
-        N = _navstate_form_b(d["R_i"][k], d["v_i"][k], d["p_i"][k],
-                             d["dR"][k], d["dv"][k], d["dp"][k], Dt, g)
-        worst = max(worst,
-                    float(np.abs(N.attitude().matrix() - d["R_j"][k]).max()),
-                    float(np.abs(N.position() - d["p_j"][k]).max()),
-                    float(np.abs(N.velocity() - d["v_j"][k]).max()))
-    assert worst <= 1e-5, worst
+
+    def residual(src):
+        worst = 0.0
+        for k in range(d["n"]):
+            N = _navstate_form_b(d["R_i"][k], d["v_i"][k], d["p_i"][k],
+                                 src["dR"][k], src["dv"][k], src["dp"][k], Dt, g)
+            worst = max(worst,
+                        float(np.abs(N.attitude().matrix() - src["R_j"][k]).max()),
+                        float(np.abs(N.position() - src["p_j"][k]).max()),
+                        float(np.abs(N.velocity() - src["v_j"][k]).max()))
+        return worst
+
+    # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
+    worst = residual(d)
+    assert worst <= 1e-9, worst
+    # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
+    worst_id = residual(d["disc"])
+    assert worst_id <= 1e-12, worst_id
 
     # 2000 algebraic instances against the Forster endpoint
     r = rng(370)
@@ -80,19 +90,55 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset):
 def test_increment_left_invariant_ode():
     """Ddot = D xi^ with xi = (omega, a, 0, 1); D(Dt) = exp(Dt xi) for constant inputs."""
     r = rng(41)
+
+    # (a) the continuous claim, against an INDEPENDENT ODE solve: DOP853 on
+    #     Ddot = D xi^ (rtol = atol = 1e-13) vs the closed form exp(Dt xi).
+    worst_ode_const = 0.0
+    for Dt in (0.02, 0.1, 0.4, 1.0, 2.0):
+        omega = 0.7 * r.normal(size=(200, 3))
+        acc = 2.0 * r.normal(size=(200, 3))
+        dR, dv, dp = ode_truth.solve_increment_constant(omega, acc, Dt)
+        for k in range(200):
+            ref = imu.preintegrate_constant(omega[k], acc[k], Dt)
+            worst_ode_const = max(worst_ode_const,
+                                  float(np.abs(gal(dR[k], dv[k], dp[k], Dt) - ref).max()))
+    assert worst_ode_const <= 1e-11, worst_ode_const
+
+    # (b) the project's Euler scheme, constant inputs, at the WORST Dt of the stated
+    #     range (the first-order error grows with Dt): 1000 configurations at Dt = 0.4.
     dt = 2.5e-6                       # the claim requires dt <= 5e-6
+    n = int(round(0.4 / dt))
+    omega = 0.7 * r.normal(size=(1000, 3))
+    acc = 2.0 * r.normal(size=(1000, 3))
+    dR, dv, dp, t = imu.euler_increment(omega, acc, dt, n)
+    assert abs(t - 0.4) <= 1e-12
     worst = 0.0
-    for _ in range(10):
-        omega = 0.7 * r.normal(size=3)
-        acc = 2.0 * r.normal(size=3)
-        Dt = float(r.uniform(0.02, 0.4))
-        n = int(round(Dt / dt))
-        Dt = n * dt                      # keep Dt an exact multiple of dt
-        dR, dv, dp, t = imu.euler_increment(omega, acc, dt, n)
-        assert abs(t - Dt) <= 1e-12
-        ref = imu.preintegrate_constant(omega, acc, Dt)
-        worst = max(worst, float(np.abs(gal(dR, dv, dp, t) - ref).max()))
+    for k in range(1000):
+        ref = imu.preintegrate_constant(omega[k], acc[k], t)
+        worst = max(worst, float(np.abs(gal(dR[k], dv[k], dp[k], t) - ref).max()))
     assert worst <= 1e-5, worst
+
+    # (c) TIME-VARYING, non-commuting xi(t): the left-invariant ODE (D xi^, not
+    #     xi^ D) against DOP853.  Euler is first order, so check the error and the
+    #     order; with constant inputs a swapped product dR @ W -> W @ dR is invisible.
+    st = ode_truth.Stream.random(r, 50)
+    Dt_tv = 0.4
+    dR_ref, dv_ref, dp_ref = ode_truth.solve_increment(st, Dt_tv)
+    errs = []
+    for h in (2e-5, 1e-5):
+        m = int(round(Dt_tv / h))
+        om_s, acc_s = st.sampled(h, m)
+        out = imu.euler_increment(om_s, acc_s, h, m, per_step=True)
+        errs.append(max(float(np.abs(out[0] - dR_ref).max()),
+                        float(np.abs(out[1] - dv_ref).max()),
+                        float(np.abs(out[2] - dp_ref).max())))
+    assert errs[1] <= 1e-4, errs
+    assert 1.8 <= errs[0] / errs[1] <= 2.2, errs
+    # the stream genuinely distinguishes D xi^ from xi^ D: the right-invariant
+    # rotation solution (R^T solves Sdot = S [-omega]x) is far from the left one
+    dR_neg, _, _ = ode_truth.solve_increment(st.negated_rate(), Dt_tv)
+    order_gap = float(np.abs(dR_ref - np.swapaxes(dR_neg, -1, -2)).max())
+    assert order_gap >= 100.0 * 1e-4, order_gap
 
     # the ODE itself, by central difference on expm(s xi^)
     worst_ode = 0.0
@@ -139,28 +185,38 @@ def test_forster_component_equations(endpoint_dataset):
     """R_j = R_i dR, v_j = v_i + g Dt + R_i dv, p_j = p_i + v_i Dt + 0.5 g Dt^2 + R_i dp."""
     d = endpoint_dataset
     Dt, g = d["Dt"], d["g"]
-    worst = 0.0
-    worst_block = 0.0
-    for k in range(d["n"]):
-        R_f, v_f, p_f = gal3.forster_endpoint(
-            d["R_i"][k], d["v_i"][k], d["p_i"][k],
-            d["dR"][k], d["dv"][k], d["dp"][k], Dt, g)
-        worst = max(worst,
-                    float(np.abs(R_f - d["R_j"][k]).max()),
-                    float(np.abs(v_f - d["v_j"][k]).max()),
-                    float(np.abs(p_f - d["p_j"][k]).max()))
-        # the 5x5 endpoint relation decomposes into exactly these three equations
-        X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
-        D = gal(d["dR"][k], d["dv"][k], d["dp"][k], Dt)
-        lhs = gal3.endpoint(X_i, D, g)
-        R_l, v_l, p_l, t_l = unpack(lhs)
-        worst_block = max(worst_block,
-                          float(np.abs(R_l - R_f).max()),
-                          float(np.abs(v_l - v_f).max()),
-                          float(np.abs(p_l - p_f).max()),
-                          abs(t_l))
-    assert worst <= 1e-5, worst
+
+    def residuals(src):
+        worst = 0.0
+        worst_block = 0.0
+        for k in range(d["n"]):
+            R_f, v_f, p_f = gal3.forster_endpoint(
+                d["R_i"][k], d["v_i"][k], d["p_i"][k],
+                src["dR"][k], src["dv"][k], src["dp"][k], Dt, g)
+            worst = max(worst,
+                        float(np.abs(R_f - src["R_j"][k]).max()),
+                        float(np.abs(v_f - src["v_j"][k]).max()),
+                        float(np.abs(p_f - src["p_j"][k]).max()))
+            # the 5x5 endpoint relation decomposes into exactly these three equations
+            X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
+            D = gal(src["dR"][k], src["dv"][k], src["dp"][k], Dt)
+            R_l, v_l, p_l, t_l = unpack(gal3.endpoint(X_i, D, g))
+            worst_block = max(worst_block,
+                              float(np.abs(R_l - R_f).max()),
+                              float(np.abs(v_l - v_f).max()),
+                              float(np.abs(p_l - p_f).max()),
+                              abs(t_l))
+        return worst, worst_block
+
+    # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
+    worst, worst_block = residuals(d)
+    assert worst <= 1e-9, worst
     assert worst_block <= 1e-12, worst_block
+
+    # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
+    worst_id, _ = residuals(d["disc"])
+    assert worst_id <= 1e-12, worst_id
+    assert_discrete_converges(d)
 
 
 @pytest.mark.claim("M1-C44")
@@ -189,20 +245,38 @@ def test_preintegration_chaining_is_the_group_product():
     """D_ij D_jk = D_ik, with the FIRST segment's velocity and the SECOND's duration."""
     r = rng(45)
     n_inst, n1, n2, dt = 300, 800, 1200, 5e-5
-    om1 = 0.7 * r.normal(size=(n_inst, 3))
-    a1 = 2.0 * r.normal(size=(n_inst, 3))
-    om2 = 0.7 * r.normal(size=(n_inst, 3))
-    a2 = 2.0 * r.normal(size=(n_inst, 3))
-    D_ij = imu.integrate_increment(om1, a1, dt, n1)
-    D_jk = imu.integrate_increment(om2, a2, dt, n2)
-    D_ik = imu.integrate_increment(om2, a2, dt, n2, D0=D_ij)
+    T1, T2 = n1 * dt, n2 * dt
+
+    # IDENTITY CHECK on the project's recursion, with TIME-VARYING per-step inputs
+    # (constant inputs would let an accumulation-order defect hide).
+    st = ode_truth.Stream.random(r, n_inst)
+    om1, a1 = st.sampled(dt, n1)
+    om2, a2 = st.shifted(T1).sampled(dt, n2)
+    D_ij = imu.integrate_increment(om1, a1, dt, n1, per_step=True)
+    D_jk = imu.integrate_increment(om2, a2, dt, n2, per_step=True)
+    D_ik = imu.integrate_increment(om2, a2, dt, n2, D0=D_ij, per_step=True)
+    D_full = imu.integrate_increment(np.concatenate([om1, om2]), np.concatenate([a1, a2]),
+                                     dt, n1 + n2, per_step=True)
     worst = 0.0
     for k in range(n_inst):
         A = gal(D_ij[0][k], D_ij[1][k], D_ij[2][k], D_ij[3])
         B = gal(D_jk[0][k], D_jk[1][k], D_jk[2][k], D_jk[3])
         C = gal(D_ik[0][k], D_ik[1][k], D_ik[2][k], D_ik[3])
-        worst = max(worst, float(np.abs(imu.chain(A, B) - C).max()))
+        F = gal(D_full[0][k], D_full[1][k], D_full[2][k], D_full[3])
+        worst = max(worst, float(np.abs(imu.chain(A, B) - C).max()),
+                    float(np.abs(imu.chain(A, B) - F).max()))
     assert worst <= 1e-12, worst
+
+    # ACCURACY: the continuous increments from three separate DOP853 solves chain
+    # as the group product.
+    eR, ev, ep = ode_truth.solve_increment(st, T1)
+    fR, fv, fp = ode_truth.solve_increment(st.shifted(T1), T2)
+    gR, gv, gp = ode_truth.solve_increment(st, T1 + T2)
+    worst_ode = 0.0
+    for k in range(n_inst):
+        C = imu.chain(gal(eR[k], ev[k], ep[k], T1), gal(fR[k], fv[k], fp[k], T2))
+        worst_ode = max(worst_ode, float(np.abs(C - gal(gR[k], gv[k], gp[k], T1 + T2)).max()))
+    assert worst_ode <= 1e-10, worst_ode
 
     # 2000 purely algebraic triples, plus the swapped-duration form which must fail
     worst_alg = 0.0
