@@ -1,0 +1,288 @@
+# M0 -- Literature matrix.
+#
+# M0 claims are about DOCUMENTED FACTS, so they are checkable as assertions over a
+# machine-readable conventions table that the implementer builds (shape specified in
+# docs/00_literature_matrix.md section 8: `CONVENTIONS: dict[str, dict]` and
+# `INCOMPATIBILITIES: dict[str, dict]`, suggested location src/conventions.py).
+#
+# Several claims additionally require a RUNTIME cross-check against gtsam 4.3.0 or a
+# numerical identity, so that the table cannot be made to pass by simply asserting itself.
+#
+# Equation numbers are per-source and are never compared across rows. Where a source states
+# something in prose or an unnumbered display, the required recorded value is the literal
+# string "could not extract" -- never a guess.
+milestone: M0
+claims:
+  - id: M0-C01
+    statement: >-
+      CONVENTIONS["rai"] records group == "SO(3)" with velocity and position as plain R^3
+      variables (element_order is None and tangent_order is None, since rai has no 5x5 group
+      element), AND a case-sensitive scan of the archived rai source text finds exactly zero
+      occurrences of each of "Galilean", "SE_2", "\\mathrm{SE}", "SE}_{2", "extended pose",
+      "equivariant", "Equivariant", "Delama", "Fornasier", "Weiss", while "Barfoot" occurs at
+      least once (reference [6]).
+    source: "Rai et al. Eqs. (3), (15), (21b), (21c), (36); full-text scan of arXiv:2609.38048v1"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the CONVENTIONS["rai"] fields. For the scan, fetch
+      https://arxiv.org/html/2609.38048v1, strip <script>/<style>, and count raw substrings in
+      the HTML (counts must be computed on the HTML, not on a MathML-stripped rendering, so
+      LaTeX spellings are caught). Expected counts: all of the listed Galilean/Delama terms ==
+      0; "Barfoot" >= 1; "Mahony" == 1 (reference [3] only, not a Delama citation). Cache the
+      fetched text under a test fixture so the test is not network-flaky; if the network is
+      unavailable the test must FAIL, not skip.
+    domain: "arXiv v1 of 29 Sep 2026 only; a later version could add citations."
+
+  - id: M0-C02
+    statement: >-
+      CONVENTIONS["rai"]["eq"]["rotation_residual"] == "19", and the recorded residual is
+      r^R_ij = (R_j - R_i dRbar_ij) - (1/2)(R_j + R_i dRbar_ij) xi_ij^ with
+      xi_ij = J^R_ij * delta_b_g where delta_b_g = b_g - bbar_g is the bias PERTURBATION
+      (not the full bias); the coefficient on the second term is exactly -1/2 and the first
+      term carries a minus sign.
+    source: "Rai et al. Eq. (19); restated Eq. (21a); xi_ij defined in Eq. (15)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert eq label == "19". Then assert a recorded structured form, e.g.
+      CONVENTIONS["rai"]["rotation_residual"] == {"terms": [(+1,"R_j"), (-1,"R_i dRbar"),
+      (-0.5,"(R_j + R_i dRbar) xi^")], "xi_uses": "delta_b_g"}. A test that only checks the
+      string "19" is insufficient -- the sign and the delta_b_g-vs-b_g distinction must both
+      be decided.
+    domain: "First-order bias model; Cayley pre-integrated dRbar_ij, not the Exp one."
+
+  - id: M0-C03
+    statement: >-
+      Rai Eq. (22b) is algebraically IDENTICAL to Eq. (19), not an approximation: for
+      Gamma_ij = (J^R_ij * bbar_g)^ and Rbreve_ij = dRbar_ij (I - Gamma_ij/2) and
+      Y_ij = R_i dRbar_ij (J^R_ij b_g)^ and Yprime_ij = R_j (J^R_ij b_g)^, the quantity
+      R_j (I + Gamma_ij/2) - R_i Rbreve_ij - (1/2)(Y_ij + Yprime_ij) equals
+      (R_j - R_i dRbar_ij) - (1/2)(R_j + R_i dRbar_ij) (J^R_ij (b_g - bbar_g))^ to 1e-12
+      for 1e4 random draws.
+    source: "DERIVED from Rai et al. Eqs. (19), (22a), (22b), (22c)"
+    kind: DERIVED
+    test_hint: >-
+      Draw 1e4 independent samples: R_i, R_j, dRbar uniform on SO(3) (scipy Rotation.random);
+      J^R a 3x3 standard-normal matrix (it need NOT be a valid Jacobian for the identity to
+      hold); b_g, bbar_g standard-normal 3-vectors. Compute both expressions and assert
+      max elementwise abs difference < 1e-12. Observed here: 3.6e-15. If this fails, the
+      lifting in Eq. (28) is NOT exact and every downstream QCQP claim is void.
+    domain: "Pure algebra -- holds for arbitrary 3x3 J^R and arbitrary b_g; no small-angle or chart restriction."
+
+  - id: M0-C04
+    statement: >-
+      CONVENTIONS["rai"]["eq"]["lifted_vector"] == "28" and the recorded lifted decision vector
+      is exactly the ordered list
+      [vec(R_i), v_i, p_i] per keyframe, [b_m] per bias block, [vec(Y_ij), vec(Y'_ij), W^v_ij,
+      W^p_ij] per IMU edge, and the single homogenising scalar s LAST; and
+      CONVENTIONS["rai"]["eq"]["homogeniser"] == "31" recording s**2 == 1 together with the
+      primary rotation constraints R_i^T R_i == s**2 * I_3 and the cross-product handedness
+      R_i^(a) x R_i^(b) == s * R_i^(c) over cyclic (a,b,c).
+    source: "Rai et al. Eq. (28); Eqs. (22c), (26a), (26b) for the auxiliary definitions; Eq. (31)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the recorded block sequence as a tuple of (scope, name) pairs, including that "s"
+      is the final entry. Separately assert that the recorded primary-constraint set for Eq.
+      (31) contains all THREE families (s^2=1, column orthonormality, cross-product handedness)
+      -- omitting handedness admits det = -1 spurious points (pre-flight F3).
+    domain: "Absolute rotations R_i only; the Cayley residual rotation needs no determinant constraint (pre-flight F3)."
+
+  - id: M0-C05
+    statement: >-
+      CONVENTIONS["rai"]["redundant_constraints"] maps A1->"32", B1->"33", B2->"34", C1->"35"
+      with cardinalities A1 == "6/node", B1 == "3/lifting", C1 == "2/edge" and
+      B2 == "could not extract"; and CONVENTIONS["rai"]["ablation"] records
+      total_solves == 840, gap_through_B1_at_least == 0.88, certified_through_B1 == "0/504",
+      median_gap_full_set == 2.8e-5, and decisive_subset == "B2".
+    source: "Rai et al. Eqs. (32), (33), (34), (35), Table I, Sec. VII-B"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the four id->equation strings, the four cardinality strings (B2 MUST be the
+      literal "could not extract" -- the paper gives no per-edge count for it), and the five
+      ablation values (floats to exact equality as written; they are quoted figures, not
+      measurements). Also assert decisive_subset == "B2": A1+B1 alone certify nothing.
+    domain: "Synthetic K=8, M=2, n=340; 2 primitives x 7 noise levels x 12 seeds x 5 cumulative stages."
+
+  - id: M0-C06
+    statement: >-
+      CONVENTIONS["rai"]["eq"]["isotropic_weighting"] == "23" and
+      CONVENTIONS["rai"]["isotropy_required"] is True with
+      CONVENTIONS["rai"]["isotropy_reason"] recording the identity tau*||r||^2 ==
+      tau*||R_i r||^2 for R_i in SO(3) -- i.e. the isotropic weight is STRUCTURALLY FORCED by
+      the device used to remove the rotation-state products, not a tuning choice.
+    source: "Rai et al. Eq. (23) and the preceding unnumbered display in Sec. IV-B"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert isotropy_required is True. Then make it falsifiable numerically: draw 1e4 random
+      R in SO(3), r in R^3, and a random SPD 3x3 W that is not a multiple of I; assert
+      r^T W r == (R r)^T W (R r) fails (max relative difference > 1e-3), while it holds to
+      1e-12 when W = tau*I. This decides the "structurally forced" word rather than trusting it.
+    domain: "Applies to the velocity and position residuals premultiplied by R_i (Eqs. 25a, 25b); drops cross-correlations of Sigma^f_ij."
+
+  - id: M0-C07
+    statement: >-
+      CONVENTIONS["delama"] records element_order == ("A","a","b","c") realised as the 5x5
+      matrix [[A, a, b],[0,1,c],[0,0,1]] at eq "3"; tangent_order == ("omega","v","r","alpha")
+      at eq "4"; inverse at eq "5" equal to (A^T, -A^T a, -A^T (b - c a), -c); and the adjoint
+      at eq "6" whose last row is [0,0,0,1] (the time coordinate is Ad-invariant).
+    source: "Delama et al. Eqs. (3), (4), (5), (6)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the four eq labels and the two ordering tuples. Cross-check the inverse formula
+      numerically: build the 5x5 from random (A, a, b, c), apply the recorded Eq. (5)
+      expression, and assert X @ X_inv == I_5 to 1e-12 over 1e4 draws. Also assert that the
+      recorded Delama tangent_order is componentwise the SAME as CONVENTIONS["gtsam"]
+      ["tangent_order"] == ("omega","nu","rho","alpha") -- the letters differ, the ordering
+      does not.
+    domain: "Matrix Lie group Gal(3); c is elapsed time, a is the velocity slot, b the position slot."
+
+  - id: M0-C08
+    statement: >-
+      CONVENTIONS["delama"]["group"] == "Gal(3) |x gal(3)" with state_dim == 20;
+      eq["semidirect_product"] == "1" recording XY = (AB, a + Ad_A[b]); and
+      action_handedness == "right" with eq["state_action"] == "24", citing the sentence
+      IMMEDIATELY AFTER Eq. (24) ("phi is a transitive and free right group action of G on M").
+    source: "Delama et al. Eq. (1), Eq. (24) and the sentence following it; Sec. IV-C; Eqs. (35)-(37)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert group string, state_dim == 20, eq labels, and action_handedness == "right".
+      Make the dimension falsifiable: assert 20 == dim(Gal(3)) + dim(gal(3)) == 10 + 10, and
+      that the recorded linearised error vector epsilon_k lives in R^20 with A_hat, B_hat both
+      20x20 in two 10x10 block rows (Eqs. 36, 37). Do NOT let state_dim be satisfied by any
+      value that is not also consistent with these block shapes.
+    domain: "Symmetry group, not the manifold: the manifold is M = Gal(3) x R^10."
+
+  - id: M0-C09
+    statement: >-
+      CONVENTIONS["delama"]["bias_order"] == ("b_omega","b_a","b_nu","b_rho") with
+      bias_dim == 10, bias_virtual_slices == (slice(6,9), slice(9,10)) naming a VIRTUAL
+      VELOCITY bias and a VIRTUAL TIME bias, bias_zero_process_noise == ("b_nu","b_rho"), and
+      eq["bias_process_noise"] == "could not extract" (the Q_d definition is an unnumbered
+      Define: line of Algorithm 1, not a numbered equation).
+    source: "Delama et al. Sec. IV-C; Algorithm 1, Q_d definition (unnumbered)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert all five fields. The eq entry MUST be exactly the string "could not extract" --
+      any digit-bearing label here is a fabricated citation and must fail the test. Also assert
+      that CONVENTIONS["gtsam"]["bias_dim"] == 6 and
+      CONVENTIONS["gtsam"]["bias_virtual_slices"] == (), so the two bias models cannot be
+      silently interchanged.
+    domain: "Virtual channels carry inputs nu_k = 0 and rho_k = 1; they are not padding."
+
+  - id: M0-C10
+    statement: >-
+      The exp/log-essential column is exactly
+      {"rai": False, "barfoot": False, "delama": True, "gtsam": True}; and
+      CONVENTIONS["delama"]["eq"]["log_G"] == "31" and
+      CONVENTIONS["delama"]["eq"]["error_local_coords"] == "34", both recorded as requiring
+      BOTH the Gal(3) logarithm (eq "9") and the inverse left Jacobian J_L^-1 (eq "10").
+    source: "Delama et al. Eqs. (9), (10), (29), (30), (31), (34); Rai et al. Eqs. (3), (14); Barfoot et al. Eqs. (14), (15); GTSAM galileanimufactor Eqs. (6), (42)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the four booleans and the two Delama eq labels, plus that the recorded
+      dependency set for eq "34" contains both "log" and "J_L^{-1}". Falsifiability anchor for
+      the False entries: assert CONVENTIONS["rai"]["eq"]["chordal_residual"] == "14" and
+      CONVENTIONS["rai"]["eq"]["cayley"] == "3" -- rai removes Log via the chordal residual AND
+      Exp via Cayley; removing only one leaves a non-polynomial problem.
+    domain: "'Essential' means appearing in the estimator residual or error chart, not in offline constant computation."
+
+  - id: M0-C11
+    statement: >-
+      CONVENTIONS["delama"]["error_handedness"] == "right-invariant" (navigation error
+      Upsilon_k Upsilon_hat_k^-1, eq "34") with bias_correction_side == "left" (eq "39"); and
+      CONVENTIONS["gtsam"]["error_handedness"] == "left-invariant" (e = xi_hat^-1 xi, eq "21")
+      with bias_correction_side == "right" (eq "34" of the GTSAM doc). The two sources differ
+      on BOTH axes.
+    source: "Delama et al. Eqs. (34), (39); GTSAM galileanimufactor Eqs. (21), (22), (34), (35), (36) and Sec. 1 prose"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert all four values and that delama != gtsam on each axis. Guard against eq-label
+      collision: the label "34" appears in BOTH sources meaning different equations, so the
+      test must read it out of the per-source dict and must NOT compare eq strings across rows.
+      Add an explicit assertion that CONVENTIONS["delama"]["eq"]["error_local_coords"] and
+      CONVENTIONS["gtsam"]["eq"]["bias_correction"] are allowed to be equal strings without
+      implying any relationship.
+    domain: "Handedness of the ERROR; separately, Delama's state ACTION of Eq. (24) is a right action (M0-C08). The two are different statements."
+
+  - id: M0-C12
+    statement: >-
+      CONVENTIONS["barfoot"]["rank1_criterion"] records the log-SVR test
+      log10(sigma_1 / sigma_2) >= 5 with eq["rank1_criterion"] == "could not extract";
+      CONVENTIONS["barfoot"]["tightness_degrades_with"] contains "measurement sparsity" with
+      eq["sparsity"] == "could not extract"; and CONVENTIONS["rai"]["rank1_criterion"] records
+      the DIFFERENT test "eigenvalues above 1e-6 * lambda_max" -- the two criteria are recorded
+      as distinct and are not aliased to one another.
+    source: "Barfoot et al. Sec. 3 prose and the captions of Figs. 2, 4, 5, 9, 12; Sec. 5 prose (Fig. 12 vs Fig. 9); Rai et al. Sec. VII-A"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Assert the threshold value 5 (base-10 log of a SINGULAR-value ratio, i.e. 1e5) and that
+      both barfoot eq entries are exactly "could not extract". Assert
+      CONVENTIONS["rai"]["rank1_criterion"] != CONVENTIONS["barfoot"]["rank1_criterion"].
+      Numerical anchor, with the disagreement in the RIGHT direction: Rai's cut is at 1e-6
+      relative, Barfoot's at 1e-5 relative, so they differ on ratios between 1e5 and 1e6.
+      Build a symmetric PSD 10x10 with eigenvalues (1.0, 10**-5.5, 1e-9, ...): Barfoot's rule
+      ACCEPTS it as rank 1 (log-SVR 5.5 >= 5) while Rai's rule REJECTS it (10**-5.5 = 3.2e-6
+      is above 1e-6*lambda_max, so the numerical rank is 2). Assert both outcomes.
+    domain: "Barfoot's criterion is on singular values of the SDP solution X; Rai's is on eigenvalues of Z_hat. Both are numerical-rank heuristics, not proofs."
+
+  - id: M0-C13
+    statement: >-
+      INCOMPATIBILITIES contains keys "O1".."O7", and each of the following holds against the
+      INSTALLED gtsam 4.3.0 as well as against the recorded table:
+      O1 Gal3 matrix column 4 is velocity while Gal3(R, r, v, t) takes position second;
+      O2 Gal3 tangent is (omega, nu, rho, alpha) while NavState tangent is (dtheta, dp, dv),
+      so the 9-of-10 map P_N (GTSAM doc eq "38") selects Gal3 rows [0:3, 6:9, 3:6];
+      O3 imuBias::ConstantBias.vector() is [b_a; b_omega] while this project fixes [b_g; b_a];
+      O4 integrateMeasurement takes (acc, omega); O5 Barfoot SE(3) tangent is [rho; phi]
+      (translation first, eq "10"); O6 the letters r/rho denote position in gtsam/barfoot but
+      the position SLOT in delama; O7 the gravity position block is -0.5*g*dt^2 in the Gal(3)
+      left factor and +0.5*g*dt^2 in the SE_2(3) NavState factor W_ij.
+    source: "GTSAM galileanimufactor Eqs. (1), (2), (5), (10), (15), (20), (37), (38); Barfoot et al. Eq. (10); Delama et al. Eqs. (4), (18); runtime inspection of gtsam 4.3.0"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      Runtime, not just table lookup. (O1) gtsam.Gal3(Rot3.Identity(), [1,2,3], [10,20,30],
+      7.0).matrix() must put [10,20,30] in column index 3 and [1,2,3] in column index 4.
+      (O2) for i in 3..5, gtsam.Gal3.Hat(e_i) must be nonzero in column 3 while
+      NavState().retract(e_i) must move position; assert the recorded P_N row selection
+      [0,1,2,6,7,8,3,4,5]. (O3) imuBias.ConstantBias([1,2,3],[40,50,60]).vector() ==
+      [1,2,3,40,50,60]. (O5)-(O6) table assertions. (O7) assert the two recorded sign values
+      differ and that INCOMPATIBILITIES["O7"]["reason"] names the Galilean t2*v1 coupling term
+      of GTSAM eq "3" -- it is a consequence of the group law, not a contradiction.
+    domain: "gtsam 4.3.0 exactly; re-run on any version bump. The doc pages carry no version banner."
+
+  - id: M0-C14
+    statement: >-
+      CONVENTIONS["gtsam"]["eq"]["endpoint"] == "17" recording
+      X_j = W_ij . phi_{dt_ij}(X_i) . U_ij(beta_i) with W_ij = NavState(I, 0.5*g*dt^2, g*dt)
+      (eq "15"), phi_dt(R,p,v) = (R, p + v*dt, v) (eq "15"), U_ij = NavState(dR, dp, dv)
+      (eq "16") -- and NOT the form H_ij X_i D_ij; this is verified at runtime to <= 1e-12
+      against gtsam's own predictor, while the coasting-free variant W_ij . X_i . U_ij is
+      verified to be WRONG by more than 1e-2 in NavState local coordinates.
+    source: "GTSAM galileanimufactor Eqs. (15), (16), (17)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: >-
+      params = PreintegrationParams.MakeSharedU(9.81) (gives g = [0,0,-9.81]); build
+      PreintegratedImuMeasurementsG at a nonzero bias; integrate >= 50 samples with nonzero
+      acc and omega over dt_ij ~ 0.5 s. X_j = pim.predict(X_i, bias) for a nontrivial X_i with
+      nonzero velocity. Assert norm(X_j.localCoordinates(W.compose(phi).compose(U))) < 1e-12
+      (observed 9.4e-17) AND norm(X_j.localCoordinates(W.compose(X_i).compose(U))) > 1e-2
+      (observed 0.229). The second assertion is what makes the claim falsifiable -- without it
+      a trivially-equal U would pass.
+    domain: "Inertial navigation frame (omegaCoriolis unset). The rotating-frame form is eq (47) and is out of Stage B scope. W_ij uses NavState(R, p, v) argument order."
+
+  - id: M0-C15
+    statement: >-
+      Delama Eq. (18)'s Gamma_ij equals the pre-flight F2 corrected left factor T(-dt) @ H'
+      EXACTLY (zero difference), where H' = [[I, g*dt, -0.5*g*dt^2],[0,1,0],[0,0,1]] and
+      T(-dt) = [[I,0,0],[0,1,-dt],[0,0,1]]; and the right-multiplied variant H' @ T(-dt) is
+      NOT equal to Gamma_ij. The project's corrected endpoint relation therefore reproduces a
+      published equation rather than merely passing a numerical test.
+    source: "DERIVED from Delama et al. Eq. (18) and docs/00_preflight_findings.md F2"
+    kind: DERIVED
+    test_hint: >-
+      For >= 100 random (g, dt) with dt != 0 and g != 0, build Gamma_ij directly from Delama
+      Eq. (18) and build T(-dt) @ H' from the F2 forms; assert
+      numpy.array_equal(Gamma, T @ Hp) OR norm(Gamma - T @ Hp) == 0.0 exactly (observed 0.0,
+      not merely small). Then assert norm(Gamma - Hp @ T) > 1e-6 for dt != 0 (observed 2.45 at
+      dt = 0.5, g = 9.81) -- side placement is load-bearing. A test that only checks the first
+      half would pass for a commuting pair and is insufficient.
+    domain: "5x5 Gal(3) matrices; dt != 0. Exactness (not tolerance) is expected because both expressions are built from the same literals."
