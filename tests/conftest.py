@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from src import gal3
 from src import imu_dynamics as imu
@@ -22,11 +23,16 @@ def rng(offset: int = 0) -> np.random.Generator:
     return np.random.default_rng(SEED + offset)
 
 
+def _rotvec_to_matrix(phi):
+    """Exp_SO3 by scipy -- an authority independent of the module under test."""
+    return Rotation.from_rotvec(np.asarray(phi, dtype=float)).as_matrix()
+
+
 def rand_rot(r, n=None, scale=1.0):
-    """Exp_SO3 of scale * N(0, I3)."""
+    """Exp_SO3 of scale * N(0, I3), built with scipy (never with ``gal3.so3_exp``)."""
     if n is None:
-        return gal3.so3_exp(scale * r.normal(size=3))
-    return np.array([gal3.so3_exp(scale * r.normal(size=3)) for _ in range(n)])
+        return _rotvec_to_matrix(scale * r.normal(size=3))
+    return np.array([_rotvec_to_matrix(scale * r.normal(size=3)) for _ in range(n)])
 
 
 def rand_axis(r, n=None):
@@ -37,10 +43,10 @@ def rand_axis(r, n=None):
 def rand_rot_angle(r, lo, hi, n=None):
     """Random rotation with ||phi|| uniform in (lo, hi)."""
     if n is None:
-        return gal3.so3_exp(r.uniform(lo, hi) * rand_axis(r))
+        return _rotvec_to_matrix(r.uniform(lo, hi) * rand_axis(r))
     th = r.uniform(lo, hi, size=n)
     ax = rand_axis(r, n)
-    return np.array([gal3.so3_exp(t * a) for t, a in zip(th, ax)])
+    return np.array([_rotvec_to_matrix(t * a) for t, a in zip(th, ax)])
 
 
 def rand_gal(r, v_scale=1.0, p_scale=3.0, t_scale=1.0, rot_scale=1.0):

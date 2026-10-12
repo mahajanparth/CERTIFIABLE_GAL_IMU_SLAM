@@ -34,6 +34,7 @@ from src.gal3 import (
 
 from .conftest import (  # noqa: F401  (relative import keeps the helpers in one place)
     G,
+    _rotvec_to_matrix,
     rand_axis,
     rand_gal,
     rand_rot,
@@ -1042,7 +1043,7 @@ def test_closed_forms_match_gtsam():
         X = gtsam.Gal3(gtsam.Rot3(R), p, v, t)      # POSITION SECOND
         w_Ad = max(w_Ad, float(np.abs(X.AdjointMap() - Ad(gal(R, v, p, t))).max()))
 
-        Rl = gal3.so3_exp(r.uniform(0.05, np.pi - 1e-3) * rand_axis(r))
+        Rl = _rotvec_to_matrix(r.uniform(0.05, np.pi - 1e-3) * rand_axis(r))
         Xl = gtsam.Gal3(gtsam.Rot3(Rl), p, v, t)
         w_log = max(w_log, float(np.abs(gtsam.Gal3.Logmap(Xl) - log(gal(Rl, v, p, t))).max()))
     assert w_exp <= 1e-9, w_exp
