@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: main
-  status: blocked
+  status: implementing
   claims: []
   seed:
     id: M0-S01
@@ -40,6 +40,11 @@ milestones:
   - role: implementer
     agent_id: impl-M0-002-remediation
     started: '2026-10-12T19:50:55+00:00'
+    finished: '2026-10-12T23:24:07+00:00'
+    outcome: failed
+  - role: implementer
+    agent_id: impl-M0-003-remediation
+    started: '2026-10-12T23:24:07+00:00'
     finished: null
     outcome: running
   blocking_findings:
@@ -70,7 +75,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: main
-  status: blocked
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -117,6 +122,11 @@ milestones:
   - role: implementer
     agent_id: impl-M1-002-remediation
     started: '2026-10-12T20:21:20+00:00'
+    finished: '2026-10-12T23:24:07+00:00'
+    outcome: failed
+  - role: implementer
+    agent_id: impl-M1-003-remediation
+    started: '2026-10-12T23:24:07+00:00'
     finished: null
     outcome: running
   blocking_findings:
@@ -165,7 +175,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: blocked
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -206,6 +216,11 @@ milestones:
   - role: implementer
     agent_id: impl-M2-002-remediation
     started: '2026-10-12T20:10:33+00:00'
+    finished: '2026-10-12T23:24:07+00:00'
+    outcome: failed
+  - role: implementer
+    agent_id: impl-M2-003-remediation
+    started: '2026-10-12T23:24:07+00:00'
     finished: null
     outcome: running
   blocking_findings:
