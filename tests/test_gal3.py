@@ -866,6 +866,7 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset):
     assert worst_t <= 1e-12, worst_t
     assert worst_p <= 1e-12, worst_p
     assert worst_rv <= 1e-12, worst_rv
+    assert_discrete_converges(d)
 
 
 @pytest.mark.claim("M1-C35")

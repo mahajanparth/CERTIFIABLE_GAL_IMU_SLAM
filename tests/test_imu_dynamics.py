@@ -55,6 +55,7 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset):
     # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
     worst_id = residual(d["disc"])
     assert worst_id <= 1e-12, worst_id
+    assert_discrete_converges(d)
 
     # 2000 algebraic instances against the Forster endpoint
     r = rng(370)
