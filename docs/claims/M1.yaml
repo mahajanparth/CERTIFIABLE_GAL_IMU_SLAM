@@ -442,16 +442,20 @@ claims:
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C40
-  statement: Phi_Dt(R,p,v) = (R, p + v*Dt, v) is NOT left or right translation by any fixed NavState (a
-    factor fitted on one element fails on a second with residual > 0.5), but it IS a group automorphism
-    of NavState; in Gal(3) it is the inner automorphism X -> T(-Dt) X T(Dt) restricted to the t = 0 slice,
-    exactly.
+  statement: Phi_Dt(R,p,v) = (R, p + v*Dt, v) is NOT left or right translation by any fixed NavState
+    -- Phi_Dt fixes the identity, so the only candidate left or right factor is the identity itself, yet
+    Phi_Dt(X) differs from X by exactly v*Dt in position (nonzero whenever v != 0 and Dt != 0) -- but it
+    IS a group automorphism of NavState; in Gal(3) it is the inner automorphism X -> T(-Dt) X T(Dt) restricted
+    to the t = 0 slice, exactly.
   source: DERIVED
   kind: DERIVED
-  test_hint: '(i) Fit N_L = Phi_Dt(X) X^-1 from one random X, apply to a second random Y: max|N_L Y -
-    Phi_Dt(Y)| >= 0.5 (measured 1.177); same for the right factor (measured 0.725). (ii) 2000 random pairs:
-    max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured 4.4e-16). (iii) 2000 random (R,v,p):
-    max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12 (measured 0.0).'
+  test_hint: '(i) Phi_Dt(I) == I exactly; 2000 random X: Phi_Dt(X) has the R and v of X and position p
+    + v*Dt to 1e-12, so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max
+    over draws >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to a second:
+    N_L = Phi_Dt(X) X^-1 is exact at X (residual 5.55e-16 at Y = X) and its residual goes continuously to
+    0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs: max|Phi_Dt(N1) Phi_Dt(N2)
+    - Phi_Dt(N1 N2)| <= 1e-12 (measured 1.8e-15; verifier 1.78e-15 over 2e4 x 2). (iii) 2000 random (R,v,p):
+    max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12 (measured 0.0; verifier 0.0 over 2e4 x 3).'
   domain: Conjugation statement requires t(X) = 0.
   verdict: REFUTED
   attack: see docs/verification/m1-gal3-mechanics.md

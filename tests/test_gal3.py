@@ -894,17 +894,34 @@ def test_phi_dt_is_an_automorphism_not_a_translation():
     def phi(N):
         return gtsam.NavState(N.attitude(), N.position() + N.velocity() * Dt, N.velocity())
 
-    # (i) a left or right factor fitted on one element fails on a second
-    err_L = err_R = 0.0
-    for _ in range(20):
-        X = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
-        Y = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
-        N_L = phi(X).compose(X.inverse())
-        N_R = X.inverse().compose(phi(X))
-        err_L = max(err_L, float(np.abs(N_L.compose(Y).matrix() - phi(Y).matrix()).max()))
-        err_R = max(err_R, float(np.abs(Y.compose(N_R).matrix() - phi(Y).matrix()).max()))
-    assert err_L >= 0.5, err_L
-    assert err_R >= 0.5, err_R
+    # (i) no fixed translation.  Phi_Dt fixes the identity, so if Phi_Dt(X) = N X
+    #     (or X N) for all X then N = Phi_Dt(I) = I -- and Phi_Dt(X) - X is exactly
+    #     v Dt in position.  (A factor FITTED on one element, N_L = Phi(X) X^-1, is
+    #     exact at X and need not fail on a nearby Y by any fixed amount, so no such
+    #     lower bound is asserted.)
+    I_nav = gtsam.NavState()
+    assert np.array_equal(phi(I_nav).matrix(), I_nav.matrix())
+    worst_shift = 0.0
+    max_gap = 0.0
+    for _ in range(2000):
+        R, p, v = rand_rot(r), r.normal(size=3), r.normal(size=3)
+        X = gtsam.NavState(gtsam.Rot3(R), p, v)
+        Y = phi(X)
+        worst_shift = max(worst_shift,
+                          float(np.abs(Y.attitude().matrix() - R).max()),
+                          float(np.abs(Y.velocity() - v).max()),
+                          float(np.abs(Y.position() - (p + v * Dt)).max()))
+        # the only candidate factor (the identity) misses by |v| Dt
+        gap = float(np.abs(I_nav.compose(X).matrix() - Y.matrix()).max())
+        assert abs(gap - float(np.abs(v).max()) * Dt) <= 1e-12, gap
+        max_gap = max(max_gap, gap)
+    assert worst_shift <= 1e-12, worst_shift
+    assert max_gap >= 0.5, max_gap
+    # the fitted factor is exact at its own fitting point (so "fails on a second
+    # element by > 0.5" is NOT a property of Phi_Dt)
+    X = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
+    N_L = phi(X).compose(X.inverse())
+    assert float(np.abs(N_L.compose(X).matrix() - phi(X).matrix()).max()) <= 1e-12
 
     # (ii) but it IS an automorphism
     worst = 0.0
