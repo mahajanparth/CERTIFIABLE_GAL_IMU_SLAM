@@ -151,6 +151,11 @@ milestones:
     started: '2026-10-12T19:49:25+00:00'
     finished: '2026-10-12T20:09:51+00:00'
     outcome: completed
+  - role: implementer
+    agent_id: impl-M2-002-remediation
+    started: '2026-10-12T20:10:33+00:00'
+    finished: null
+    outcome: running
   blocking_findings:
   - id: M2-F01
     resolved: false
