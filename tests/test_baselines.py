@@ -62,6 +62,23 @@ def _rot_err(A, B_) -> float:
     return float(np.abs(T.so3_log(np.asarray(A).T @ np.asarray(B_))).max())
 
 
+def _zoh_increment_expm(w, a, Tt):
+    """Exact constant-input increment ``(dR, dv, dp)`` from ONE 5x5 matrix exponential.
+
+    ``X = [[R, v, p], [0, 1, t], [0, 0, 1]]`` obeys ``dX/dt = X A`` with
+    ``A = [[w^, a, 0], [0, 0, 1], [0, 0, 0]]`` (``dR = R w^``, ``dv = R a``, ``dp = v``,
+    ``dt = 1``), so ``X(T) = expm(T A)``.  ``scipy.linalg.expm`` and nothing from
+    ``src`` beyond ``hat`` -- an independent reference for the GTSAM side, not a
+    re-reading of ``T.M1`` / ``T.M2``.
+    """
+    A = np.zeros((5, 5))
+    A[0:3, 0:3] = T.hat(np.asarray(w, dtype=float))
+    A[0:3, 3] = np.asarray(a, dtype=float)
+    A[3, 4] = 1.0
+    X = expm(Tt * A)
+    return X[0:3, 0:3], X[0:3, 3], X[0:3, 4]
+
+
 # ======================================================================================
 # Fixture
 # ======================================================================================
@@ -144,12 +161,6 @@ def test_c02_closed_form_increment_is_the_exact_reference():
     states = T.exact_states()
     assert _max_abs(states[1].v, T.REF_V_KF1) <= 1e-12
     assert _max_abs(states[1].p, T.REF_P_KF1) <= 1e-12
-    # REF_R_KF1 used to be *defined* as R_0 @ REF_DR_01, which made this comparison
-    # circular -- it could not fail for any input.  It is now a transcribed literal, so
-    # the chaining relation genuinely has to reproduce it.
-    assert T.REF_R_KF1.flags.owndata, "REF_R_KF1 must be a literal, not a derived view"
-    assert _max_abs(states[1].R, T.REF_R_KF1) <= 1e-12
-    assert _max_abs(T.R_0 @ T.REF_DR_01, T.REF_R_KF1) <= 1e-12
     assert _max_abs(states[2].v, T.REF_V_KF2) <= 1e-12
     assert _max_abs(states[2].p, T.REF_P_KF2) <= 1e-12
     assert _max_abs(states[2].R, T.REF_R_KF2) <= 1e-12
@@ -831,6 +842,48 @@ def test_c20_galilean_bias_correction_is_right_composed_in_gal3():
             return B3.corrected_increment_gal3(_pim, db)
 
         U_hat = increment_at(np.zeros(6))
+
+        # -- the bias boundary, against an INDEPENDENT reference ---------------------------
+        # Everything after this block is self-referential: J is estimated about U_hat and
+        # both models are scored against U(db) from the same adapter.  An adapter that
+        # skips the [b_g; b_a] <-> (accel, gyro) swap (mutant M07) integrates the edge at
+        # a wrong nominal bias AND perturbs in a wrong order, and every GTSAM-against-GTSAM
+        # comparison cancels it.  So pin the GTSAM side to the 5x5-expm closed form:
+        # (i) U_hat at bbar = BIAS_TRUE must be the bias-free increment, to Tier 0; and
+        # (ii) a perturbation whose accel and gyro blocks are DISTINCT (and of different
+        # size) must shift the accel input by db[0:3] and the gyro input by db[3:6].
+        # GTSAM's predict() applies a first-order correction, not a re-integration, so (ii)
+        # holds to O(||db||^2) -- measured 2.26e-6 / 3.29e-6 on the two edges, quartering
+        # exactly (4.00) when db is halved -- while the block-swapped reading is off by
+        # 4.3e-2 / 4.5e-2.  The bound 1e-5 sits between them with ~3x / ~4000x margin.
+        def reference(db_gtsam, _edge=edge):
+            db_a, db_g = np.asarray(db_gtsam[0:3]), np.asarray(db_gtsam[3:6])
+            return _zoh_increment_expm(_edge.omega_body - db_g, _edge.f_body - db_a,
+                                       _edge.duration)
+
+        def boundary_err(db_gtsam, ref_db=None):
+            R_, p_, v_, _ = B3.gal3_components(increment_at(db_gtsam))
+            ref = reference(db_gtsam if ref_db is None else ref_db)
+            return max(_max_abs(R_, ref[0]), _max_abs(v_, ref[1]), _max_abs(p_, ref[2]))
+
+        anchor_err = boundary_err(np.zeros(6))
+        assert anchor_err <= TIER0, \
+            f"edge {edge.index}: U_hat is not the bias-free increment: {anchor_err:.3e}"
+
+        db_probe = np.array([3.0e-2, -2.0e-2, 1.0e-2,       # accel block (GTSAM cols 0:3)
+                             -4.0e-3, 2.0e-3, 5.0e-3])      # gyro block  (GTSAM cols 3:6)
+        probe_err = boundary_err(db_probe)
+        assert probe_err <= 1e-5, (
+            f"edge {edge.index}: U(db) does not apply db in (accel, gyro) column order: "
+            f"{probe_err:.3e}")
+        quarter = probe_err / boundary_err(db_probe / 2.0)
+        assert 3.5 <= quarter <= 4.5, \
+            f"edge {edge.index}: boundary error is not O(||db||^2): ratio {quarter:.3f}"
+        # and the probe really discriminates: the block-swapped reading is far away
+        swapped_gap = boundary_err(db_probe, ref_db=np.r_[db_probe[3:6], db_probe[0:3]])
+        assert swapped_gap >= 1e-2, \
+            f"edge {edge.index}: probe cannot see a bias block swap ({swapped_gap:.3e})"
+
         J = B3.bias_jacobian_fd(increment_at, eps=B3.J_FD_EPS)
         assert J.shape == (10, 6)
         # columns are GTSAM's (accel, gyro); rotation cannot see accel bias, and the

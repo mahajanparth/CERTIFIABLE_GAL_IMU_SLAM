@@ -331,9 +331,9 @@ def _outcome(short_name):
     try:
         fn()
     except AssertionError as exc:
-        return f"AssertionError: {str(exc).splitlines()[0][:160]}"
+        return f"AssertionError: {(str(exc).splitlines() or ['<no message>'])[0][:160]}"
     except Exception as exc:                                  # noqa: BLE001
-        return f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
+        return f"{type(exc).__name__}: {(str(exc).splitlines() or ['<no message>'])[0][:160]}"
     return None
 
 
