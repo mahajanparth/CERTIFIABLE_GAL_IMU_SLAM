@@ -19,13 +19,42 @@ class LedgerError(RuntimeError):
     pass
 
 
+CLAIMS_DIR = ROOT / "docs" / "claims"
+
+
 def load(path: pathlib.Path | None = None) -> dict[str, Any]:
+    """Load state.yaml, then overlay per-milestone claim files.
+
+    Claims live in docs/claims/<MID>.yaml rather than in state.yaml so that several
+    milestones can be derived concurrently on separate branches without three agents
+    fighting over one file. state.yaml keeps only milestone metadata, seeds and run history.
+    """
     path = path or STATE
     if not path.exists():
         raise LedgerError(f"no ledger at {path}")
     data = yaml.safe_load(path.read_text()) or {}
+    _overlay_claims(data)
     validate(data)
     return data
+
+
+def _overlay_claims(data: dict[str, Any]) -> None:
+    if not CLAIMS_DIR.exists():
+        return
+    for ms in data.get("milestones") or []:
+        f = CLAIMS_DIR / f"{ms['id']}.yaml"
+        if not f.exists():
+            continue
+        doc = yaml.safe_load(f.read_text()) or {}
+        claims = doc.get("claims") or []
+        for c in claims:
+            c.setdefault("verdict", None)
+            c.setdefault("attack", None)
+        if claims:
+            ms["claims"] = claims
+        seed = doc.get("seed")
+        if seed:
+            ms["seed"] = {**(ms.get("seed") or {}), **seed}
 
 
 def save(data: dict[str, Any], path: pathlib.Path | None = None) -> None:
