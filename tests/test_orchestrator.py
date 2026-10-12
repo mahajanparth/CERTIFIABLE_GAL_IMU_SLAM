@@ -189,3 +189,25 @@ def test_overall_progress_counts_empty_milestones_as_zero():
     d = {"project": "T", "stage": "B", "milestones": [_ms(), _ms(id="M8", claims=[])]}
     d["milestones"][1]["claims"] = []
     assert ev.overall_progress(d, PASSING) == pytest.approx(0.5)
+
+
+@pytest.mark.claim("ORCH-C17")
+def test_gate_blocks_on_unresolved_verifier_finding():
+    """A claim bound to a test that cannot fail is not verified, it only looks verified.
+
+    The M0 verifier found 40 of 41 corrupted table fields survived the suite -- every claim
+    was CONFIRMED and every test passed, yet the tests did not test the table. Passing a gate
+    in that state would certify nothing, so verifier findings block until remediated.
+    """
+    ms = _ms(blocking_findings=[
+        {"id": "M0-F01", "summary": "40/41 mutations survive; tests do not read the table",
+         "resolved": False}])
+    ok, reasons = gates.evaluate(ms, PASSING)
+    assert not ok, "gate passed despite an unresolved finding that the tests cannot fail"
+    assert any("M0-F01" in r for r in reasons)
+
+
+@pytest.mark.claim("ORCH-C18")
+def test_resolved_finding_stops_blocking():
+    ms = _ms(blocking_findings=[{"id": "M0-F01", "summary": "fixed", "resolved": True}])
+    assert gates.evaluate(ms, PASSING)[0]

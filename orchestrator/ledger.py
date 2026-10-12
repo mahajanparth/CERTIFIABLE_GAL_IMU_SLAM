@@ -109,6 +109,9 @@ def validate(data: dict[str, Any]) -> None:
             seen_claims.add(cid)
             if c.get("verdict") not in VERDICTS:
                 raise LedgerError(f"{cid}: bad verdict {c.get('verdict')!r}")
+        for f in ms.get("blocking_findings") or []:
+            if not f.get("id") or not f.get("summary"):
+                raise LedgerError(f"{mid}: blocking_finding needs id and summary")
         for run in ms.get("agent_runs") or []:
             if run.get("role") not in ROLES:
                 raise LedgerError(f"{mid}: bad agent role {run.get('role')!r}")

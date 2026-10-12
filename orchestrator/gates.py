@@ -26,6 +26,13 @@ def evaluate(ms: dict, evidence: dict[str, dict]) -> tuple[bool, list[str]]:
         }[st]
         reasons.append(f"{c['id']} is {st}: {detail}")
 
+    # A verifier may report findings that invalidate the evidence itself -- most importantly
+    # tests that CANNOT FAIL. A claim bound to a vacuous test is not verified, it only looks
+    # verified, so passing the gate on it would certify nothing. These block until remediated.
+    for f in ms.get("blocking_findings") or []:
+        if not f.get("resolved"):
+            reasons.append(f"unresolved verifier finding {f.get('id')}: {f.get('summary')}")
+
     seed = ms.get("seed") or {}
     if not seed.get("id"):
         reasons.append("no seeded defect planted -- verifier was never calibrated")

@@ -4,19 +4,23 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: main
-  status: verifying
+  status: blocked
   claims: []
   seed:
     id: M0-S01
     statement: Delama et al. define phi as a LEFT group action of G on M, consistent with G being the
       left-trivialized tangent group of Gal(3); the navigation error log(Upsilon_k Upsilonhat_k^-1) is
       correspondingly left-invariant.
-    caught: null
+    caught: true
     published: false
     why_false: 'The action is a RIGHT action -- stated explicitly in the sentence immediately after Eq.
       (24): "phi is a transitive and free right group action of G on M." The group being LEFT-trivialized
       while the action is RIGHT is exactly the conflation a careless verifier makes, which is what makes
       this a fair test rather than a gotcha.'
+    how: 'By computing and by going to the source: quoted the verbatim sentence after Delama Eq. (24),
+      showed ''left group action'' occurs 0 times and ''right group action'' twice, proved Upsilon*Upsilonhat^-1
+      is right-invariant by construction, and corroborated against the GTSAM doc. Not found via git history
+      -- M0''s seed was never committed.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M0-001
@@ -31,8 +35,38 @@ milestones:
   - role: verifier
     agent_id: verify-M0-001
     started: '2026-10-12T19:30:11+00:00'
+    finished: '2026-10-12T19:50:15+00:00'
+    outcome: completed
+  - role: implementer
+    agent_id: impl-M0-002-remediation
+    started: '2026-10-12T19:50:55+00:00'
     finished: null
     outcome: running
+  blocking_findings:
+  - id: M0-F01
+    resolved: false
+    summary: 'mutation testing: 40 of 41 corrupted CONVENTIONS/INCOMPATIBILITIES fields survive the suite,
+      including fields named in claim statements (delama.inverse_formula, rai.rank1_criterion.*, O7.a.says,
+      O2.P_N_blocks, state_dim). Tests hard-code values instead of reading the table.'
+  - id: M0-F02
+    resolved: false
+    summary: 7 classes of tests that cannot fail, incl. assert on two string literals (C11), test-constructed
+      anchors forced by earlier literal equalities (C02, C09), a textbook fact reading nothing from the
+      table (C06), and a cyclic-violation bound that is identically 2.0 for every R (C04).
+  - id: M0-F03
+    resolved: false
+    summary: 'C14 second half breakable: err_wrong is exactly ||v_i||*Dt_ij, so at Dt=0.05 and ||v_i||=0.11
+      it is 5.5e-3, below the claim''s >1e-2 bar. Neither quantity is pinned by the claim; move Dt~0.5
+      and ||v_i||>0.1 into domain.'
+  - id: M0-F04
+    resolved: false
+    summary: C15 reversed-product bar equals ||g||*dt^2 exactly, so it fails for dt <= 3.2e-4 s -- a 10
+      kHz IMU interval, not pathological. Passes only because the test draws dt ~ U(0.05, 2.0).
+  - id: M0-F05
+    resolved: false
+    summary: C03 uses an ABSOLUTE 1e-12 bar on an unbounded quantity; at J^R, b scaled by 1e4 max abs
+      diff is 4.8e-7 while max relative stays 4.2e-11. Claim's domain says 'arbitrary', which an absolute
+      bar does not support. Substance is fine -- verifier proved the identity symbolically.
 - id: M1
   title: Gal(3) mechanics
   branch: main
