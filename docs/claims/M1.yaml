@@ -262,10 +262,10 @@ claims:
     is absent.
   domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
     below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just
-    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the
-    1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11 at
-    8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the 1e-11
-    bound. Just above the switch, 1 - cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2):
+    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not
+    the 1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11
+    at 8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the
+    1e-11 bound. Just above the switch, 1 - cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2):
     the literal form gives kappa3 4.9e-10 and c2 1.9e-10 near 5e-2, while 2 sin^2 keeps every coefficient
     <= 1.1e-12 on a dense sweep (theta in 1e-12..10, 863 points, series-defined 50-digit reference).'
   verdict: CONFIRMED
@@ -348,10 +348,10 @@ claims:
     T(-Dt) = (I, 0, 0, -Dt) applied on the LEFT; the result has time block exactly 0.
   source: DERIVED; pre-flight F2
   kind: DERIVED
-  test_hint: 200 random instances; ground truth by forward integration of Rdot = R[omega]x, vdot = g +
-    R a, pdot = v with 5000 Euler steps at dt = 1e-4 (Dt = 0.5), random omega ~ 0.8*N(0,I3), a ~ 2*N(0,I3),
-    v_i ~ 2*N(0,I3), p_i ~ 5*N(0,I3). max abs err on the full 5x5 <= 1e-5 (measured 6.6e-14 against the
-    ALGEBRAIC Forster endpoint, 6.8e-14 when ground truth is the integrator).
+  test_hint: Smooth, time-varying, non-commuting omega(t), a(t); ground truth from an independent DOP853
+    solve (tests/ode_truth.py, rtol=atol=1e-13, imports nothing from src). Endpoint vs ODE truth on the
+    full 5x5 <= 1e-9 (measured 1.5e-14). Separately, an IDENTITY CHECK of the relation on the discrete
+    recursion's own increment on the same stream <= 1e-12 (measured 1.6e-13).
   domain: Requires t_i = 0 exactly (see M1-C36). Holds for arbitrary g.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -383,9 +383,9 @@ claims:
     and velocity blocks are correct.'
   source: DERIVED; pre-flight F2 (error in the project's CLAUDE.md)
   kind: DERIVED
-  test_hint: 200 random instances as in M1-C31. Assert |RHS[3,4] - Dt| <= 1e-12 (measured 0.0) and max|RHS[0:3,4]
-    - (p_j + g*Dt^2)| <= 1e-5 (measured 6.8e-14), while the R and v blocks match p_j's counterparts to
-    1e-5. This is a claim that a specific published formula is FALSE in a specific, quantified way.
+  test_hint: Same time-varying stream and DOP853 truth as M1-C31. Assert |RHS[3,4] - Dt| <= 1e-12 and
+    max|RHS[0:3,4] - (p_j + g*Dt^2)| <= 1e-9 (measured 7.1e-15), while the R and v blocks match. This
+    is a claim that a specific published formula is FALSE in a specific, quantified way.
   domain: t_i = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -416,9 +416,9 @@ claims:
     dp, dv), reproduces (R_j, p_j, v_j).
   source: VERIFIED-PUBLISHED (measured on the installed gtsam 4.3.0 NavState)
   kind: VERIFIED-PUBLISHED
-  test_hint: '200 random instances against the same integrator ground truth as M1-C31. max abs err on
-    R, p, v <= 1e-5 (measured 6.8e-14); 2000 random instances against the algebraic Forster endpoint:
-    <= 1e-12 (measured 1.8e-15). Note W_ij''s position entry is +0.5*g*Dt^2 (PLUS).'
+  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err on R, p, v <= 1e-9 (measured
+    1.5e-14); identity check on the discrete recursion <= 1e-12. Note W_ij''s position entry is +0.5*g*Dt^2
+    (PLUS).'
   domain: NavState has no time coordinate, so no t_i restriction arises; the restriction reappears on
     lifting to Gal(3) (M1-C36).
   verdict: CONFIRMED
@@ -448,18 +448,18 @@ claims:
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C40
-  statement: Phi_Dt(R,p,v) = (R, p + v*Dt, v) is NOT left or right translation by any fixed NavState
-    -- Phi_Dt fixes the identity, so the only candidate left or right factor is the identity itself, yet
-    Phi_Dt(X) differs from X by exactly v*Dt in position (nonzero whenever v != 0 and Dt != 0) -- but it
-    IS a group automorphism of NavState; in Gal(3) it is the inner automorphism X -> T(-Dt) X T(Dt) restricted
-    to the t = 0 slice, exactly.
+  statement: Phi_Dt(R,p,v) = (R, p + v*Dt, v) is NOT left or right translation by any fixed NavState --
+    Phi_Dt fixes the identity, so the only candidate left or right factor is the identity itself, yet
+    Phi_Dt(X) differs from X by exactly v*Dt in position (nonzero whenever v != 0 and Dt != 0) -- but
+    it IS a group automorphism of NavState; in Gal(3) it is the inner automorphism X -> T(-Dt) X T(Dt)
+    restricted to the t = 0 slice, exactly.
   source: DERIVED
   kind: DERIVED
   test_hint: '(i) Phi_Dt(I) == I exactly; 2000 random X: Phi_Dt(X) has the R and v of X and position p
-    + v*Dt to 1e-12, so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max
-    over draws >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to a second:
-    N_L = Phi_Dt(X) X^-1 is exact at X (residual 5.55e-16 at Y = X) and its residual goes continuously to
-    0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs: max|Phi_Dt(N1) Phi_Dt(N2)
+    + v*Dt to 1e-12, so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12;
+    max over draws >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to
+    a second: N_L = Phi_Dt(X) X^-1 is exact at X (residual 5.55e-16 at Y = X) and its residual goes continuously
+    to 0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs: max|Phi_Dt(N1) Phi_Dt(N2)
     - Phi_Dt(N1 N2)| <= 1e-12 (measured 1.8e-15; verifier 1.78e-15 over 2e4 x 2). (iii) 2000 random (R,v,p):
     max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12 (measured 0.0; verifier 0.0 over 2e4 x 3).'
   domain: Conjugation statement requires t(X) = 0.
@@ -475,12 +475,13 @@ claims:
     (0.02, 0.4) -- the Euler error grows with Dt, and its worst case grows with the sample count, so both
     are load-bearing. Ground truth by Euler integration of dRdot = dR[omega]x, dvdot = dR a, dpdot = dv.
     The Euler error is FIRST ORDER in dt (measured err/dt = 0.2494, constant across n = 1e3..6.4e4), so
-    the tolerance must be tied to dt: use n with dt <= 5e-6 and tolerance 1e-5 (dt = 2.5e-6: measured 7.4e-6
-    over 1000 configurations at Dt = 0.4 -- headroom only 1.35x; the earlier 2.7e-6 was over 10 configurations
-    with Dt ~ U(0.02, 0.4); verifier 2.16e-6 / 5.22e-6 / 7.04e-6 at 10 / 200 / 1000 configurations). The
-    closed form exp(Dt xi) is also checked against an independent DOP853 solve of Ddot = D xi^ (rtol = atol
-    = 1e-13), 1000 configurations with Dt up to 2.0: measured 1.4e-12 (asserted <= 1e-11). Separately assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^|
-    <= 1e-8 by central difference at h = 1e-6 (measured 2.1e-10).'
+    the tolerance must be tied to dt: use n with dt <= 5e-6 and tolerance 1e-5 (dt = 2.5e-6: measured
+    7.4e-6 over 1000 configurations at Dt = 0.4 -- headroom only 1.35x; the earlier 2.7e-6 was over 10
+    configurations with Dt ~ U(0.02, 0.4); verifier 2.16e-6 / 5.22e-6 / 7.04e-6 at 10 / 200 / 1000 configurations).
+    The closed form exp(Dt xi) is also checked against an independent DOP853 solve of Ddot = D xi^ (rtol
+    = atol = 1e-13), 1000 configurations with Dt up to 2.0: measured 1.4e-12 (asserted <= 1e-11). Separately
+    assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^| <= 1e-8 by central difference
+    at h = 1e-6 (measured 2.1e-10).'
   domain: Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the
     ordered product of per-sample exponentials, which is M1-C45.
   verdict: CONFIRMED
@@ -501,9 +502,9 @@ claims:
     = v_i + g*Dt + R_i dv, p_j = p_i + v_i*Dt + 0.5*g*Dt^2 + R_i dp.
   source: DERIVED
   kind: DERIVED
-  test_hint: '200 random instances against the 5000-step integrator ground truth: max abs err <= 1e-5
-    (measured 6.8e-14 when the increment comes from the SAME integrator). Then assert the block decomposition
-    of M1-C31''s left-hand side reproduces these three equations symbolically or to 1e-12.'
+  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err <= 1e-9 (measured 1.5e-14).
+    Then assert the block decomposition of M1-C31''s left-hand side reproduces these three equations to
+    1e-12.'
   domain: t_i = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -524,10 +525,10 @@ claims:
     note the position term uses the FIRST segment''s velocity and the SECOND segment''s duration.'
   source: DERIVED
   kind: DERIVED
-  test_hint: '300 instances: integrate a segment with (omega1, a1) for n1 = 800 steps then (omega2, a2)
-    for n2 = 1200 steps at dt = 5e-5, forming D_ij, D_jk and D_ik from the same integrator. max|D_ij D_jk
-    - D_ik| <= 1e-12 (measured 7.7e-15). Plus 2000 purely algebraic random triples at <= 1e-14 (measured
-    8.9e-16). A test that uses dv_jk * Dt_ij instead must FAIL.'
+  test_hint: 'Time-varying inputs over [t_i,t_j] and [t_j,t_k]; D_ij, D_jk, D_ik from three SEPARATE DOP853
+    solves: max|D_ij D_jk - D_ik| <= 1e-10 (measured 8.4e-14); identity on the discrete recursion measured
+    9.5e-15. Plus 2000 purely algebraic random triples at <= 1e-14. A test that uses dv_jk * Dt_ij instead
+    must FAIL.'
   domain: Total. Requires the increments to be adjacent and expressed in the same body frame convention.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -588,14 +589,14 @@ claims:
   source: DERIVED + measured
   kind: DERIVED
   test_hint: 'Draw d ~ 1e-5*N(0,I10). Assert max over (R, p, v) of |Gal3.Expmap(d) - NavState.Expmap(P
-    @ d)| <= 1e-9 over 20000 draws (measured 4.6e-10 -- headroom 2.2x; the earlier 3.9e-11 was over 50 draws
-    and understated the worst case ~16x; verifier 6.41e-10 over 2e4 x 3 seeds). Assert the UNPERMUTED version
-    differs: max|Gal3.Expmap(d) - NavState.Expmap(d[0:9])| >= 1e-6 (measured 5.7e-5, i.e. O(1) relative
-    to the 1e-5 perturbation).'
-  domain: 'The permuted agreement is first-order only (the two groups differ at second order in d), so the
-    1e-9 bound holds only for d ~ s*N(0,I10) with s <= 1e-5 (||d|| <~ 3e-5). It does NOT hold at s = 1e-4:
-    the error there is ~5e-8 (measured 3.8e-8 over 2000 draws; verifier 5.35e-8), ~50x over the bound,
-    scaling as s^2.'
+    @ d)| <= 1e-9 over 20000 draws (measured 4.6e-10 -- headroom 2.2x; the earlier 3.9e-11 was over 50
+    draws and understated the worst case ~16x; verifier 6.41e-10 over 2e4 x 3 seeds). Assert the UNPERMUTED
+    version differs: max|Gal3.Expmap(d) - NavState.Expmap(d[0:9])| >= 1e-6 (measured 5.7e-5, i.e. O(1)
+    relative to the 1e-5 perturbation).'
+  domain: 'The permuted agreement is first-order only (the two groups differ at second order in d), so
+    the 1e-9 bound holds only for d ~ s*N(0,I10) with s <= 1e-5 (||d|| <~ 3e-5). It does NOT hold at s
+    = 1e-4: the error there is ~5e-8 (measured 3.8e-8 over 2000 draws; verifier 5.35e-8), ~50x over the
+    bound, scaling as s^2.'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C51
@@ -621,8 +622,8 @@ claims:
     8.0e-15; 8.9e-15 on 400 draws at the domain edge |phi_rel| in (pi - 1e-2, pi - 1e-3); the earlier
     0.0 compared gtsam''s localCoordinates with gtsam''s own Logmap(between) and could not fail); retract(d)
     with d ~ 0.1*N(0,I10) <= 1e-12 (measured 1.3e-13 -- headroom 7.8x; verifier 1.28e-13..1.45e-13 over
-    4 seeds; the earlier 2.8e-17 was below double precision for O(1) entries and never plausible). The retraction
-    convention matters: X Exp(d), NOT Exp(d) X.'
+    4 seeds; the earlier 2.8e-17 was below double precision for O(1) entries and never plausible). The
+    retraction convention matters: X Exp(d), NOT Exp(d) X.'
   domain: gtsam 4.3.0 as installed. The localCoordinates comparison is on M1-C51's Logmap domain, |phi_rel|
     < pi - 1e-3; nearer pi the SO(3) log is ill-conditioned (~1.3e-8 disagreement at pi - 1e-4, in every
     implementation).
