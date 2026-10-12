@@ -192,7 +192,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -253,47 +253,76 @@ milestones:
   - role: verifier
     agent_id: verify-M2-002
     started: '2026-10-12T23:30:21+00:00'
-    finished: null
-    outcome: running
-    note: Second verification pass with a fresh planted claim. Ruling on whether each of the six earlier
-      findings is fixed.
+    finished: '2026-10-12T23:44:32+00:00'
+    outcome: completed
+    note: Caught planted M2-S03 by computation (error grows quadratically, 2.4e-4 at |db|=5e-2 vs claimed
+      1e-10). Ruled F01-F06 fixed; 25/25 claims confirmed. 14 of its 39 mutants survive, so the suite
+      is still blind in places.
   blocking_findings:
   - id: M2-F01
-    resolved: false
+    resolved: true
     summary: 'CRITICAL: replacing Baseline 2''s Cayley retraction with Exp SURVIVES and turns the suite
       from 3-failed/22-passed into 25 PASSED. The one property making B2 a distinct baseline is pinned
       by no passing test; the only tests that would notice are the three already failing. A maintainer
       ''fixing the red tests'' would delete B2''s reason to exist and be rewarded.'
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F02
-    resolved: false
+    resolved: true
     summary: 'C22/C23/C24 defective. The paper is NOT ambiguous: Eq. (4)''s Jacobian matches the raw Cayley
       map to FD precision (4.7e-11) and is wrong by up to 0.36 for the reparam reading; under reparam
       Cay==Exp bit-equal, so B2 would not be a separate baseline. The raw reading loses theta^3/12 per
       step = 7.84e-8 over the fixture; 1e-10 needs dt=3.9e-5, a 64x refinement of a dt pinned by C01.
       Unattainable. Drop ''both admissible readings'', set raw-R to 1e-6, record 3.0e-8 as a property
       of the method.'
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F03
-    resolved: false
+    resolved: true
     summary: 'C10''s test is a tautology: it silently substitutes the baseline''s own propagated states,
       making r^v = dvbar - dvbar == 0 (measured 1.65e-13, pure round-off). At the fixture''s actual ground-truth
       states the worst residual is 2.76e-3 -- six orders above the claimed 1e-9.'
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F04
-    resolved: false
+    resolved: true
     summary: 'C25''s ''the 6 remaining directions are the bias block'' is false: 42% of nullspace energy
       sits in pose/velocity, principal cosines [0.978,0.978,0.839,0.816,0.300,0.299] (two directions ~72.5deg).
       Independently reproduced. Also rank 30 and 39 are FULL ROW RANK on 30x45 and 39x45 Jacobians --
       the maximum possible -- so those assertions verify nothing about observability.'
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F05
-    resolved: false
+    resolved: true
     summary: 'Three further surviving mutants: folding the step rotation into dR_ik before Eq. (9b)/(9c)
       survives all 25 tests though |dv_err| = 4.3e-3 (twice the truncation error); dropping the bbar_g
       offset from CayleyFactor.xi survives a 10x error in xi, so C13''s frozen affine bias map is exercised
       by nothing; C13(a) is unfalsifiable since no code path writes J_R.'
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F06
-    resolved: false
+    resolved: true
     summary: C16's recorded measurement 0.763 is unreproducible -- the right number is 0.107628, so the
       >=0.1 bound holds with 7.6% margin not 660%. 36 nearby configurations enumerated, 0.763 appears
       nowhere. Statement CONFIRMED, recorded measurement REFUTED.
+    resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
+  - id: M2-F07
+    resolved: false
+    summary: 'Eight covariance mutants survive C06: flipping the rotation-coupling sign (cross block 200%
+      wrong), Jr->I, rotation block ->I or untransposed, the 1/2 in the noise-input and propagation matrices,
+      transposed noise input, noise x0.995. C06''s symmetry/PSD/monotone checks cannot fail. Independently
+      reproduced the sign flip: 26/26 baseline tests stay green. Also: unmutated Forster covariance differs
+      from GTSAM''s by 17% in the rot-vel cross block, unexplained.'
+  - id: M2-F08
+    resolved: false
+    summary: 'Order errors invisible to constant-input tests: accumulating Baseline 1/2 rotation on the
+      LEFT survives (1.7e-15 on the fixture, 4.7e-5 on the time-varying stream, which no B1/B2 test uses);
+      J_R -> dR J_R dR^T survives because they commute for constant twist.'
+  - id: M2-F09
+    resolved: false
+    summary: 'Eq. (21b)/(21c) never evaluated at nonzero db: flipping the sign of the bias terms survives.
+      The dp-only dR_{i,k+1} fold in Eq. (9c) also survives (5e-6 shift).'
+  - id: M2-F10
+    resolved: false
+    summary: 'Record hygiene: C20 test_hint records 2.8e-4..1.3e-1, measured 1.96e-5..1.02e-2 (13-14x
+      off); fixture bias constants B_G/B_A unpinned; C23 claims B2 is first order but only B1 is swept
+      (B2 measured 0.5003); C25 ''happens to be orthogonal'' wording wrong; C20 contrast-model p/v swap
+      survives (lower bound only).'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation

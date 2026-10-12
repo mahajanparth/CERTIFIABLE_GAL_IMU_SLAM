@@ -211,3 +211,29 @@ def test_gate_blocks_on_unresolved_verifier_finding():
 def test_resolved_finding_stops_blocking():
     ms = _ms(blocking_findings=[{"id": "M0-F01", "summary": "fixed", "resolved": True}])
     assert gates.evaluate(ms, PASSING)[0]
+
+
+@pytest.mark.claim("ORCH-C19")
+def test_save_never_writes_seed_statements_or_claims(tmp_path):
+    data = {"milestones": [{"id": "M9", "title": "t", "branch": "b", "status": "verifying",
+                            "claims": [{"id": "M9-C01", "statement": "x", "verdict": None, "attack": None}],
+                            "seed": {"id": "M9-S01", "statement": "PLANTED", "why_false": "W",
+                                     "caught": None, "published": False},
+                            "agent_runs": []}]}
+    out = tmp_path / "state.yaml"
+    ledger.save(data, out)
+    text = out.read_text()
+    assert "PLANTED" not in text and "why_false" not in text and "M9-C01" not in text
+    assert "M9-S01" in text
+
+
+@pytest.mark.claim("ORCH-C20")
+def test_latest_replacement_seed_is_the_live_one():
+    data = {"milestones": [{"id": "M2", "seed": {}}, {"id": "M20", "seed": {}}]}
+    ledger._apply_seeds(data, {"seeds": {
+        "M2": {"id": "M2-S01", "caught": "VOID"},
+        "M2_replacement": {"id": "M2-S02", "caught": True},
+        "M20": {"id": "M20-S01", "caught": None},
+        "M2_reverify": {"id": "M2-S03", "caught": None}}})
+    assert data["milestones"][0]["seed"]["id"] == "M2-S03"
+    assert data["milestones"][1]["seed"]["id"] == "M20-S01"

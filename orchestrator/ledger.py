@@ -1,6 +1,7 @@
 """Read/write and validate state.yaml -- the single source of truth."""
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import pathlib
 from typing import Any
@@ -71,17 +72,41 @@ def _overlay_seeds(data: dict[str, Any]) -> None:
     """
     if not SEEDS_FILE.exists():
         return
-    doc = yaml.safe_load(SEEDS_FILE.read_text()) or {}
+    _apply_seeds(data, yaml.safe_load(SEEDS_FILE.read_text()) or {})
+
+
+def _apply_seeds(data: dict[str, Any], doc: dict[str, Any]) -> None:
+    """A milestone's live seed is the LAST entry keyed `<MID>` or `<MID>_<suffix>`.
+
+    A voided or already-caught seed is replaced by appending a new entry (e.g. M2_reverify),
+    so the gate always judges the current verifier by the seed it was actually given.
+    """
+    seeds = doc.get("seeds") or {}
     for ms in data.get("milestones") or []:
-        s = (doc.get("seeds") or {}).get(ms["id"])
-        if s:
-            ms["seed"] = {**(ms.get("seed") or {}), **s}
+        mid = ms["id"]
+        live = [v for k, v in seeds.items() if k == mid or k.startswith(mid + "_")]
+        if live:
+            ms["seed"] = {**(ms.get("seed") or {}), **live[-1]}
+
+
+SEED_PUBLIC_KEYS = ("id", "caught", "published")
 
 
 def save(data: dict[str, Any], path: pathlib.Path | None = None) -> None:
+    """Write state.yaml without anything load() overlaid onto it.
+
+    load() merges in claims (from docs/claims/) and seeds (from the gitignored seeds file).
+    Writing those back would put a live seed's statement into a tracked file, so claims are
+    dropped and each seed is reduced to its public fields.
+    """
     validate(data)
     path = path or STATE
-    path.write_text(yaml.safe_dump(data, sort_keys=False, width=100))
+    out = copy.deepcopy(data)
+    for ms in out.get("milestones") or []:
+        ms["claims"] = []
+        seed = ms.get("seed") or {}
+        ms["seed"] = {k: seed.get(k) for k in SEED_PUBLIC_KEYS}
+    path.write_text(yaml.safe_dump(out, sort_keys=False, width=100))
 
 
 def validate(data: dict[str, Any]) -> None:
