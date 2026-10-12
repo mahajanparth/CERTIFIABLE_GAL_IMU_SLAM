@@ -260,8 +260,14 @@ claims:
     error of each coefficient against 50-digit mpmath arithmetic <= 1e-11 over theta in {1e-9, 1e-6, 1e-4,
     1e-2, 5e-2, 1e-1, 1.0, 3.0} -- this FAILS (kappa3 rel err 1.0, c2 rel err 6.3) if the Taylor branch
     is absent.
-  domain: Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
-    below theta ~ 1e-4.
+  domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
+    below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just
+    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the
+    1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11 at
+    8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the 1e-11
+    bound. Just above the switch, 1 - cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2):
+    the literal form gives kappa3 4.9e-10 and c2 1.9e-10 near 5e-2, while 2 sin^2 keeps every coefficient
+    <= 1.1e-12 on a dense sweep (theta in 1e-12..10, 863 points, series-defined 50-digit reference).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C25
@@ -465,11 +471,15 @@ claims:
     1)).
   source: DERIVED
   kind: DERIVED
-  test_hint: '200 random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3), Dt uniform in (0.02, 0.4)). Ground truth
-    by Euler integration of dRdot = dR[omega]x, dvdot = dR a, dpdot = dv. The Euler error is FIRST ORDER
-    in dt (measured err/dt = 0.2494, constant across n = 1e3..6.4e4), so the tolerance must be tied to
-    dt: use n with dt <= 5e-6 and tolerance 1e-5 (measured 2.7e-6 over 10 random configurations with Dt
-    in (0.02, 0.4)). Separately assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^|
+  test_hint: '1000 random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3)) at Dt = 0.4, the WORST Dt of the range
+    (0.02, 0.4) -- the Euler error grows with Dt, and its worst case grows with the sample count, so both
+    are load-bearing. Ground truth by Euler integration of dRdot = dR[omega]x, dvdot = dR a, dpdot = dv.
+    The Euler error is FIRST ORDER in dt (measured err/dt = 0.2494, constant across n = 1e3..6.4e4), so
+    the tolerance must be tied to dt: use n with dt <= 5e-6 and tolerance 1e-5 (dt = 2.5e-6: measured 7.4e-6
+    over 1000 configurations at Dt = 0.4 -- headroom only 1.35x; the earlier 2.7e-6 was over 10 configurations
+    with Dt ~ U(0.02, 0.4); verifier 2.16e-6 / 5.22e-6 / 7.04e-6 at 10 / 200 / 1000 configurations). The
+    closed form exp(Dt xi) is also checked against an independent DOP853 solve of Ddot = D xi^ (rtol = atol
+    = 1e-13), 1000 configurations with Dt up to 2.0: measured 1.4e-12 (asserted <= 1e-11). Separately assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^|
     <= 1e-8 by central difference at h = 1e-6 (measured 2.1e-10).'
   domain: Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the
     ordered product of per-sample exponentials, which is M1-C45.
@@ -578,11 +588,14 @@ claims:
   source: DERIVED + measured
   kind: DERIVED
   test_hint: 'Draw d ~ 1e-5*N(0,I10). Assert max over (R, p, v) of |Gal3.Expmap(d) - NavState.Expmap(P
-    @ d)| <= 1e-9 (measured 3.9e-11, first-order agreement at this scale). Assert the UNPERMUTED version
-    differs: max|Gal3.Expmap(d) - NavState.Expmap(d[0:9])| >= 1e-6 (measured 2.8e-5, i.e. O(1) relative
+    @ d)| <= 1e-9 over 20000 draws (measured 4.6e-10 -- headroom 2.2x; the earlier 3.9e-11 was over 50 draws
+    and understated the worst case ~16x; verifier 6.41e-10 over 2e4 x 3 seeds). Assert the UNPERMUTED version
+    differs: max|Gal3.Expmap(d) - NavState.Expmap(d[0:9])| >= 1e-6 (measured 5.7e-5, i.e. O(1) relative
     to the 1e-5 perturbation).'
-  domain: The permuted agreement is first-order only (the two groups differ at second order in d); use
-    ||d|| <= 1e-4 for the test.
+  domain: 'The permuted agreement is first-order only (the two groups differ at second order in d), so the
+    1e-9 bound holds only for d ~ s*N(0,I10) with s <= 1e-5 (||d|| <~ 3e-5). It does NOT hold at s = 1e-4:
+    the error there is ~5e-8 (measured 3.8e-8 over 2000 draws; verifier 5.35e-8), ~50x over the bound,
+    scaling as s^2.'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C51
@@ -604,9 +617,15 @@ claims:
   source: VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)
   kind: VERIFIED-PUBLISHED
   test_hint: '2000 random pairs: compose/__mul__/inverse <= 1e-10 (measured 6.2e-15); between <= 1e-12
-    (measured 8.9e-16); localCoordinates <= 1e-12 (measured 0.0); retract(d) with d ~ 0.1*N(0,I10) <=
-    1e-12 (measured 2.8e-17). The retraction convention matters: X Exp(d), NOT Exp(d) X.'
-  domain: gtsam 4.3.0 as installed.
+    (measured 8.9e-16); localCoordinates against the project''s closed-form log (M1-C21) <= 1e-12 (measured
+    8.0e-15; 8.9e-15 on 400 draws at the domain edge |phi_rel| in (pi - 1e-2, pi - 1e-3); the earlier
+    0.0 compared gtsam''s localCoordinates with gtsam''s own Logmap(between) and could not fail); retract(d)
+    with d ~ 0.1*N(0,I10) <= 1e-12 (measured 1.3e-13 -- headroom 7.8x; verifier 1.28e-13..1.45e-13 over
+    4 seeds; the earlier 2.8e-17 was below double precision for O(1) entries and never plausible). The retraction
+    convention matters: X Exp(d), NOT Exp(d) X.'
+  domain: gtsam 4.3.0 as installed. The localCoordinates comparison is on M1-C51's Logmap domain, |phi_rel|
+    < pi - 1e-3; nearer pi the SO(3) log is ill-conditioned (~1.3e-8 disagreement at pi - 1e-4, in every
+    implementation).
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C53

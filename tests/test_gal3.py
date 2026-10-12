@@ -521,6 +521,51 @@ def test_gamma1_invertibility_and_taylor_branch():
     # the switch point itself
     assert gal3.THETA_SMALL == 5e-2
 
+    # Dense sweep against a SERIES-defined 50-digit reference (independent of every
+    # closed form): 1e-11 must hold everywhere, not only at the eight tabulated
+    # theta -- in particular on both sides of the switch.
+    mp.mp.dps = 50
+
+    def series_ref(th):
+        T = mp.mpf(th)
+        T2 = T * T
+        k1 = mp.nsum(lambda k: (-1) ** k * T2 ** k / mp.factorial(2 * k + 2), [0, mp.inf])
+        k2 = mp.nsum(lambda k: (-1) ** k * T2 ** k / mp.factorial(2 * k + 3), [0, mp.inf])
+        k3 = mp.nsum(lambda k: (-1) ** k * T2 ** k / mp.factorial(2 * k + 4), [0, mp.inf])
+        if th < 1.0:   # c2 = sum_{n>=1} (-1)^(n+1) B_2n th^(2n-2) / (2n)!
+            c2 = mp.fsum((-1) ** (n + 1) * mp.bernoulli(2 * n) * T2 ** (n - 1)
+                         / mp.factorial(2 * n) for n in range(1, 40))
+        else:          # well away from any cancellation at 50 digits
+            c2 = (1 - T * mp.sin(T) / (2 * (1 - mp.cos(T)))) / T2
+        return k1, k2, k3, c2
+
+    sweep = np.concatenate([np.logspace(-12, 1, 400), np.linspace(0.045, 0.2, 400),
+                            np.linspace(3.0, 6.2, 60),
+                            [np.pi, np.nextafter(5e-2, 0.0), 5e-2]])
+    worst_sweep = [0.0] * 4
+    for th in sweep:
+        e = series_ref(float(th))
+        got = gal3.gamma_coefficients(float(th))
+        for i in range(4):
+            worst_sweep[i] = max(worst_sweep[i],
+                                 float(abs(mp.mpf(got[i]) - e[i]) / abs(e[i])))
+    assert max(worst_sweep) <= 1e-11, worst_sweep
+
+    # THETA_SMALL = 5e-2 is LOAD-BEARING.  Just below the switch the binding error
+    # is the 3-term Taylor truncation (relative error ~ theta^6), not the 1 - cos
+    # cancellation: kappa1's truncation is 7.75e-13 at the switch and would be
+    # 1.30e-11 at 8e-2 -- moving the switch there would break the 1e-11 bound.
+    def taylor_k1(th):
+        return 0.5 - th ** 2 / 24.0 + th ** 4 / 720.0
+
+    below = float(np.nextafter(gal3.THETA_SMALL, 0.0))
+    trunc_at_switch = float(abs(mp.mpf(gal3.gamma_coefficients(below)[0])
+                                - series_ref(below)[0]) / series_ref(below)[0])
+    trunc_at_8e2 = float(abs(mp.mpf(taylor_k1(8e-2)) - series_ref(8e-2)[0])
+                         / series_ref(8e-2)[0])
+    assert 5e-13 <= trunc_at_switch <= 1e-12, trunc_at_switch
+    assert trunc_at_8e2 > 1e-11, trunc_at_8e2
+
 
 # ==========================================================================
 # Cayley
@@ -1101,22 +1146,33 @@ def test_gal3_navstate_tangent_permutation():
     d_probe = np.arange(1.0, 11.0)
     assert np.array_equal(P @ d_probe, np.array([1., 2., 3., 7., 8., 9., 4., 5., 6.]))
 
-    worst = 0.0
-    worst_un = 0.0
-    for _ in range(50):
-        d = 1e-5 * r.normal(size=gal3.DIM)
-        A = gtsam.Gal3.Expmap(d)
-        B = gtsam.NavState.Expmap(P @ d)
-        worst = max(worst,
-                    float(np.abs(A.rotation().matrix() - B.attitude().matrix()).max()),
-                    float(np.abs(A.position() - B.position()).max()),
-                    float(np.abs(A.velocity() - B.velocity()).max()))
-        C = gtsam.NavState.Expmap(d[0:9])
-        worst_un = max(worst_un,
-                       float(np.abs(A.position() - C.position()).max()),
-                       float(np.abs(A.velocity() - C.velocity()).max()))
+    def permuted_error(scale, n):
+        worst = worst_un = 0.0
+        for _ in range(n):
+            d = scale * r.normal(size=gal3.DIM)
+            A = gtsam.Gal3.Expmap(d)
+            B = gtsam.NavState.Expmap(P @ d)
+            worst = max(worst,
+                        float(np.abs(A.rotation().matrix() - B.attitude().matrix()).max()),
+                        float(np.abs(A.position() - B.position()).max()),
+                        float(np.abs(A.velocity() - B.velocity()).max()))
+            C = gtsam.NavState.Expmap(d[0:9])
+            worst_un = max(worst_un,
+                           float(np.abs(A.position() - C.position()).max()),
+                           float(np.abs(A.velocity() - C.velocity()).max()))
+        return worst, worst_un
+
+    # inside the stated domain, d ~ 1e-5 N(0, I10): 20000 draws (the worst case
+    # grows with the sample count -- 50 draws understated it ~16x)
+    worst, worst_un = permuted_error(1e-5, 20000)
     assert worst <= 1e-9, worst
     assert worst_un >= 1e-6, worst_un
+
+    # the agreement is first order only, so the 1e-9 bound does NOT extend to
+    # d ~ 1e-4 N(0, I10): the error grows ~100x for a 10x larger d
+    worst_big, _ = permuted_error(1e-4, 2000)
+    assert worst_big >= 1e-8, worst_big
+    assert 30.0 <= worst_big / worst <= 300.0, (worst, worst_big)
 
 
 @pytest.mark.claim("M1-C51")
