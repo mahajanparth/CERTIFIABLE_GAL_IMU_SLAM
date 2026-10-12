@@ -56,6 +56,18 @@ exactly `SO(3)` with `det=+1`, and all three equalities hold, each **degree <= 2
 (I - phi_x/2) pe = w
 ```
 
+> **F3 was INCOMPLETE — corrected by M1.** The three equalities above were only ever checked on the
+> `alpha = 0` slice. For general `alpha != 0` the position block carries a time coupling:
+>
+> ```
+> (I - phi_x/2) pe = w + (alpha/2) u          # sign is PLUS
+> ```
+>
+> Verified independently to `5.7e-14` over 20000 random `gal(3)` elements with `alpha != 0`; the
+> minus form is off by up to `2.5e2`. At `alpha = 0` the term vanishes identically, which is exactly
+> why the original check could not see it. The constraint is still degree <= 2, since `alpha` and `u`
+> are independent lifted variables. **Use `docs/01_conventions_and_gal3.md` as authoritative.**
+
 **Chart coverage measured:** `|phi| = 2 tan(theta/2)` gives `1.09` at 1 rad, `28.2` at 3 rad,
 `4.3e4` at 3.1415 rad. Cayley is numerically unusable near `theta = pi`.
 
