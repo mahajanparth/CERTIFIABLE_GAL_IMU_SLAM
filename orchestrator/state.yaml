@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: main
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M0-S01
@@ -26,6 +26,11 @@ milestones:
   - role: implementer
     agent_id: impl-M0-001
     started: '2026-10-12T19:16:40+00:00'
+    finished: '2026-10-12T19:30:11+00:00'
+    outcome: completed
+  - role: verifier
+    agent_id: verify-M0-001
+    started: '2026-10-12T19:30:11+00:00'
     finished: null
     outcome: running
 - id: M1
