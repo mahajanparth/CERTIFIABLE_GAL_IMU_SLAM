@@ -70,7 +70,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: main
-  status: verifying
+  status: blocked
   claims: []
   seed:
     id: M1-S01
@@ -108,8 +108,51 @@ milestones:
   - role: verifier
     agent_id: verify-M1-001
     started: '2026-10-12T19:45:04+00:00'
-    finished: null
-    outcome: running
+    finished: '2026-10-12T20:20:37+00:00'
+    outcome: completed
+  blocking_findings:
+  - id: M1-F01
+    resolved: false
+    summary: 'CRITICAL: the ''5000-step integrator ground truth'' behind C31/C34/C37/C43 is decorative.
+      The endpoint relation is an exact algebraic identity of the discrete recursion for ANY dt (n=1 at
+      dt=0.5 gives 1.8e-15), so mutating the fixture to 2 steps at dt=0.25 leaves all four tests passing.
+      Meanwhile the 5000-step Euler state is 1.58e-4 from the exact solution -- 10x ABOVE the tests''
+      own 1e-5 tolerance. A test that really compared against ODE truth at 1e-5 would FAIL. Validate against
+      a stiff ODE solve (DOP853, rtol=atol=1e-13), not the project''s own Euler recursion.'
+  - id: M1-F02
+    resolved: false
+    summary: Constant (omega,a) makes swapped accumulation order invisible -- the flagged defect class.
+      E is computed once outside the loop so all step factors commute. integrate_truth's dR @ E -> E @
+      dR SURVIVES the entire 55-test suite; euler_increment's dR @ W -> W @ dR survives C41 (diff 3.05e-16).
+      With time-varying omega the same swap shows at 1.7e-6. Every order-sensitive test needs a time-varying
+      stream.
+  - id: M1-F03
+    resolved: false
+    summary: 'C40 REFUTED in part: ''a factor fitted on one element fails on a second with residual >
+      0.5'' is false universally. N_L = Phi(X)X^-1 is exact at X by construction so the residual has no
+      lower bound; Y=X gives 5.55e-16. Across 3 seeds x 5000 pairs, 14.2% of draws fall below 0.5, and
+      the test takes a max over 20 draws -- failure probability ~ 0.14^20 ~ 1e-17.'
+  - id: M1-F04
+    resolved: false
+    summary: 'Four more tests that cannot fail: C52''s w_loc<=1e-12 compares gtsam against itself (exactly
+      0.0 on all 12000 draws); C28''s five tabulated rows never call cay at all and two rows (theta=3.0,
+      3.1415) are outside the sampled range entirely; C26''s assert failures==0 is impossible to violate
+      since det(I-[phi]x/2)=1+theta^2/4>=1; five vacuous coverage guards assert ''> 0.0'' on continuous
+      draws where P(exactly 0)=0.'
+  - id: M1-F05
+    resolved: false
+    summary: 'Three recorded measurements wrong. C52''s ''measured 2.8e-17'' is off by ~6 orders (really
+      1.4e-13 across 4 seeds; 2.8e-17 is below double precision for O(1) quantities and was never plausible).
+      C50''s tolerance and domain are mutually inconsistent: domain says |d| <= 1e-4 but at that magnitude
+      the error is 5.35e-8, 54x over the 1e-9 bound -- it holds only for |d| <~ 1e-5. C41''s sample count
+      IS load-bearing: 10 configs give 2.16e-6 but 1000 give 7.04e-6 against a 1e-5 bound, margin 1.4x.'
+  - id: M1-F06
+    resolved: false
+    summary: 'C24 framing correction (claim CONFIRMED, substitution legitimate): the binding constraint
+      BELOW the Taylor switch is truncation, not 1-cos. kappa1''s 3-term truncation is already 7.75e-13
+      at theta=5e-2 and would be 1.30e-11 at theta=8e-2, so THETA_SMALL=5e-2 is load-bearing in a way
+      the claim does not state. Real headroom ~13x. Record the switch point as a constraint, not an implementation
+      detail.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
