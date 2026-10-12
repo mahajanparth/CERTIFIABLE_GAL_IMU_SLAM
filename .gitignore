@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.orchestrator_evidence.json
+results/
+*.npz
+*.npy
+references/*.pdf
+*.log
+.ipynb_checkpoints/
+.DS_Store

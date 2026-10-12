@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "certifiable-gal-imu-slam"
+version = "0.1.0"
+description = "Certifiable QCQP/SDP formulation of the direct-product Galilean IMU preintegration factor"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "sympy>=1.12",
+    "pyyaml>=6.0",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+solvers = ["cvxpy>=1.9", "clarabel>=0.11", "scs>=3.2.4"]
+gtsam = ["gtsam==4.3.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+orchestrator = "orchestrator.cli:main"
+
+[tool.setuptools]
+packages = ["orchestrator", "src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "claim(id): bind this test to a numbered claim, e.g. @pytest.mark.claim('M1-C03')",
+    "slow: long-running randomized property test",
+]
