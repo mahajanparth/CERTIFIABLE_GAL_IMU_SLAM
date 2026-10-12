@@ -22,6 +22,7 @@ not share a tolerance**:
 """
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 import sys
@@ -123,6 +124,40 @@ def test_c01_fixture_is_deterministic_bitwise():
 
     assert a["dt"] == 2.5e-3 and a["T_edge"] == 0.5
     assert a["steps"] == 200 and a["n_edges"] == 2
+
+    # -- the constants the claim STATES, pinned against literals retyped from its text --
+    # The stream checks above compare the streams with tile(T.OMEGA_BODY + T.B_G), i.e.
+    # against the module's own constants, so they are self-referential: a file-level edit
+    # of B_G / B_A (verifier mutant N29) changes both sides and passes.  These literals are
+    # typed from the M2-C01 statement, not printed from src, and are checked both in the
+    # generating subprocesses (a file-level edit) and in this process (a monkeypatch).
+    claimed = {
+        "b_g": [0.0100, -0.0150, 0.0080], "b_a": [0.0600, -0.0400, 0.0900],
+        "w_0": [0.35, -0.22, 0.17], "f_0": [0.60, 0.45, 9.95],
+        "w_1": [-0.28, 0.41, -0.33], "f_1": [-0.75, 0.90, 9.60],
+        "rot_0": [0.10, -0.20, 0.30], "v_0": [0.50, -0.30, 0.20],
+    }
+    assert np.array_equal(np.array(a["b"]), claimed["b_g"] + claimed["b_a"]), \
+        f"generated b = {a['b']} is not the claimed [b_g; b_a]"
+    assert np.array_equal(np.array(a["v0"]), claimed["v_0"])
+    for e, (w_key, f_key) in enumerate((("w_0", "f_0"), ("w_1", "f_1"))):
+        # every generated sample is exactly w_e + b_g / f_e + b_a with the CLAIMED values
+        assert np.array_equal(np.array(a["gyro"][e]), np.tile(
+            np.array(claimed[w_key]) + np.array(claimed["b_g"]), (200, 1))), \
+            f"gyro stream of edge {e} is not the claimed w_{e} + b_g"
+        assert np.array_equal(np.array(a["accel"][e]), np.tile(
+            np.array(claimed[f_key]) + np.array(claimed["b_a"]), (200, 1))), \
+            f"accel stream of edge {e} is not the claimed f_{e} + b_a"
+    # R_0 = Exp(rot_0), against scipy's matrix exponential rather than src's Rodrigues
+    assert _max_abs(np.array(a["R0"]), expm(T.hat(claimed["rot_0"]))) <= 1e-15
+    # and the in-process module constants
+    for name, value in (("B_G", claimed["b_g"]), ("B_A", claimed["b_a"]),
+                        ("ROT_VEC_0", claimed["rot_0"]), ("V_0", claimed["v_0"])):
+        assert np.array_equal(getattr(T, name), value), f"T.{name} = {getattr(T, name)}"
+    assert np.array_equal(T.BIAS_TRUE, claimed["b_g"] + claimed["b_a"])
+    for e, (w_key, f_key) in enumerate((("w_0", "f_0"), ("w_1", "f_1"))):
+        assert np.array_equal(T.OMEGA_BODY[e], claimed[w_key])
+        assert np.array_equal(T.F_BODY[e], claimed[f_key])
     assert a["steps"] * a["dt"] == a["T_edge"]
     assert np.array_equal(np.array(a["g"]), [0.0, 0.0, -9.81])
     assert np.array_equal(np.array(a["p0"]), np.zeros(3))
@@ -246,6 +281,33 @@ def test_c04_forster_increment_is_first_order_in_dt():
                 f"(relative {relative:.4f}).  A relative gap of ~2 means the sums use "
                 f"dR_{{i,k+1}} instead of dR_ik.")
 
+    # -- (d) the SIGNED dp truncation, to second order: pins dR_ik in the dp sum ----------
+    # Part (c) pins the rotation used in dv only.  A dp-only fold (``0.5 dR_{i,k+1} a dt^2``,
+    # verifier mutant F05a3) shifts dp by exactly 0.5 dt^2 (Exp(wT) - I) a -- 1% of the
+    # O(dt) truncation, so neither the ratios nor a first-order signed check can see it.
+    # With f(t) = Exp(wt) a and F(t) = int_0^t f, the left-rule Euler-Maclaurin expansion
+    # dv_k = F(t_k) - (dt/2)(f(t_k) - a) + (dt^2/12)(f'(t_k) - f'(0)) + O(dt^4), summed once
+    # more for sum_k dv_k dt and added to 0.5 dt^2 sum_k f_k, gives
+    #   dp_euler - dp_exact = -(dt/2)(dv_exact - T a)
+    #                         + dt^2 [ (Exp(wT) - I) a / 6 - T hat(w) a / 12 ] + O(dt^3).
+    # The O(dt^3) remainder is measured at 1.2e-4 (n=200) of the mutant's shift and halves
+    # with dt; the dp-only fold moves the dt^2 coefficient of (Exp(wT) - I) a from 1/6 to
+    # 2/3, i.e. by exactly 1.0 of the shift.  Bound: 1e-2 of the shift.
+    for n in STEP_SWEEP:
+        for edge in T.edges(n):
+            pim = B1.integrate_edge(edge, T.BIAS_TRUE)
+            dR_ex, dv_ex, dp_ex = edge.exact_increment()
+            a, w, duration, dt = edge.f_body, edge.omega_body, edge.duration, edge.dt
+            predicted = (-(dt / 2.0) * (dv_ex - duration * a)
+                         + dt**2 * ((dR_ex - np.eye(3)) @ a / 6.0
+                                    - duration * (T.hat(w) @ a) / 12.0))
+            fold_shift = np.abs(0.5 * dt**2 * (dR_ex - np.eye(3)) @ a).max()
+            relative = _max_abs(pim.dp - dp_ex, predicted) / fold_shift
+            assert relative <= 1e-2, (
+                f"edge {edge.index} n={n}: signed dp truncation {pim.dp - dp_ex} misses the "
+                f"second-order Euler-Maclaurin prediction {predicted} by {relative:.3e} of "
+                f"0.5 dt^2 (Exp(wT)-I) a.  ~1.0 means the dp sum folds dR_{{i,k+1}}.")
+
 
 @pytest.mark.claim("M2-C05")
 def test_c05_forster_bias_correction_is_mixed_chart_and_quadratic():
@@ -288,6 +350,120 @@ def test_c05_forster_bias_correction_is_mixed_chart_and_quadratic():
             f"edge {edge.index}: not quadratic, ratio {ratio:.1f} (errors {errors})"
 
 
+class _StreamEdge:
+    """Duck-typed ``Edge`` over an arbitrary stream, so the baselines' own ``integrate_edge``
+    and ``bias_jacobians_fd`` can run on the time-varying stream."""
+
+    def __init__(self, gyro, accel, dt):
+        self._gyro, self._accel, self.dt = gyro, accel, dt
+
+    def gyro_stream(self):
+        return self._gyro
+
+    def accel_stream(self):
+        return self._accel
+
+
+def _cayley_equivalent_gyro(gyro, dt, b_g):
+    """The gyro stream whose EXACT ZOH rotation equals Baseline 2's product of ``Cay``.
+
+    ``Cay(theta u) = Exp(2 arctan(theta/2) u)`` (the angle identity of M2-C22 (a)), so
+    rescaling each bias-corrected rate by ``2 arctan(theta_k/2) / theta_k`` with
+    ``theta_k = ||(omega_k - b_g) dt||`` makes GTSAM's ``prod Exp`` reproduce ``prod Cay``.
+    """
+    w = gyro - b_g
+    theta = np.linalg.norm(w * dt, axis=1)
+    return w * (2.0 * np.arctan(theta / 2.0) / theta)[:, None] + b_g
+
+
+def _gtsam_euler_reference(gyro, accel, dt, bias):
+    """``(dR, dv, dp)`` that the Eq. (9) Euler sums MUST produce on ``(gyro, accel)``,
+    built from GTSAM's exact-ZOH Galilean preintegration and nothing in ``src`` but
+    the bias-block adapter and the fixture's closed-form ``M1``/``M2``.
+
+    GTSAM's rotation is ``prod Exp((omega_k - b_g) dt)`` -- the same product as Baseline 1,
+    for ANY stream.  Its velocity and position are the ZOH sums
+    ``dv += dR_k M1(w_k, dt) a_k`` and ``dp += dv_k dt + dR_k M2(w_k, dt) a_k``, whereas the
+    Euler sums use ``a_k dt`` and ``a_k dt^2 / 2``.  So the difference is known in closed
+    form step by step, with GTSAM's own running ``dR_k``:
+    ``e_v += dR_k (M1 - dt I) a_k``, ``e_p += e_v dt + dR_k (M2 - dt^2/2 I) a_k`` -- an exact
+    identity, not an expansion, so the comparison holds to round-off.
+    """
+    params = gtsam.PreintegrationParams(np.zeros(3))
+    pim = gtsam.PreintegratedImuMeasurementsG(params, B3.to_gtsam_bias(bias))
+    e_v = np.zeros(3)
+    e_p = np.zeros(3)
+    for k in range(len(gyro)):
+        R_k = pim.deltaRij().matrix()
+        w = gyro[k] - bias[0:3]
+        a = accel[k] - bias[3:6]
+        e_p = e_p + e_v * dt + R_k @ (T.M2(w, dt) - 0.5 * dt**2 * np.eye(3)) @ a
+        e_v = e_v + R_k @ (T.M1(w, dt) - dt * np.eye(3)) @ a
+        pim.integrateMeasurement(accel[k], gyro[k], dt)
+    return (pim.deltaRij().matrix(), np.array(pim.deltaVij()) - e_v,
+            np.array(pim.deltaPij()) - e_p), pim
+
+
+@pytest.mark.claim("M2-F08")
+def test_c05b_baselines_1_and_2_on_a_time_varying_stream():
+    """Baselines 1 and 2 against GTSAM on the M2-C19/C21 time-varying stream.
+
+    Every other Baseline-1/2 test runs on the fixture, whose twist is constant per edge.
+    There ``Exp(w dt)`` commutes with the running ``dR`` and ``J_R`` commutes with ``dR``, so
+    accumulating the rotation on the LEFT (verifier mutant N24, 1.7e-15 on the fixture) and
+    conjugating ``J_R`` by ``dR`` (N11) were both invisible.
+
+    (a) Rotation: Baseline 1's ``prod Exp`` against GTSAM's, and Baseline 2's ``prod Cay``
+        against GTSAM fed the Cayley-equivalent rates.  Measured 4.6e-18 / 2.7e-17; the
+        left-accumulated product is 4.5e-5 away.  Bound 1e-12.
+    (b) ``dv``/``dp``: against GTSAM's ZOH increment minus the step-by-step closed-form
+        ZOH-vs-Euler difference (see :func:`_gtsam_euler_reference`).  Measured
+        <= 5.2e-15; a dp-only ``dR_{i,k+1}`` fold moves dp by 2.2e-6.  Bound 1e-12.
+    (c) ``J_R`` from Baseline 1's finite differences against the rotation block of GTSAM's
+        bias correction, which is ``dR Exp(J_R db_g)`` exactly (M2-C20).  Measured 1.8e-11
+        against |J_R| = 0.10; ``dR J_R dR^T`` is 2.3e-6 away.  Bound 1e-9.
+    """
+    gyro, accel, dt = T.time_varying_stream()
+    bias = T.BIAS_TRUE
+    stream = _StreamEdge(gyro, accel, dt)
+
+    # the stream really is non-commuting: the two products differ (scipy, not src)
+    right = left = np.eye(3)
+    for k in range(len(gyro)):
+        step = expm(T.hat((gyro[k] - bias[0:3]) * dt))
+        right, left = right @ step, step @ left
+    assert _rot_err(right, left) >= 1e-5, "time-varying stream should not commute"
+
+    # -- (a) + (b) --------------------------------------------------------------------------
+    cases = (("B1", B1.ForsterPreintegration, gyro, {}),
+             ("B2-raw", B2.CayleyPreintegration,
+              _cayley_equivalent_gyro(gyro, dt, bias[0:3]), {"variant": B2.VARIANT_RAW}))
+    for name, cls, reference_gyro, kwargs in cases:
+        pim = B1.integrate_edge(stream, bias, cls=cls, **kwargs)
+        (dR_ref, dv_ref, dp_ref), _ = _gtsam_euler_reference(reference_gyro, accel, dt, bias)
+        errs = {"R": _rot_err(dR_ref, pim.dR), "v": _max_abs(pim.dv, dv_ref),
+                "p": _max_abs(pim.dp, dp_ref)}
+        bad = {k: f"{v:.3e}" for k, v in errs.items() if v > 1e-12}
+        assert not bad, f"{name} on the time-varying stream: {bad}"
+
+    # -- (c) --------------------------------------------------------------------------------
+    _, gtsam_pim = _gtsam_euler_reference(gyro, accel, dt, bias)
+    R_hat = gtsam_pim.deltaRij().matrix()
+    eps = B1.FD_EPS
+    J_ref = np.zeros((3, 3))
+    for m in range(3):
+        step = np.zeros(6)
+        step[m] = eps
+        plus = gtsam_pim.predict(NavState(), B3.to_gtsam_bias(bias + step))
+        minus = gtsam_pim.predict(NavState(), B3.to_gtsam_bias(bias - step))
+        J_ref[:, m] = (_indep_so3_log(R_hat.T @ plus.attitude().matrix())
+                       - _indep_so3_log(R_hat.T @ minus.attitude().matrix())) / (2.0 * eps)
+    J_R = B1.bias_jacobians_fd(stream, bias)[0]
+    assert np.abs(J_ref).max() >= 1e-2
+    assert _max_abs(J_R, J_ref) <= 1e-9, \
+        f"J_R on the time-varying stream is {_max_abs(J_R, J_ref):.3e} from GTSAM's"
+
+
 @pytest.mark.claim("M2-C06")
 def test_c06_forster_covariance_is_symmetric_psd_and_monotone():
     """Forster Eq. (63), checked at *every* step, not just the last one."""
@@ -319,6 +495,183 @@ def test_c06_forster_covariance_is_symmetric_psd_and_monotone():
         reordered = P @ pim.cov @ P.T
         relative = _max_abs(reordered, gtsam_cov) / np.abs(gtsam_cov).max()
         assert relative <= 1e-2, f"magnitude cross-check {relative:.3e}"
+
+
+# Anisotropic densities for the covariance reference.  With ISOTROPIC noise dR Q dR^T = Q,
+# so every orientation error in the noise-input or rotation-transition blocks of Eq. (63)
+# is invisible (verifier pass 2, M2-F07: N06, N10, N28 survived for exactly that reason).
+# Per-axis ratios 1 : 1.7 : 3 (gyro) and 1 : 2 : 4 (accel).
+ANISO_SIGMA_G = np.array([1.0e-4, 1.7e-4, 3.0e-4])
+ANISO_SIGMA_A = np.array([5.0e-3, 1.0e-2, 2.0e-2])
+#: central-difference step on the per-step noise samples; truncation O(eps^2) ~ 1e-10 and
+#: round-off ~1e-16/eps ~ 1e-11, against covariance entries that are O(1) in relative terms
+NOISE_FD_EPS = 1e-5
+
+
+def _blocks(S):
+    return {(i, j): S[3 * i:3 * i + 3, 3 * j:3 * j + 3] for i in range(3) for j in range(3)}
+
+
+def _block_relative(A, B_):
+    """Per 3x3 block, ``max|A - B| / max|B|`` -- one number per block, upper triangle."""
+    a, b = _blocks(A), _blocks(B_)
+    return {k: float(np.abs(a[k] - b[k]).max() / np.abs(b[k]).max())
+            for k in a if k[0] <= k[1]}
+
+
+def _indep_so3_log(R):
+    """Rotation vector of ``R`` from the trace and the skew part.  Retyped here so that the
+    covariance reference shares no code with ``src`` beyond ``hat``."""
+    c = min(1.0, max(-1.0, (np.trace(R) - 1.0) / 2.0))
+    th = np.arccos(c)
+    skew = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / 2.0
+    return skew if th < 1e-12 else (th / np.sin(th)) * skew
+
+
+def _euler_step(w, a, dt):
+    """One step of the noise-free Eq. (9) scheme as a gravity-free Gal(3)-style increment
+    ``(R, v, p, t)``: ``(Exp(w dt), a dt, a dt^2 / 2, dt)``, Exp via ``scipy.linalg.expm``."""
+    return (expm(T.hat(w * dt)), a * dt, 0.5 * a * dt**2, dt)
+
+
+def _compose(X, Y):
+    """``(R1, v1, p1, t1) . (R2, v2, p2, t2) = (R1 R2, v1 + R1 v2, p1 + v1 t2 + R1 p2,
+    t1 + t2)``.  Composing ``_euler_step``s with this law IS the Eq. (9a)-(9c) recursion:
+    ``dv += dR a dt`` and ``dp += dv dt + 0.5 dR a dt^2``."""
+    R1, v1, p1, t1 = X
+    R2, v2, p2, t2 = Y
+    return (R1 @ R2, v1 + R1 @ v2, p1 + v1 * t2 + R1 @ p2, t1 + t2)
+
+
+@functools.lru_cache(maxsize=None)
+def _covariance_reference(edge_index):
+    """Covariance of the DISCRETE noisy Eq. (9) integrator, by linearising it numerically.
+
+    The noisy increment is a function of the 6n per-step noise samples ``eta_k`` (added to
+    the bias-corrected rate and specific force of step k).  Its error in Forster's chart,
+    ``(Log(dR0^T dR), dv - dv0, dp - dp0)``, has Jacobian ``J_k`` with respect to
+    ``eta_k``, obtained here by central differences on ``prefix_k . step_k(eta) .
+    suffix_k`` -- nothing from ``src.preintegration_forster`` is called.  With independent
+    samples of covariance ``diag(sigma^2) / dt``, ``Sigma = sum_k J_k Q J_k^T`` to first
+    order.  Eq. (63) is the exact first-order recursion of this same scheme, so the two
+    must agree to finite-difference precision, block by block.  Cached: it depends on the
+    fixture constants only, never on ``src`` code a mutant could change.
+    """
+    edge = T.edges()[edge_index]
+    w = edge.gyro_stream() - T.BIAS_TRUE[0:3]
+    a = edge.accel_stream() - T.BIAS_TRUE[3:6]
+    dt, n = edge.dt, edge.n_steps
+    steps = [_euler_step(w[k], a[k], dt) for k in range(n)]
+    identity = (np.eye(3), np.zeros(3), np.zeros(3), 0.0)
+    prefix = [identity]
+    for k in range(n):
+        prefix.append(_compose(prefix[-1], steps[k]))
+    suffix = [identity] * (n + 1)
+    for k in range(n - 1, -1, -1):
+        suffix[k] = _compose(steps[k], suffix[k + 1])
+    R0, v0, p0, _ = prefix[n]
+
+    def error(X):
+        return np.concatenate([_indep_so3_log(R0.T @ X[0]), X[1] - v0, X[2] - p0])
+
+    Q = np.diag(np.concatenate([ANISO_SIGMA_G**2, ANISO_SIGMA_A**2])) / dt
+    Sigma = np.zeros((9, 9))
+    eps = NOISE_FD_EPS
+    for k in range(n):
+        J = np.zeros((9, 6))
+        for m in range(6):
+            e = np.zeros(6)
+            e[m] = eps
+            plus = _compose(_compose(prefix[k], _euler_step(w[k] + e[0:3], a[k] + e[3:6], dt)),
+                            suffix[k + 1])
+            minus = _compose(_compose(prefix[k], _euler_step(w[k] - e[0:3], a[k] - e[3:6], dt)),
+                             suffix[k + 1])
+            J[:, m] = (error(plus) - error(minus)) / (2.0 * eps)
+        Sigma += J @ Q @ J.T
+    return Sigma
+
+
+def _gtsam_anisotropic_params():
+    params = gtsam.PreintegrationParams(T.G_W)
+    params.setGyroscopeCovariance(np.diag(ANISO_SIGMA_G**2))
+    params.setAccelerometerCovariance(np.diag(ANISO_SIGMA_A**2))
+    params.setIntegrationCovariance(np.zeros((3, 3)))
+    return params
+
+
+@pytest.mark.claim("M2-F07")
+def test_c06b_forster_covariance_against_an_independent_reference():
+    """Eq. (63) is checked for CORRECTNESS, not only for structure.
+
+    ``test_c06`` asserts symmetry, PSD and a monotone trace.  Those hold for every
+    covariance mutant the verifier tried (8/8), including a sign flip of the rotation
+    coupling, and its single normalised GTSAM cross-check is dominated by the vv block.
+
+    (a) Block by block against :func:`_covariance_reference`, a numerical linearisation of
+        the discrete noisy integrator with ANISOTROPIC gyro and accel densities.  Measured
+        agreement <= 2.7e-9 relative in every block on both edges; the bound is 1e-6.  The
+        weakest of the verifier's mutants (``Jr -> I``) moves a block by 4.3e-4, the
+        others by 5e-3 (noise scaled by 0.5%) up to 2.0 (sign of the coupling).
+
+    (b) Against GTSAM's Galilean ``preintMeasCov()``, with the CHART made explicit.  GTSAM
+        perturbs the increment on the right in Gal(3), ``U Exp(xi)``, whose velocity and
+        position components are ``dR nu`` and ``dR rho``; Forster perturbs ``dv`` and
+        ``dp`` additively.  So ``xi_Gal = M xi_Forster`` with ``M = diag(I, dR^T, dR^T)``
+        (rot, vel, pos), and the covariances relate by ``M Sigma M^T``.  Untransformed,
+        the rotation/velocity cross block differs by 0.11 / 0.20 on the two edges (0.17 /
+        0.19 with isotropic noise -- the "17%" observation of pass 2); that is the
+        rotation of the cross block by ``dR`` (0.22 / 0.30 rad), not a bug, and it does
+        not shrink with dt.  Transformed, the rotation block agrees to round-off and every
+        other block agrees to an O(dt) residual -- GTSAM integrates the noise through the
+        exact ZOH step, Forster through the Euler step -- that halves exactly with dt
+        (measured ratios 0.4998..0.5009 over n = 100..1600).
+    """
+    # -- (a) ------------------------------------------------------------------------------
+    for edge in T.edges():
+        pim = B1.integrate_edge(edge, T.BIAS_TRUE,
+                                sigma_g=ANISO_SIGMA_G, sigma_a=ANISO_SIGMA_A)
+        rel = _block_relative(pim.cov, _covariance_reference(edge.index))
+        bad = {k: f"{v:.3e}" for k, v in rel.items() if v > 1e-6}
+        assert not bad, (
+            f"edge {edge.index}: Eq. (63) disagrees with the linearised discrete integrator "
+            f"in blocks (rot=0, vel=1, pos=2) {bad}")
+
+    # -- (b) ------------------------------------------------------------------------------
+    params = _gtsam_anisotropic_params()
+    # NavState order (rot, pos, vel) -> this module's (rot, vel, pos); P is an involution
+    P = np.zeros((9, 9))
+    P[0:3, 0:3] = np.eye(3)
+    P[3:6, 6:9] = np.eye(3)
+    P[6:9, 3:6] = np.eye(3)
+    for index in range(T.N_EDGES):
+        history = []
+        for n in STEP_SWEEP:
+            edge = T.edges(n)[index]
+            pim = B1.integrate_edge(edge, T.BIAS_TRUE,
+                                    sigma_g=ANISO_SIGMA_G, sigma_a=ANISO_SIGMA_A)
+            ref = P @ B3.integrate_edge(edge, T.BIAS_TRUE, params=params).preint_cov() @ P
+            M = np.eye(9)
+            M[3:6, 3:6] = pim.dR.T
+            M[6:9, 6:9] = pim.dR.T
+            raw = _block_relative(pim.cov, ref)
+            charted = _block_relative(M @ pim.cov @ M.T, ref)
+            history.append(charted)
+            assert raw[(0, 1)] >= 0.1, (
+                f"edge {index} n={n}: untransformed R-v cross block within "
+                f"{raw[(0, 1)]:.3e} -- the chart difference should be visible")
+            assert charted[(0, 0)] <= 1e-12, \
+                f"edge {index} n={n}: rotation block {charted[(0, 0)]:.3e}"
+            if n == T.STEPS_PER_EDGE:
+                worst = max(charted.values())
+                assert worst <= 2e-2, \
+                    f"edge {index}: chart-transformed blocks differ by {worst:.3e}"
+        for k in history[0]:
+            if k == (0, 0):
+                continue
+            ratios = [history[m + 1][k] / history[m][k] for m in range(len(history) - 1)]
+            assert all(ORDER_BAND[0] <= r <= ORDER_BAND[1] for r in ratios), (
+                f"edge {index} block {k}: the chart-transformed residual is not O(dt) "
+                f"discretisation (ratios {ratios})")
 
 
 # ======================================================================================
@@ -413,8 +766,15 @@ def test_c10_velocity_and_position_residuals_at_both_state_sets():
 
     Part (b) is the measurement.  At the fixture's **ground-truth** states the residual
     does not vanish -- it *is* the O(dt) truncation of M2-C04, 2.760e-3, six orders above
-    the 1e-9 the claim used to assert there.  Asserting it equals ``|dvbar - dv_exact|``
-    to 1e-12 is sharp: any change to the Eq. (9) sums moves one side and not the other.
+    the 1e-9 the claim used to assert there.
+
+    The ``|r^v_gt| == |dvbar - dv_exact|`` to 1e-12 assertion is NOT a test of the Eq. (9)
+    sums (an earlier version of this docstring said it was): at ground truth ``chain()``
+    gives ``R_i^T(v_j - v_i - g Dt) = dv_exact`` identically, so both sides contain
+    ``factor.dvbar`` and any change to the sums moves both equally.  It tests only how the
+    residual handles the state (``R_i^T``, gravity, ``Dt``), and it is sign-blind.  The part
+    that tests the sums is the 2.760e-3 +-10% magnitude; ``test_c04`` (c)/(d) carry the
+    signed checks.
     """
     self_states = B1.integrate_edge_states(T.edges(), T.BIAS_TRUE, T.initial_state(),
                                            cls=B2.CayleyPreintegration)
@@ -451,6 +811,54 @@ def test_c10_velocity_and_position_residuals_at_both_state_sets():
         f"at ground truth this must be the O(dt) truncation, got {worst_ground_truth:.3e}"
     assert abs(worst_ground_truth - 2.760341e-3) <= 0.10 * 2.760341e-3, \
         f"ground-truth residual {worst_ground_truth:.6e}, expected 2.760e-3 +-10%"
+
+
+@pytest.mark.claim("M2-F09")
+def test_c10b_velocity_and_position_residuals_at_nonzero_bias():
+    """Rai Eq. (21b)/(21c) evaluated at ``db != 0`` -- the ``A^{v.}``/``A^{p.}`` paths.
+
+    ``test_c10`` passes ``db = None``, so flipping the sign of the bias terms (verifier
+    mutant N04) survived the suite: the factor's whole bias model was exercised by nothing.
+
+    The states here are what the residual is meant to explain: KF_i is the fixture's KF0
+    (``R_0 != I``, so ``R_i^T`` is exercised) and KF_j is chained from a RE-INTEGRATION of
+    the Eq. (9) sums at ``bbar + db``.  Then ``r^v = dv(bbar + db) - dvbar - A^v db``, the
+    first-order Taylor remainder, so it must be O(||db||^2): the ratio between
+    ``||db|| = 1e-2`` and ``1e-3`` lies in [50, 200] (measured 100.0 on both edges, both
+    residuals) and the bias terms must cancel at least 99% of the bias-induced change
+    (measured remainder at 1e-2: r^v 4.6e-4 / 4.9e-4, r^p 3.2e-4 / 3.4e-4 of it on edges
+    0 / 1).  With either sign flipped the
+    residual is ``2 A db``: ratio 10, remainder 2.0.  The direction has distinct gyro and
+    accel blocks, so a ``db_g``/``db_a`` exchange is seen too.
+    """
+    direction = np.array([1.0, -2.0, 3.0, -4.0, 5.0, -6.0])
+    direction /= np.linalg.norm(direction)
+    s_i = T.initial_state()
+    for edge in T.edges():
+        factor = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
+        residual, uncorrected = {}, {}
+        for mag in (1e-3, 1e-2):
+            db = mag * direction
+            moved = B1.integrate_edge(edge, T.BIAS_TRUE + db, cls=B2.CayleyPreintegration)
+            s_j = T.chain(s_i, moved.dR, moved.dv, moved.dp, moved.dt_total)
+            residual[mag] = (
+                factor.velocity_residual(s_i.R, s_i.v, s_j.v, T.G_W, db),
+                factor.position_residual(s_i.R, s_i.p, s_j.p, s_i.v, T.G_W, db))
+            uncorrected[mag] = (
+                factor.velocity_residual(s_i.R, s_i.v, s_j.v, T.G_W),
+                factor.position_residual(s_i.R, s_i.p, s_j.p, s_i.v, T.G_W))
+        for m, name in ((0, "r^v (21b)"), (1, "r^p (21c)")):
+            small = np.abs(residual[1e-3][m]).max()
+            large = np.abs(residual[1e-2][m]).max()
+            ratio = large / small
+            assert 50.0 <= ratio <= 200.0, (
+                f"edge {edge.index} {name}: residual at db != 0 is not O(||db||^2), ratio "
+                f"{ratio:.1f} ({small:.3e} -> {large:.3e}); ~10 means the bias terms enter "
+                f"with the wrong sign or the wrong block")
+            remainder = large / np.abs(uncorrected[1e-2][m]).max()
+            assert remainder <= 1e-2, (
+                f"edge {edge.index} {name}: the bias terms leave {remainder:.3e} of the "
+                f"bias-induced change uncorrected")
 
 
 @pytest.mark.claim("M2-C11")
@@ -923,6 +1331,28 @@ def test_c20_galilean_bias_correction_is_right_composed_in_gal3():
         assert component[5e-2] >= 1e-2, \
             f"edge {edge.index}: component-wise should be wrong: {component[5e-2]:.3e}"
 
+        # The lower bound above cannot fail on a contrast model that is buggy in the
+        # "worse" direction -- exchanging its p and v tangent blocks (verifier mutant N13)
+        # passed.  So pin WHAT the contrast's error is, to first order, from its definition:
+        # with xi = J db, U_true = Uhat Exp(xi) and U_comp = (R Exp(xi_R), p + xi_rho,
+        # v + xi_nu), the Gal(3) log of U_true^-1 U_comp has velocity block
+        # (R^T - I) xi_nu and position block (R^T - I) xi_rho, rotation and time 0, up to
+        # O(||db||^2).  Measured relative deviation 5.8e-4 / 2.4e-4 at ||db|| = 1e-4,
+        # growing x10 per decade (it is the second-order remainder); bound 1e-2.  The p/v
+        # exchanged contrast deviates by 23 / 14.
+        for d in directions:
+            db = 1e-4 * d
+            xi = J @ db
+            predicted = np.zeros(10)
+            predicted[3:6] = (R_hat.T - np.eye(3)) @ xi[3:6]
+            predicted[6:9] = (R_hat.T - np.eye(3)) @ xi[6:9]
+            got = np.asarray(Gal3.Logmap(
+                increment_at(db).inverse().compose(B3.component_wise_model(U_hat, J, db))))
+            deviation = _max_abs(got, predicted) / np.abs(predicted).max()
+            assert deviation <= 1e-2, (
+                f"edge {edge.index}: the component-wise contrast's error is not the dropped "
+                f"dR-rotation of the (v, p) tangent blocks (relative {deviation:.3e})")
+
         # the right-composition residual scales LINEARLY with ||db||, i.e. it is FD noise
         # in J rather than model error
         span = right[5e-2] / right[1e-4]
@@ -1136,21 +1566,25 @@ def test_c23_tier2_magnitude_and_convergence_order():
         f"B2-raw rotation vs B3 is {measured['B2-raw']['R']:.3e}; the Cayley deficit is "
         f"3.0e-8 +-10% (see test_c22b)")
 
-    # -- (b) the gap is first order in dt ------------------------------------------------
+    # -- (b) the gap is first order in dt, for Baseline 1 AND Baseline 2 ----------------
     # Computed unconditionally: the order test is the half with teeth, so it must not be
-    # skipped just because the magnitude half already failed.
-    gaps_v, gaps_p = [], []
-    for n in STEP_SWEEP:
-        s0 = T.initial_state()
-        kf2_b1 = B1.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0)[2]
-        kf2_b3 = B3.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0)[2]
-        gaps_v.append(_max_abs(kf2_b1.v, kf2_b3.v))
-        gaps_p.append(_max_abs(kf2_b1.p, kf2_b3.p))
+    # skipped just because the magnitude half already failed.  The claim covers both
+    # Euler baselines; the sweep used to run Baseline 1 only.
+    sweeps = {"B1": {}, "B2-raw": {"cls": B2.CayleyPreintegration,
+                                   "variant": B2.VARIANT_RAW}}
+    for baseline, kwargs in sweeps.items():
+        gaps_v, gaps_p = [], []
+        for n in STEP_SWEEP:
+            s0 = T.initial_state()
+            kf2_b = B1.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0, **kwargs)[2]
+            kf2_b3 = B3.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0)[2]
+            gaps_v.append(_max_abs(kf2_b.v, kf2_b3.v))
+            gaps_p.append(_max_abs(kf2_b.p, kf2_b3.p))
 
-    for name, gaps in (("v", gaps_v), ("p", gaps_p)):
-        ratios = [gaps[k + 1] / gaps[k] for k in range(len(gaps) - 1)]
-        if not all(ORDER_BAND[0] <= r <= ORDER_BAND[1] for r in ratios):
-            failures.append(f"{name} gap ratios {ratios} (gaps {gaps})")
+        for name, gaps in (("v", gaps_v), ("p", gaps_p)):
+            ratios = [gaps[k + 1] / gaps[k] for k in range(len(gaps) - 1)]
+            if not all(ORDER_BAND[0] <= r <= ORDER_BAND[1] for r in ratios):
+                failures.append(f"{baseline} {name} gap ratios {ratios} (gaps {gaps})")
 
     assert not failures, f"Tier 2: {failures}; magnitudes {measured}"
 
@@ -1316,9 +1750,16 @@ def test_c25_fixture_is_bias_observable_without_a_bias_prior():
     assert abs(pose_velocity_energy - 2.537) <= 1e-2, \
         f"pose/velocity energy in the nullspace {pose_velocity_energy:.3f} / 6"
 
-    # A bias prior on ONE keyframe does close the gap -- but only because no null
-    # direction is ORTHOGONAL to the bias block, which is strictly weaker than the
-    # sub-assertion above and must not be read as evidence for it.
+    # A bias prior on ONE keyframe does close the gap, and that is STRUCTURAL, not luck:
+    # the random-walk residuals force B0 = B1 = B2, so every null vector has the form
+    # (M delta; delta, delta, delta) with delta != 0 (a nonzero pose/velocity part M delta
+    # alone would be observable through the KF0 priors and the IMU edges).  No null
+    # direction can therefore be orthogonal to the bias block, and a 6-dim prior on B0
+    # removes all six.  This is strictly weaker than the "not the bias block" assertion
+    # above and must not be read as evidence for it.  The cosines themselves are facts
+    # about GTSAM's tangent coordinates (rescaling the bias units moves them), not about
+    # geometry; the coordinate-free content is that every null vector has a nonzero
+    # pose/velocity part.
     bias_pinned = with_priors.clone()
     bias_pinned.add(gtsam.PriorFactorConstantBias(
         B(0), B3.to_gtsam_bias(T.BIAS_TRUE), noiseModel.Isotropic.Sigma(6, 1e-3)))

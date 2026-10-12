@@ -51,8 +51,10 @@ class ForsterPreintegration:
     """
 
     bias_hat: np.ndarray
-    sigma_g: float = 0.0        #: gyro noise DENSITY (rad/s/sqrt(Hz))
-    sigma_a: float = 0.0        #: accel noise DENSITY (m/s^2/sqrt(Hz))
+    #: gyro noise DENSITY (rad/s/sqrt(Hz)); a scalar (isotropic) or a per-axis 3-vector
+    sigma_g: float | np.ndarray = 0.0
+    #: accel noise DENSITY (m/s^2/sqrt(Hz)); a scalar (isotropic) or a per-axis 3-vector
+    sigma_a: float | np.ndarray = 0.0
 
     dR: np.ndarray = field(default_factory=lambda: np.eye(3))
     dv: np.ndarray = field(default_factory=lambda: np.zeros(3))
@@ -80,7 +82,7 @@ class ForsterPreintegration:
         w = np.asarray(omega_meas, dtype=float) - self.b_g
         a = np.asarray(acc_meas, dtype=float) - self.b_a
 
-        if self.sigma_g > 0.0 or self.sigma_a > 0.0:
+        if self.has_noise:
             self._propagate_covariance(w, a, dt)
 
         dR_ik = self.dR
@@ -89,6 +91,22 @@ class ForsterPreintegration:
         self.dR = dR_ik @ self.retract(w * dt)
         self.dt_total += dt
 
+    @property
+    def has_noise(self) -> bool:
+        return bool(np.any(np.asarray(self.sigma_g) > 0.0)
+                    or np.any(np.asarray(self.sigma_a) > 0.0))
+
+    def noise_covariances(self, dt: float):
+        """Discrete-time ``(Qg, Qa)`` from the continuous densities: ``diag(sigma^2) / dt``.
+
+        Per-axis densities are allowed so that a covariance test can use ANISOTROPIC noise:
+        with isotropic noise ``dR Q dR^T = Q``, which hides every orientation error in the
+        noise-input and rotation-transition blocks (verification pass 2, M2-F07).
+        """
+        sg = np.broadcast_to(np.asarray(self.sigma_g, dtype=float), (3,))
+        sa = np.broadcast_to(np.asarray(self.sigma_a, dtype=float), (3,))
+        return np.diag(sg**2) / dt, np.diag(sa**2) / dt
+
     @staticmethod
     def retract(phi) -> np.ndarray:
         """The rotation retraction.  Baseline 2 overrides exactly this one hook."""
@@ -96,6 +114,14 @@ class ForsterPreintegration:
 
     # -- Eq. (63) ----------------------------------------------------------------------
     def _propagate_covariance(self, w, a, dt: float) -> None:
+        """Exact first-order covariance recursion of the Euler scheme above.
+
+        The chart is Forster's: ``dR_noisy = dR Exp(dphi)``, ``dv_noisy = dv + ddv``,
+        ``dp_noisy = dp + ddp`` (additive in v and p).  GTSAM's Galilean ``preintMeasCov``
+        lives in the right Gal(3) chart ``U Exp(xi)``, whose velocity/position components
+        are ``dR^T ddv`` and ``dR^T ddp``; compare via ``M = diag(I, dR^T, dR^T)``, not
+        directly (test_c06b).
+        """
         dR_step = self.retract(w * dt)
         Jr = so3_right_jacobian(w * dt)
         dR_ik = self.dR
@@ -114,8 +140,7 @@ class ForsterPreintegration:
         Ba[6:9, :] = 0.5 * dR_ik * dt**2
 
         # discrete-time noise covariances from the continuous densities
-        Qg = (self.sigma_g**2 / dt) * np.eye(3)
-        Qa = (self.sigma_a**2 / dt) * np.eye(3)
+        Qg, Qa = self.noise_covariances(dt)
         self.cov = A @ self.cov @ A.T + Bg @ Qg @ Bg.T + Ba @ Qa @ Ba.T
 
     # -- Eq. (30)-(33) -----------------------------------------------------------------
@@ -132,7 +157,7 @@ class ForsterPreintegration:
         return self.dR.copy(), self.dv.copy(), self.dp.copy()
 
 
-def integrate_edge(edge, bias_hat, sigma_g: float = 0.0, sigma_a: float = 0.0,
+def integrate_edge(edge, bias_hat, sigma_g=0.0, sigma_a=0.0,
                    cls=ForsterPreintegration, **kwargs):
     """Run ``cls`` over one fixture edge's noise-free stream."""
     pim = cls(bias_hat=np.asarray(bias_hat, dtype=float),

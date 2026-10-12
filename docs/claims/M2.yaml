@@ -78,7 +78,13 @@ claims:
   kind: VERIFIED-PUBLISHED
   test_hint: Propagate over a fixture edge with sigma_g=1.7e-4, sigma_a=1e-2; at each of the 200 steps
     assert max|S-S.T|<=1e-14, min eigenvalue >= -1e-12, and tr nondecreasing. Cross-check shape and magnitude
-    against gtsam preintMeasCov().
+    against gtsam preintMeasCov(). That cross-check is structural too (it is dominated by the vv block);
+    correctness is tested in test_c06b (finding M2-F07) block by block, with ANISOTROPIC densities, against a
+    finite-difference linearisation of the discrete noisy integrator (agreement <= 2.7e-9 relative) and against
+    GTSAM after the chart change M = diag(I, dR^T, dR^T). Untransformed, the R-v cross block differs from GTSAM
+    by 0.17 / 0.19 (isotropic) or 0.11 / 0.20 (anisotropic) on the two edges -- Forster's additive dv/dp chart
+    vs Gal(3)'s right body-frame chart, not a bug; transformed, the rotation block agrees to round-off and the
+    rest to an O(dt) Euler-vs-ZOH residual (5.0e-3 / 7.5e-3 in the cross blocks at n=200) that halves with dt.
   domain: GTSAM's preintMeasCov() is in NavState block order (rot, pos, vel), NOT (rot, vel, pos); compare
     like with like before asserting agreement.
   verdict: CONFIRMED
@@ -287,8 +293,14 @@ claims:
   kind: VERIFIED-PUBLISHED
   test_hint: 'Zero gravity and identity NavState make predict() return the corrected increment directly.
     Estimate J by finite differences at eps=1e-7 on Logmap(Uhat^-1 U(db)); then test both models over
-    30 random directions at ||db|| in {1e-4,1e-3,1e-2,5e-2}. Measured: right-composition 2.2e-12..1.2e-9
-    (scaling LINEARLY with ||db||, i.e. FD noise in J, not model error); component-wise 2.8e-4..1.3e-1.'
+    30 random directions at ||db|| in {1e-4,1e-3,1e-2,5e-2}. Measured (re-measured in the M2-F10 remediation,
+    seed 20250218, eps=1e-7; the previously recorded 2.2e-12..1.2e-9 / 2.8e-4..1.3e-1 were not reproducible):
+    right-composition 8.8e-13..4.4e-10 (edge 0) and 6.3e-13..3.2e-10 (edge 1), scaling LINEARLY with ||db||,
+    i.e. FD noise in J, not model error; component-wise 1.96e-5..9.40e-3 (edge 0) and 2.05e-5..1.02e-2 (edge
+    1) over the 30 random directions, and 2.67e-5..1.40e-2 / 3.12e-5..1.62e-2 once the leading model difference''s
+    top singular direction is added -- the >= 1e-2 bound is a statement about the sup, which the 30 random
+    directions undersample. The contrast''s error is also pinned to first order: its Gal(3) log against U(db)
+    is (0, (R^T - I) xi_nu, (R^T - I) xi_rho, 0) with xi = J db, to 5.8e-4 / 2.4e-4 relative at ||db||=1e-4.'
   domain: The JACOBIAN is first order; the RETRACTION is exact. TangentPreintegration is ALSO exactly
     affine but in its own chart zeta=(Log dR, dp, dv) -- the difference is which chart the frozen Jacobian
     is exact in. Against re-integration both are O(||db||^2); Galilean coefficient ~0.67, about 2.8x smaller
@@ -344,7 +356,8 @@ claims:
   test_hint: Two assertions, both required. (a) At dt=2.5e-3 assert |v_B1 - v_B3|_inf <= 5e-3 and likewise
     for p (measured 1.2867e-3 and 1.2031e-3, ~3.9x margin) and |R_B1/B2 - R_B3|_inf <= 1e-6 (measured
     3.1e-15 for B1, 3.0e-8 for B2-raw). (b) Re-run at n = 100,200,400,800,1600 and assert
-    successive gap ratios in [0.45,0.55] (measured 0.5003, 0.5001, 0.5001, 0.5000). The magnitude test
+    successive gap ratios in [0.45,0.55] (measured 0.5003, 0.5001, 0.5001, 0.5000), for Baseline 1 AND
+    Baseline 2-raw (B2-raw v ratios 0.50026, 0.50013, 0.50007, 0.50003; p 0.49998..0.50000). The magnitude test
     ALONE would pass for a baseline wrong by a constant 1e-3; the order test is the one with teeth.
   domain: The gap is O(dt) truncation of the Euler sums in Baselines 1-2, not an error in any baseline.
     Baseline 3 is exact ZOH (M2-C19) and is the reference side of this comparison.
@@ -389,7 +402,11 @@ claims:
     0.978041, 0.839290, 0.815739, 0.299838, 0.299389] to 1e-3 -- these are basis-independent, unlike
     the per-direction energy split -- and that the pose/velocity energy 6 - sum(cos^2) is 2.537. Also
     assert total graph error at ground truth <= 1e-18 (measured 7.5e-23) and each IMU factor''s unwhitened
-    residual <= 1e-12 (measured 2.2e-14).'
+    residual <= 1e-12 (measured 2.2e-14). Read the cosines as facts about GTSAM''s TANGENT COORDINATES:
+    a change of bias units moves them (verification pass 2, F04); the coordinate-free content is that every null vector has a nonzero pose/velocity part. That a B0 prior
+    closes the gap is STRUCTURAL, not luck: the random-walk factors force every null vector into the form
+    (M delta; delta, delta, delta) with delta != 0, so none can be orthogonal to the bias block (the
+    statement''s "happens to be orthogonal" wording undersells this; see the test comment).'
   domain: 'Rank is invariant to positive reweighting, so this does not depend on the noise model. The
     CONDITION number does and is NOT claimed: measured 7.5e7 with tight covariances and 7.6e6 with realistic
     MEMS densities.'

@@ -28,6 +28,15 @@ identity.  ``test_m04_swapping_y_and_yprime_is_a_genuine_no_op`` asserts the no-
 about the algebra, and a harness that quietly skipped it would be hiding the same kind of
 thing this file exists to expose.
 
+Verification pass 2 ran its own 39-mutant sweep and found **14 more survivors**
+(``docs/verification/stage-b_m2-baselines_pass2.md`` Sec. 5): eight covariance defects
+that C06's structural checks cannot see, two order errors invisible on the commuting
+constant-twist fixture (N24, N11), the dp-only ``dR_{i,k+1}`` fold (F05a3), the sign of
+the Eq. (21b) bias terms (N04), a p/v swap in C20's contrast model (N13) and a change of
+the fixture bias constants (N29).  ``PASS2_SURVIVORS`` replays all 14 and
+``test_pass2_survivor_is_killed`` asserts each now dies; N29 is additionally replayed as
+a real on-disk edit by ``test_n29_file_level_bias_edit_is_killed``.
+
 Mutations are applied with ``monkeypatch`` against the imported modules rather than by
 editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
@@ -432,3 +441,260 @@ def test_replacing_cay_by_exp_cannot_make_the_suite_green(monkeypatch):
 def test_gal3_import_is_used():
     """``Gal3`` is imported for the recursion mutant; keep the import honest."""
     assert hasattr(Gal3, "Logmap")
+
+
+# ======================================================================================
+# The 14 survivors of the verifier's pass-2 sweep (docs/verification/
+# stage-b_m2-baselines_pass2.md Sec. 5), plus three close neighbours named in the M2-F07
+# / M2-F09 remediation brief.  Each is replayed exactly as the report describes it.
+# ======================================================================================
+
+
+def _integrate_measurement_variant(rotation_on_left=False, dp_uses_next_rotation=False):
+    """Baseline 1's (and so Baseline 2's) ``integrate_measurement`` with one defect."""
+    def integrate_measurement(self, omega_meas, acc_meas, dt):
+        w = np.asarray(omega_meas, dtype=float) - self.b_g
+        a = np.asarray(acc_meas, dtype=float) - self.b_a
+        if self.has_noise:
+            self._propagate_covariance(w, a, dt)
+        dR_ik = self.dR
+        step = self.retract(w * dt)
+        dR_next = step @ dR_ik if rotation_on_left else dR_ik @ step
+        dR_for_dp = dR_next if dp_uses_next_rotation else dR_ik
+        self.dp = self.dp + self.dv * dt + 0.5 * (dR_for_dp @ a) * dt**2
+        self.dv = self.dv + (dR_ik @ a) * dt
+        self.dR = dR_next
+        self.dt_total += dt
+    return integrate_measurement
+
+
+def _n24_rotation_accumulated_on_left(monkeypatch):
+    """B1/B2: ``dR <- Retract(w dt) dR`` instead of ``dR Retract(w dt)``."""
+    monkeypatch.setattr(B1.ForsterPreintegration, "integrate_measurement",
+                        _integrate_measurement_variant(rotation_on_left=True))
+
+
+def _f05a3_dp_only_fold(monkeypatch):
+    """Eq. (9c) uses ``dR_{i,k+1}`` in the ``0.5 dR a dt^2`` term; dv keeps ``dR_ik``."""
+    monkeypatch.setattr(B1.ForsterPreintegration, "integrate_measurement",
+                        _integrate_measurement_variant(dp_uses_next_rotation=True))
+
+
+def _n04_eq21b_bias_sign(monkeypatch):
+    """Eq. (21b): ``+ A^vg db_g + A^va db_a`` instead of ``-``."""
+    def velocity_residual_eq21b(R_i, v_i, v_j, dvbar, Dt, g_W,
+                                A_vg=None, A_va=None, db_g=None, db_a=None):
+        r = np.asarray(R_i).T @ (np.asarray(v_j) - np.asarray(v_i) - np.asarray(g_W) * Dt)
+        r = r - np.asarray(dvbar)
+        if A_vg is not None and db_g is not None:
+            r = r + np.asarray(A_vg) @ np.asarray(db_g)          # MUTANT: sign
+        if A_va is not None and db_a is not None:
+            r = r + np.asarray(A_va) @ np.asarray(db_a)          # MUTANT: sign
+        return r
+    monkeypatch.setattr(B2, "velocity_residual_eq21b", velocity_residual_eq21b)
+
+
+def _n04p_eq21c_bias_sign(monkeypatch):
+    """Eq. (21c): ``+ A^pg db_g + A^pa db_a`` instead of ``-`` (neighbour of N04)."""
+    def position_residual_eq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g_W,
+                                A_pg=None, A_pa=None, db_g=None, db_a=None):
+        r = np.asarray(R_i).T @ (np.asarray(p_j) - np.asarray(p_i)
+                                 - np.asarray(v_i) * Dt - 0.5 * np.asarray(g_W) * Dt**2)
+        r = r - np.asarray(dpbar)
+        if A_pg is not None and db_g is not None:
+            r = r + np.asarray(A_pg) @ np.asarray(db_g)          # MUTANT: sign
+        if A_pa is not None and db_a is not None:
+            r = r + np.asarray(A_pa) @ np.asarray(db_a)          # MUTANT: sign
+        return r
+    monkeypatch.setattr(B2, "position_residual_eq21c", position_residual_eq21c)
+
+
+def _covariance_variant(defect):
+    """Forster Eq. (63) as in ``src``, with exactly one named defect."""
+    def _propagate_covariance(self, w, a, dt):
+        dR_step = self.retract(w * dt)
+        Jr = B1.so3_right_jacobian(w * dt)
+        dR_ik = self.dR
+        A = np.zeros((9, 9))
+        A[0:3, 0:3] = dR_step.T
+        A[3:6, 0:3] = -dR_ik @ T.hat(a) * dt
+        A[3:6, 3:6] = np.eye(3)
+        A[6:9, 0:3] = -0.5 * dR_ik @ T.hat(a) * dt**2
+        A[6:9, 3:6] = np.eye(3) * dt
+        A[6:9, 6:9] = np.eye(3)
+        Bg = np.zeros((9, 3))
+        Bg[0:3, :] = Jr * dt
+        Ba = np.zeros((9, 3))
+        Ba[3:6, :] = dR_ik * dt
+        Ba[6:9, :] = 0.5 * dR_ik * dt**2
+        Qg, Qa = self.noise_covariances(dt)
+        if defect == "coupling_sign":          # N27
+            A[3:9, 0:3] = -A[3:9, 0:3]
+        elif defect == "coupling_sign_v":      # N27v: velocity row only
+            A[3:6, 0:3] = -A[3:6, 0:3]
+        elif defect == "jr_identity":          # N05
+            Bg[0:3, :] = np.eye(3) * dt
+        elif defect == "a00_identity":         # N06
+            A[0:3, 0:3] = np.eye(3)
+        elif defect == "a00_untransposed":     # N10
+            A[0:3, 0:3] = dR_step
+        elif defect == "ba_position_no_half":  # N07
+            Ba[6:9, :] = dR_ik * dt**2
+        elif defect == "a_position_no_half":   # N09
+            A[6:9, 0:3] = -dR_ik @ T.hat(a) * dt**2
+        elif defect == "ba_transposed":        # N28
+            Ba[3:6, :] = dR_ik.T * dt
+            Ba[6:9, :] = 0.5 * dR_ik.T * dt**2
+        elif defect == "noise_up":             # N08
+            Qg, Qa = 1.005 * Qg, 1.005 * Qa
+        elif defect == "noise_down":           # N08d
+            Qg, Qa = 0.995 * Qg, 0.995 * Qa
+        else:
+            raise ValueError(defect)
+        self.cov = A @ self.cov @ A.T + Bg @ Qg @ Bg.T + Ba @ Qa @ Ba.T
+    return _propagate_covariance
+
+
+def _covariance_mutant(defect):
+    def apply(monkeypatch):
+        monkeypatch.setattr(B1.ForsterPreintegration, "_propagate_covariance",
+                            _covariance_variant(defect))
+    apply.__doc__ = f"Forster Eq. (63) covariance defect: {defect}."
+    return apply
+
+
+def _n11_conjugated_j_r(monkeypatch):
+    """``J_R`` replaced by ``dR J_R dR^T`` (commutes with ``dR`` on constant twist)."""
+    original = B1.bias_jacobians_fd
+
+    def bias_jacobians_fd(edge, bias_hat, eps=B1.FD_EPS, cls=B1.ForsterPreintegration,
+                          **kwargs):
+        J_R, J_vg, J_va, J_pg, J_pa = original(edge, bias_hat, eps=eps, cls=cls, **kwargs)
+        dR0 = B1.integrate_edge(edge, bias_hat, cls=cls, **kwargs).dR
+        return dR0 @ J_R @ dR0.T, J_vg, J_va, J_pg, J_pa
+    monkeypatch.setattr(B1, "bias_jacobians_fd", bias_jacobians_fd)
+
+
+def _n13_contrast_pv_swapped(monkeypatch):
+    """M2-C20's component-wise contrast model with its p and v tangent blocks exchanged."""
+    def component_wise_model(Uhat, J, db):
+        J = np.asarray(J, dtype=float)
+        xi = J @ np.asarray(db, dtype=float)
+        R, p, v, t = B3.gal3_components(Uhat)
+        return B3.gal3(R @ T.so3_exp(xi[0:3]), p + xi[3:6], v + xi[6:9], t)  # MUTANT
+    monkeypatch.setattr(B3, "component_wise_model", component_wise_model)
+
+
+def _n29_bias_constants_changed(monkeypatch):
+    """``B_G -> [0.02, -0.015, 0.008]``, ``B_A -> [0.06, -0.04, 0.19]``, consistently, as
+    a file-level edit of ``src/trajectory.py`` would leave them."""
+    b_g = np.array([0.0200, -0.0150, 0.0080])
+    b_a = np.array([0.0600, -0.0400, 0.1900])
+    monkeypatch.setattr(T, "B_G", b_g)
+    monkeypatch.setattr(T, "B_A", b_a)
+    monkeypatch.setattr(T, "BIAS_TRUE", np.concatenate([b_g, b_a]))
+
+
+#: ``(id, mutation, killers)``; every killer must go red.  ``killers`` lists the tests
+#: whose assertions were written for the mutant; others may die too.
+PASS2_SURVIVORS = [
+    ("N24",   _n24_rotation_accumulated_on_left,         ["c05b"]),
+    ("F05a3", _f05a3_dp_only_fold,                       ["c04", "c05b"]),
+    ("N04",   _n04_eq21b_bias_sign,                      ["c10b"]),
+    ("N27",   _covariance_mutant("coupling_sign"),       ["c06b"]),
+    ("N05",   _covariance_mutant("jr_identity"),         ["c06b"]),
+    ("N06",   _covariance_mutant("a00_identity"),        ["c06b"]),
+    ("N10",   _covariance_mutant("a00_untransposed"),    ["c06b"]),
+    ("N07",   _covariance_mutant("ba_position_no_half"), ["c06b"]),
+    ("N09",   _covariance_mutant("a_position_no_half"),  ["c06b"]),
+    ("N28",   _covariance_mutant("ba_transposed"),       ["c06b"]),
+    ("N08",   _covariance_mutant("noise_up"),            ["c06b"]),
+    ("N11",   _n11_conjugated_j_r,                       ["c05b"]),
+    ("N13",   _n13_contrast_pv_swapped,                  ["c20"]),
+    ("N29",   _n29_bias_constants_changed,               ["c01"]),
+]
+#: neighbours from the remediation brief, not in the verifier's table
+PASS2_NEIGHBOURS = [
+    ("N04p",  _n04p_eq21c_bias_sign,                     ["c10b"]),
+    ("N27v",  _covariance_mutant("coupling_sign_v"),     ["c06b"]),
+    ("N08d",  _covariance_mutant("noise_down"),          ["c06b"]),
+]
+
+
+@pytest.mark.claim("M2-F07")
+@pytest.mark.claim("M2-F08")
+@pytest.mark.claim("M2-F09")
+@pytest.mark.claim("M2-F10")
+@pytest.mark.parametrize("mutant_id,apply_mutation,killers",
+                         PASS2_SURVIVORS + PASS2_NEIGHBOURS,
+                         ids=[m[0] for m in PASS2_SURVIVORS + PASS2_NEIGHBOURS])
+def test_pass2_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killers):
+    """Every pass-2 survivor must now turn its named tests red."""
+    for short_name in killers:
+        assert _outcome(short_name) is None, \
+            f"{_test_function(short_name)[0]} fails BEFORE {mutant_id} is applied"
+    apply_mutation(monkeypatch)
+    survivors = [_test_function(s)[0] for s in killers if _outcome(s) is None]
+    assert not survivors, f"{mutant_id} (survived pass 2) still SURVIVES {survivors}"
+
+
+@pytest.mark.claim("M2-F07")
+def test_pass2_sweep_covers_all_fourteen_survivors():
+    """The 14 ids of the pass-2 report's survivor table, none dropped."""
+    expected = {"N24", "F05a3", "N04", "N27", "N05", "N06", "N10", "N07", "N09", "N28",
+                "N08", "N11", "N13", "N29"}
+    assert {m[0] for m in PASS2_SURVIVORS} == expected
+    assert len(PASS2_SURVIVORS) == 14
+
+
+def _run_c01_in_copy(tmp_path, edit=None):
+    """Run ``test_c01`` against a COPY of the tree, optionally with ``src/trajectory.py``
+    edited on disk.  This is a true file-level mutation: the generating subprocesses of
+    ``test_c01`` import the edited file, which a monkeypatch cannot reach."""
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    root = tmp_path / ("mutated" if edit else "control")
+    shutil.copytree(repo / "src", root / "src",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "tests").mkdir(parents=True)
+    shutil.copy(repo / "tests" / "test_baselines.py", root / "tests")
+    shutil.copy(repo / "conftest.py", root)
+    shutil.copy(repo / "pyproject.toml", root)
+    if edit:
+        path = root / "src" / "trajectory.py"
+        text = path.read_text()
+        for old, new in edit:
+            assert text.count(old) == 1, f"edit anchor {old!r} not unique"
+            text = text.replace(old, new)
+        path.write_text(text)
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "tests/test_baselines.py::test_c01_fixture_is_deterministic_bitwise"],
+        cwd=str(root), capture_output=True, text=True)
+    return proc.returncode, proc.stdout
+
+
+@pytest.mark.claim("M2-F10")
+def test_n29_file_level_bias_edit_is_killed(tmp_path):
+    """N29 exactly as the verifier applied it: an on-disk edit of ``B_G`` and ``B_A``.
+
+    Before this pass every baseline subtracted the same edited ``BIAS_TRUE`` and
+    ``test_c01`` compared the streams against the module's own constants, so the edit
+    passed.  ``test_c01`` now checks the generated streams and constants against literals
+    retyped from the M2-C01 statement.
+    """
+    code, out = _run_c01_in_copy(tmp_path)
+    assert code == 0, f"control copy of test_c01 fails:\n{out[-2000:]}"
+    code, out = _run_c01_in_copy(tmp_path, edit=[
+        ("B_G = np.array([0.0100, -0.0150, 0.0080])",
+         "B_G = np.array([0.0200, -0.0150, 0.0080])"),
+        ("B_A = np.array([0.0600, -0.0400, 0.0900])",
+         "B_A = np.array([0.0600, -0.0400, 0.1900])"),
+    ])
+    assert code != 0, "a file-level edit of B_G/B_A leaves test_c01 green"
+    assert "is not the claimed [b_g; b_a]" in out, \
+        f"test_c01 died, but not on the bias pin:\n{out[-2000:]}"
