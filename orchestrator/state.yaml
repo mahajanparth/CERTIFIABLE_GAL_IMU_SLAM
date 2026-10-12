@@ -1,0 +1,50 @@
+# THE single source of truth for programme progress.
+#
+# Nothing in this file is a self-report. Claim verdicts are written by independent
+# verifiers; claim test-bindings and pass/fail come from actually running pytest and are
+# never stored here. Edit by hand only to add claims or correct a typo -- status is computed.
+project: CERTIFIABLE_GAL_IMU_SLAM
+stage: B
+milestones:
+  - id: M0
+    title: Literature matrix
+    branch: main
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
+  - id: M1
+    title: Gal(3) mechanics
+    branch: main
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
+  - id: M2
+    title: Baselines
+    branch: stage-b/m2-baselines
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
+  - id: M3
+    title: QCQP derivation
+    branch: stage-b/m3-qcqp-derivation
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
+  - id: M4
+    title: SDP certification
+    branch: stage-b/m4-sdp-certification
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
+  - id: M5
+    title: Experiments
+    branch: stage-b/m5-experiments
+    status: not_started
+    claims: []
+    seed: {id: null, statement: null, caught: null, published: false}
+    agent_runs: []
