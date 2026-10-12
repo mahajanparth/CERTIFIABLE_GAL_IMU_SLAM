@@ -113,7 +113,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: blocked
   claims: []
   seed:
     id: M2-S01
@@ -149,8 +149,45 @@ milestones:
   - role: verifier
     agent_id: verify-M2-001
     started: '2026-10-12T19:49:25+00:00'
-    finished: null
-    outcome: running
+    finished: '2026-10-12T20:09:51+00:00'
+    outcome: completed
+  blocking_findings:
+  - id: M2-F01
+    resolved: false
+    summary: 'CRITICAL: replacing Baseline 2''s Cayley retraction with Exp SURVIVES and turns the suite
+      from 3-failed/22-passed into 25 PASSED. The one property making B2 a distinct baseline is pinned
+      by no passing test; the only tests that would notice are the three already failing. A maintainer
+      ''fixing the red tests'' would delete B2''s reason to exist and be rewarded.'
+  - id: M2-F02
+    resolved: false
+    summary: 'C22/C23/C24 defective. The paper is NOT ambiguous: Eq. (4)''s Jacobian matches the raw Cayley
+      map to FD precision (4.7e-11) and is wrong by up to 0.36 for the reparam reading; under reparam
+      Cay==Exp bit-equal, so B2 would not be a separate baseline. The raw reading loses theta^3/12 per
+      step = 7.84e-8 over the fixture; 1e-10 needs dt=3.9e-5, a 64x refinement of a dt pinned by C01.
+      Unattainable. Drop ''both admissible readings'', set raw-R to 1e-6, record 3.0e-8 as a property
+      of the method.'
+  - id: M2-F03
+    resolved: false
+    summary: 'C10''s test is a tautology: it silently substitutes the baseline''s own propagated states,
+      making r^v = dvbar - dvbar == 0 (measured 1.65e-13, pure round-off). At the fixture''s actual ground-truth
+      states the worst residual is 2.76e-3 -- six orders above the claimed 1e-9.'
+  - id: M2-F04
+    resolved: false
+    summary: 'C25''s ''the 6 remaining directions are the bias block'' is false: 42% of nullspace energy
+      sits in pose/velocity, principal cosines [0.978,0.978,0.839,0.816,0.300,0.299] (two directions ~72.5deg).
+      Independently reproduced. Also rank 30 and 39 are FULL ROW RANK on 30x45 and 39x45 Jacobians --
+      the maximum possible -- so those assertions verify nothing about observability.'
+  - id: M2-F05
+    resolved: false
+    summary: 'Three further surviving mutants: folding the step rotation into dR_ik before Eq. (9b)/(9c)
+      survives all 25 tests though |dv_err| = 4.3e-3 (twice the truncation error); dropping the bbar_g
+      offset from CayleyFactor.xi survives a 10x error in xi, so C13''s frozen affine bias map is exercised
+      by nothing; C13(a) is unfalsifiable since no code path writes J_R.'
+  - id: M2-F06
+    resolved: false
+    summary: C16's recorded measurement 0.763 is unreproducible -- the right number is 0.107628, so the
+      >=0.1 bound holds with 7.6% margin not 660%. 36 nearby configurations enumerated, 0.763 appears
+      nowhere. Statement CONFIRMED, recorded measurement REFUTED.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
