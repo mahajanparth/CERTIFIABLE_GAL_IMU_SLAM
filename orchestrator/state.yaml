@@ -46,7 +46,7 @@ milestones:
       position block with the SAME negative sign as the -0.5*g*Dt^2 entry of H' in the corrected endpoint
       relation, which is what makes Cayley consistent with the project's convention that a gravity-like
       term standing to the left of an un-advanced state carries a minus.
-    caught: null
+    caught: VOID
     published: false
     why_false: 'The sign is PLUS: (I - [phi]x/2) pe == w + (alpha/2) u, verified to 5.7e-14 over 20000
       random gal(3) elements with alpha != 0; the minus form is off by up to 2.5e2. Subtle because pre-flight
@@ -56,6 +56,10 @@ milestones:
     note: 'Weakness: this seed contradicts M1-C25/M1-C30 in the same list, so a careful verifier can catch
       it by reading alone rather than by computing. That still counts as catching it -- only pure deference
       misses it -- but it is a weaker test than a seed that is internally consistent with its neighbours.'
+    void_reason: 'BURNED: recoverable from git log -p on the branch. The deriver wrote it into a tracked
+      docs/claims/ file and the later strip-commit left the original in history. The M2 implementer found
+      it this way and disclosed it. Any ''caught'' verdict on this seed is non-informative -- it tests
+      git archaeology, not adversarial verification.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M1-001
@@ -75,7 +79,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -83,7 +87,7 @@ milestones:
       = 0.5 Dt_ij J^{va}_ij and J^{pg}_ij = 0.5 Dt_ij J^{vg}_ij, agreeing to 1e-6 on both fixture edges,
       because dp accumulates dv over the interval with the same frozen rotation sequence; only the velocity
       Jacobians therefore need to be propagated and the position ones can be formed by scaling.
-    caught: null
+    caught: VOID
     published: false
     why_false: 'J^pa is NOT 0.5*Dt*J^va. Independently measured max relative error 10.1% on J^pa and 49.7%
       on J^pg (deriver measured 3% / 50% on its own fixture -- different trajectory, same verdict). Structurally:
@@ -93,6 +97,10 @@ milestones:
     note: 'Stronger than the M1 seed: it is internally CONSISTENT with every sibling claim, so it cannot
       be caught by reading for contradiction. It must be caught by computing. The deriver discarded an
       earlier candidate for exactly that reason.'
+    void_reason: 'BURNED: recoverable from git log -p on the branch. The deriver wrote it into a tracked
+      docs/claims/ file and the later strip-commit left the original in history. The M2 implementer found
+      it this way and disclosed it. Any ''caught'' verdict on this seed is non-informative -- it tests
+      git archaeology, not adversarial verification.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M2-001
@@ -102,6 +110,11 @@ milestones:
   - role: implementer
     agent_id: impl-M2-001
     started: '2026-10-12T19:22:56+00:00'
+    finished: '2026-10-12T19:49:25+00:00'
+    outcome: completed
+  - role: verifier
+    agent_id: verify-M2-001
+    started: '2026-10-12T19:49:25+00:00'
     finished: null
     outcome: running
 - id: M3

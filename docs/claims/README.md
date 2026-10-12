@@ -25,3 +25,22 @@ Rules:
 The orchestrator reads these files, binds each id to a `@pytest.mark.claim` test, runs pytest,
 and computes status. An unbound claim reads `UNTESTED` and blocks the milestone gate, so a claim
 that gets skipped stays visible instead of quietly vanishing.
+
+## Seeded defects — process defect found 2026-10-12, and the fix
+
+**Derivers must NOT write seeded defects into any tracked file.** Two were, early on, and the later
+strip-commit left the originals recoverable from `git log -p`. The M2 implementer found its seed exactly
+that way and disclosed it.
+
+A seed caught by git archaeology proves nothing about whether verification is adversarial — it tests
+whether an agent reads history. Both compromised seeds (`M1-S01`, `M2-S01`) were marked `VOID` rather
+than counted, and fresh replacements were issued that have never touched version control.
+
+**The rule now:** a deriver reports its proposed seed in its hand-back message only. The seed is written
+straight to the gitignored `orchestrator/seeds.local.yaml` and never to `docs/claims/`. The ledger
+deliberately ignores a `seed:` block in a claims file so that a mistake here cannot silently re-arm.
+
+This is not airtight — an agent with filesystem access could read the gitignored file. The failure mode
+being guarded against is an agreeable verifier that rubber-stamps claims, and such a verifier does not
+go hunting. Verifiers are additionally asked to state *how* they caught a seed, so a history-archaeology
+catch can be discounted rather than scored.
