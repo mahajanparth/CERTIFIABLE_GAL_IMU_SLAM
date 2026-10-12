@@ -1,0 +1,204 @@
+milestone: M2
+
+# Baselines. Three implementations, one shared synthetic trajectory (fixture M2_TRAJ_V1,
+# specified in docs/02_baseline_reproduction.md Sec. 0). Every numeric tolerance below was
+# set from a measurement recorded in that document, not chosen by taste.
+#
+# Baseline 1 = conventional Forster-style preintegration (T-RO 2017)
+# Baseline 2 = Rai-style Cayley factor, REIMPLEMENTED FROM THE PAPER (no public code exists)
+# Baseline 3 = GTSAM 4.3.0 direct-product Gal(3) x R^6 (real, installed, runnable)
+
+claims:
+
+  # ---------------------------------------------------------------- fixture
+
+  - id: M2-C01
+    statement: "Fixture M2_TRAJ_V1 is deterministic with no RNG: with g_W=[0,0,-9.81], dt=2.5e-3, T_edge=0.5, 200 steps/edge, 2 edges, b_g=[0.0100,-0.0150,0.0080], b_a=[0.0600,-0.0400,0.0900], w_0=[0.35,-0.22,0.17], f_0=[0.60,0.45,9.95], w_1=[-0.28,0.41,-0.33], f_1=[-0.75,0.90,9.60], R_0=Exp([0.10,-0.20,0.30]), p_0=0, v_0=[0.50,-0.30,0.20], every noise-free measurement is omega_k = w_e + b_g and a_k = f_e + b_a exactly, so two independent generations agree bitwise."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Generate the 400-sample stream twice in separate processes; assert array_equal (exact bitwise, not allclose) on both the gyro and accel streams and on all scalar constants."
+    domain: "Noise-free limit only. The noisy ablation is out of M2 scope and will need a named seed constant."
+
+  - id: M2-C02
+    statement: "For constant body twist the exact increment is dR=Exp(w T), dv=M1(T)a, dp=M2(T)a with M1(T)=T I+((1-cos(th T))/th)K+(T-sin(th T)/th)K^2 and M2(T)=(T^2/2)I+((T-sin(th T)/th)/th)K+(T^2/2-(1-cos(th T))/th^2)K^2, th=||w||, K=w^/th; these match adaptive quadrature of the same integrals to 1e-14, and chaining them from the fixture initial state with R_j=R_i dR, v_j=v_i+g_W Dt+R_i dv, p_j=p_i+v_i Dt+0.5 g_W Dt^2+R_i dp reproduces the 15-digit reference states of docs/02_baseline_reproduction.md Sec. 0.4 at KF1 and KF2 to 1e-12."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Part (a): for both fixture edges compare M1(0.5), M2(0.5) elementwise against scipy.integrate.quad of Exp(w s) and of its antiderivative at epsabs=epsrel=1e-14; expect <= 1e-14 (measured 7.6e-17 and 1.9e-16). Part (b): chain the increments and compare p, v, R at KF1 and KF2 against the Sec. 0.4 literals at 1e-12."
+    domain: "Requires ||w|| > 0; both fixture edges have ||w|| ~ 0.4. Use the series form for ||w|| < 1e-8. This is the exact-arithmetic reference -- no discretization enters."
+
+  # ---------------------------------------------------- Baseline 1 (Forster)
+
+  - id: M2-C03
+    statement: "The component endpoint relation R_j=R_i dR_ij, v_j=v_i+g_W Dt_ij+R_i dv_ij, p_j=p_i+v_i Dt_ij+0.5 g_W Dt_ij^2+R_i dp_ij reproduces gtsam.PreintegratedImuMeasurementsG.predict(state_i, biasHat) to 1e-12 in R, v and p."
+    source: "Forster et al. T-RO 2017 Eq. (30)-(33); cross-checked against GTSAM 4.3.0"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Build the PIM on a fixture edge at biasHat; call predict() from an arbitrary nonzero NavState; compare against the formula using deltaRij/deltaVij/deltaPij/deltaTij. Measured 4.6e-15 / 0 / 0."
+    domain: "g_W is the gravity VECTOR (GTSAM n_gravity), = [0,0,-9.81] for z-up. Holds for any state; no time-coordinate restriction."
+
+  - id: M2-C04
+    statement: "The Forster increment recursion dR_ij = prod Exp((omega_k-b_g)dt), dv_ij = sum dR_ik (a_k-b_a) dt, dp_ij = sum [dv_ik dt + 0.5 dR_ik (a_k-b_a) dt^2] is FIRST order in dt: its dv and dp error against the M2-C02 exact increment halves when dt halves, with ratio in [0.45,0.55] over dt = 5e-3 down to 3.125e-4."
+    source: "Forster et al. T-RO 2017 Eq. (35)-(37); same discretization as Rai Eq. (9a)-(9c)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Integrate fixture edge 0 at n = 100,200,400,800,1600 steps; record |dv-dv_exact|_inf and |dp-dp_exact|_inf; assert successive ratios in [0.45,0.55]. Measured 0.5003, 0.5001, 0.5001, 0.5000."
+    domain: "Error is O(dt) in dv and dp. dR is EXACT here only because the fixture's w is constant per edge so the product telescopes to Exp(w T); do not generalize that."
+
+  - id: M2-C05
+    statement: "Baseline 1's first-order bias correction has the mixed-chart form dR_ij(b)=dR_ij(bbar)Exp(J^R db_g) (right group composition) while dv_ij(b)=dv_ij(bbar)+J^{vg}db_g+J^{va}db_a and dp_ij(b)=dp_ij(bbar)+J^{pg}db_g+J^{pa}db_a (additive), with all five Jacobians frozen at bbar; the resulting increment matches re-integration at b to O(||db||^2), i.e. the error ratio between ||db||=1e-3 and ||db||=1e-2 lies in [50,200]."
+    source: "Forster et al. T-RO 2017 Eq. (44)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Obtain J by finite differences on re-integration (GTSAM exposes NO delRdelBiasOmega / delVdelBias* / delPdelBias* on either PIM class in Python -- verified, the two classes have identical member sets). Apply the correction and compare against re-integration at ||db|| = 1e-3 and 1e-2; assert quadratic error growth."
+    domain: "Frozen at bbar. Validity degrades as ||db|| grows; the quadratic law is what is being pinned, not any absolute accuracy."
+
+  - id: M2-C06
+    statement: "Baseline 1's propagated 9x9 covariance is symmetric to 1e-14 and positive semidefinite (min eigenvalue >= -1e-12) at every step, and tr(Sigma) is nondecreasing across the edge when the gyro and accel noise densities are strictly positive."
+    source: "Forster et al. T-RO 2017 Eq. (63)"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Propagate over a fixture edge with sigma_g=1.7e-4, sigma_a=1e-2; at each of the 200 steps assert max|S-S.T|<=1e-14, min eigenvalue >= -1e-12, and tr nondecreasing. Cross-check shape and magnitude against gtsam preintMeasCov()."
+    domain: "GTSAM's preintMeasCov() is in NavState block order (rot, pos, vel), NOT (rot, vel, pos); compare like with like before asserting agreement."
+
+  # ------------------------------------- Baseline 2 (Rai Cayley, FROM PAPER)
+
+  - id: M2-C07
+    statement: "Rai Eq. (3) Cay(phi)=(I-phi^/2)^-1(I+phi^/2) with phi=2 tan(theta/2) a satisfies Cay(2 tan(theta/2) a)=Exp(theta a) to 1e-13 over 2000 random axes with theta in (0,3); and Rai Eq. (4) J_Cay(phi)=(I-phi^/2)/(1+||phi||^2/4) is the RIGHT Jacobian, i.e. Cay(phi+d)=Cay(phi)Exp(J_Cay(phi)d)+O(||d||^2) verified by finite differences to 1e-5, while the LEFT convention Cay(phi+d)=Exp(J_Cay(phi)d)Cay(phi) fails by at least 1e-1."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (3),(4) -- FROM-PAPER REIMPLEMENTATION, no public code exists"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Part (a): 2000 random (a, theta); compare Cay(2 tan(theta/2) a) against Rodrigues Exp(theta a); measured 1.6e-15. Part (b): 300 random phi with ||phi||~0.4 and random d; compare (Cay(phi+e d)-Cay(phi))/e at e=1e-7 against Cay(phi) hat(J d) [right] and hat(J d) Cay(phi) [left]; measured right 5.3e-7 (FD-limited), left 2.1e0."
+    domain: "Breaks down as theta -> pi: ||phi||=2 tan(theta/2) is 1.09 at 1 rad, 28.2 at 3 rad, 4.3e4 at 3.1415 rad (pre-flight F3). Restrict to theta < 3. Part (b) is first order in d only."
+
+  - id: M2-C08
+    statement: "Rai Eq. (17) det(I - xi^/2) = 1 + ||xi||^2/4 holds to 1e-12 for 5000 random xi with ||xi|| up to 5, and the right-hand side is strictly >= 1, so the Cayley denominator is never singular and Eq. (16) can be cleared algebraically into Eq. (18) with no case analysis."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (17) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "5000 random xi; assert |det(I-hat(xi)/2) - (1+xi@xi/4)| <= 1e-12 and that the value is >= 1. Measured max deviation 7.1e-14."
+    domain: "Totality on so(3). Pre-flight F8 measured the exact gal(3) analogue det(I5-A/2)=1+||phi||^2/4 to 9.1e-13."
+
+  - id: M2-C09
+    statement: "Rai Eq. (19) r^R_ij = (R_j - R_i dRbar_ij) - 0.5 (R_j + R_i dRbar_ij) xi_ij^, with xi_ij = J^R_ij db_g, vanishes to 1e-12 exactly when Eq. (16) R_j = R_i dRbar_ij (I - xi^/2)^-1 (I + xi^/2) holds, and is nonzero otherwise; it is an exact restatement of Eq. (16), not a truncation."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (16),(18),(19) (restated at 21a) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "For 500 random (R_i, dRbar, xi): set R_j from Eq. (16), assert |r^R|_inf <= 1e-12; then perturb R_j by Exp(1e-3 u) and assert |r^R|_inf >= 1e-4."
+    domain: "xi must satisfy the M2-C07 chart restriction. r^R is degree <= 2 in (R_i, R_j, b_g), which is what makes it QCQP-representable."
+
+  - id: M2-C10
+    statement: "Rai Eq. (21b) r^v_ij = R_i^T(v_j - v_i - g_W Dt_ij) - dvbar_ij - A^{vg}db_g - A^{va}db_a and Eq. (21c) r^p_ij = R_i^T(p_j - p_i - v_i Dt_ij - 0.5 g_W Dt_ij^2) - dpbar_ij - A^{pg}db_g - A^{pa}db_a both vanish to 1e-9 at the fixture ground-truth states with db = 0 and dvbar, dpbar from the Eq. (9) sums."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (21b),(21c) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Evaluate on both fixture edges using the SAME Eq. (9) sums that produced dvbar/dpbar (self-consistency, not exactness). Tolerance 1e-9. Against the EXACT increments instead, the residual is the O(dt) truncation of M2-C04 and is ~2.2e-3 -- do not use 1e-9 there."
+    domain: "Unlike Eq. (19), these are FIRST order in db and additive. The asymmetry with the rotation residual is inherited from Forster and is intentional."
+
+  - id: M2-C11
+    statement: "Rai Eq. (22b) r^R_ij = R_j(I + Gamma_ij/2) - R_i Rbreve_ij - 0.5(Y_ij + Y'_ij), with Gamma_ij=(J^R bbar_g)^, Rbreve_ij=dRbar_ij(I - Gamma_ij/2), Y_ij=R_i dRbar_ij (J^R b_g)^ and Y'_ij=R_j (J^R b_g)^, is an EXACT algebraic identity with Eq. (19) under xi_ij = J^R(b_g - bbar_g), agreeing to 1e-13 over 2000 random instantiations."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (22a)-(22c) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random (R_i, R_j, dRbar, J^R, b_g, bbar_g); compute Eq. (19) and Eq. (22b) and assert elementwise agreement <= 1e-13. Measured 4.4e-16. This is a cheap sharp test of a correct transcription."
+    domain: "Exact identity, no approximation. Y and Y' are auxiliary lifted variables that make r^R affine; the paper states this is their purpose."
+
+  - id: M2-C12
+    statement: "The isotropic precision of Rai Eq. (23), tau^-1 = (1/3) tr Sigma, is structurally forced and not a convenience: the identity ||r||^2 = ||R_i r||^2 that lets R_i^T be moved out of Eq. (21b)/(21c) holds to 1e-12 for any R_i in SO(3) under an isotropic weight, and FAILS by O(1) (>= 1.0) for a non-isotropic weight W = diag(1,2,5)."
+    source: "Rai et al. arXiv:2609.38048v1 Eq. (20),(23) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "2000 random (R, r): assert | ||r||^2 - ||R r||^2 | <= 1e-12 (measured 7.1e-15); then assert max | r'Wr - (Rr)'W(Rr) | >= 1.0 for W=diag(1,2,5) (measured 28.9)."
+    domain: "The forcing mechanism is SO(3)-invariance of the 2-norm under the R_i premultiplication that removes rotation-state products -- NOT the SDP structure; the paper does not claim the latter. The paper acknowledges the approximation drops cross-correlations and directional weighting."
+
+  - id: M2-C13
+    statement: "Baseline 2 freezes the bias Jacobians while keeping the Cayley retraction exact: preintegration is computed ONCE at bbar and never re-linearized, so the map db_g -> xi_ij = J^R_ij db_g is linear with J^R frozen; but the map xi_ij -> rotation is kept exactly via Eq. (18) with the denominator cleared, so replacing Cay(xi) by the truncation (I + xi^) changes r^R by at least 1e-6 at ||xi|| = 1e-2."
+    source: "Rai et al. arXiv:2609.38048v1 Sec. IV-A, Eq. (15)-(19) -- FROM-PAPER REIMPLEMENTATION"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Two parts. (a) Re-integrating at b != bbar must NOT change J^R: assert the stored J^R is bitwise unchanged after a predict at a perturbed bias. (b) Build r^R with exact Cay and with the first-order truncation (I + xi^) at ||xi||=1e-2; assert the difference >= 1e-6."
+    domain: "Paper: 'Pre-integration is performed at the nominal bias', 'All Jacobians are evaluated at the nominal bias', 'the change is approximated to first order'. The exactness is in the retraction, not in the bias dependence."
+
+  # ---------------------------------------------- Baseline 3 (GTSAM 4.3.0)
+
+  - id: M2-C14
+    statement: "gtsam.Gal3 stores X=[[R, v, r],[0, 1, t],[0, 0, 1]] -- VELOCITY before POSITION in the matrix columns -- while its constructor is Gal3(R: Rot3, r: Vector3, v: Vector3, t: float) -- POSITION before VELOCITY, the opposite order. For Gal3(R, [1,2,3], [10,20,30], 7.0): matrix() column 3 == [10,20,30], column 4 == [1,2,3], M[3,4] == 7.0, position() == [1,2,3] and velocity() == [10,20,30], all to 1e-15."
+    source: "GTSAM 4.3.0 gtsam.Gal3 -- measured"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Construct with distinguishable values; assert allclose(M[0:3,3], velocity) and allclose(M[0:3,4], position) and M[3,4]==t; assert position()/velocity() return the 2nd/3rd constructor arguments respectively and NOT the swapped reading. Round-trip Gal3(M) and re-check all accessors. translation() is an alias of position()."
+    domain: "Footgun: matrix column order and constructor argument order disagree. Prefer the named accessors over positional unpacking everywhere. GTSAM 4.3.0 specifically."
+
+  - id: M2-C15
+    statement: "The gtsam.Gal3 tangent order is (omega, nu, rho, alpha) = (rotation, VELOCITY, POSITION, time): Gal3.Hat(e_k) places indices 0:3 in the rotation block, 3:6 in matrix column 3 (velocity), 6:9 in matrix column 4 (position) and index 9 in M[3,4]; equivalently Gal3.Expmap(1e-6 e_k) perturbs velocity for k in 3:6 and position for k in 6:9. The NavState block remap is therefore kGal3BlockForNavState = {0, 6, 3}."
+    source: "GTSAM 4.3.0 gtsam.Gal3.Hat / Expmap -- measured"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "For each k in 0..9 assert Hat(e_k) is nonzero only in the stated block; then assert Expmap(1e-6 e_k) moves only velocity (k=3..5), only position (k=6..8), only time (k=9). Also assert Expmap(xi)==expm(Hat(xi)) to 1e-14."
+    domain: "NavState tangent is (rot, pos, vel). The symbol kGal3BlockForNavState is NOT exported to the Python extension; the table is reconstructed from the measured block semantics."
+
+  - id: M2-C16
+    statement: "The {0,6,3} remap of M2-C15 is a block-index permutation ONLY and does not make the charts agree: for the fixture KF0 and KF2 lifted to Gal(3) with zero time coordinate, Gal3.Logmap(X_i^-1 X_j) reordered by {0,6,3} differs from NavState(R_i,p_i,v_i).localCoordinates(NavState(R_j,p_j,v_j)) by at least 0.1 in the infinity norm."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Lift the fixture KF0 and KF2 to Gal3 with t=0; compute both quantities and assert the reordered difference is >= 0.1. Measured 0.763. NavState's retraction is not the Gal(3) exponential."
+    domain: "Guards the natural follow-on error after getting the remap right. Applies to the charts; the block permutation itself (M2-C15) is correct."
+
+  - id: M2-C17
+    statement: "gtsam.imuBias.ConstantBias orders (accelerometer, gyroscope): ConstantBias(a, g).accelerometer()==a, .gyroscope()==g, .vector()==[a; g], and PreintegratedImuMeasurementsG.biasHatVector()==[b_a; b_g]; the project convention is b=[b_g; b_a], so every crossing of the GTSAM boundary swaps the two 3-blocks."
+    source: "GTSAM 4.3.0 gtsam.imuBias.ConstantBias -- measured"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "ConstantBias([1,2,3],[4,5,6]): assert accelerometer()==[1,2,3], gyroscope()==[4,5,6], vector()==[1,2,3,4,5,6]. Then assert the project's to_gtsam/from_gtsam adapters round-trip [b_g;b_a] and that a single application is NOT the identity."
+    domain: "Applies to bias Jacobian COLUMN order too: any GTSAM-facing Jacobian has (accel, gyro) columns."
+
+  - id: M2-C18
+    statement: "With U_ij = Gal3(dR, dp, dv, Dt), the endpoint relation X_j = W_ij(t_i) . X_i . U_ij with W_ij(t_i) = Gal3(I, 0.5 g Dt^2 - g Dt (t_i + Dt), g Dt, 0) reproduces the component relation of M2-C03 to 1e-12 for ANY t_i, whereas the pre-flight F2 form X_j = T(-Dt) . H' . X_i . U_ij with H' = Gal3(I, -0.5 g Dt^2, g Dt, 0) is correct only at t_i = 0 and is wrong by exactly |g| Dt t_i otherwise."
+    source: "DERIVED (corrects the domain of pre-flight F2)"
+    kind: DERIVED
+    test_hint: "Evaluate both forms at t_i = 0 and t_i = 3.7 on a fixture edge. Assert W-form error <= 1e-12 at both (measured 8.9e-16); assert F2-form error <= 1e-12 at t_i=0 and within 1e-6 of |g|*Dt*t_i at t_i=3.7 (measured 36.3 vs 9.81*1.0*3.7=36.297). Also assert the swapped order H'.T(-Dt).X_i.U is wrong."
+    domain: "The F2 form yields t_j = t_i; the W form yields t_j = t_i + Dt (physically correct clock). Benign for GTSAM because NavState carries no clock, but a live hazard for M3/M4 where Gal(3) states are decision variables."
+
+  - id: M2-C19
+    statement: "The GalileanPreintegration increment is EXACT zero-order-hold and accumulates by RIGHT composition: on both fixture edges PreintegratedImuMeasurementsG reproduces the M2-C02 closed-form dR, dv, dp to 1e-12 while PreintegratedImuMeasurements (TangentPreintegration) under the identical stream deviates by at least 1e-4 in dv; and on a time-varying stream U_{k+1} = U_k . V_k holds to 1e-14 while the left form V_k . U_k deviates by at least 1e-5 after 40 steps."
+    source: "GTSAM 4.3.0 GalileanPreintegration vs TangentPreintegration -- measured"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Part (a): integrate both backends on each fixture edge with identical params and biasHat; assert Galilean error <= 1e-12 (measured 2.0e-14) and Tangent dv error >= 1e-4 (measured 2.2e-3 at dt=2.5e-3). Part (b): use a TIME-VARYING stream, e.g. a_k=[0.5,0.4,9.81]+0.6 sin(0.7 k dt+[0,1,2]), w_k=[0.3,-0.2,0.15]+0.4 cos(1.1 k dt+[0,1,2]); assert right error <= 1e-14 (measured 0.0) and left error >= 1e-5 (measured 4.3e-4 at k=40)."
+    domain: "ZOH exactness requires piecewise-constant (w,a) over each step, which zero-order hold guarantees. A CONSTANT-input stream cannot distinguish left from right accumulation -- the increments commute -- so part (b) must NOT use the fixture's own per-edge constant inputs."
+
+  - id: M2-C20
+    statement: "The GalileanPreintegration bias correction uses a frozen first-order Jacobian composed EXACTLY on the right in Gal(3): with J in R^{10x6} fixed at bbar, U(db) = Uhat . Expmap_Gal3(J db) holds with residual <= 1e-8 for ||db|| up to 5e-2, whereas the component-wise first-order form (dR Exp(J_R db), dv + J_v db, dp + J_p db) using the SAME J is wrong by at least 1e-2 at ||db|| = 5e-2. Structurally J[0:3,0:3]=0 and J[9,:]=0 to 1e-10."
+    source: "GTSAM 4.3.0 GalileanPreintegration -- measured"
+    kind: VERIFIED-PUBLISHED
+    test_hint: "Zero gravity and identity NavState make predict() return the corrected increment directly. Estimate J by finite differences at eps=1e-7 on Logmap(Uhat^-1 U(db)); then test both models over 30 random directions at ||db|| in {1e-4,1e-3,1e-2,5e-2}. Measured: right-composition 2.2e-12..1.2e-9 (scaling LINEARLY with ||db||, i.e. FD noise in J, not model error); component-wise 2.8e-4..1.3e-1."
+    domain: "The JACOBIAN is first order; the RETRACTION is exact. TangentPreintegration is ALSO exactly affine but in its own chart zeta=(Log dR, dp, dv) -- the difference is which chart the frozen Jacobian is exact in. Against re-integration both are O(||db||^2); Galilean coefficient ~0.67, about 2.8x smaller than Tangent's."
+
+  - id: M2-C21
+    statement: "The Gal(3) bias Jacobian recursion is J_{k+1} = Ad_{V_k^-1} J_k + C_k with J_i = 0, where V_k is the single-step Gal(3) increment and C_k = d/d(db) Log(Vhat_k^-1 V_k(db)) is that step's own right-chart bias Jacobian; running this recursion reproduces the finite-difference Jacobian of re-integration to within 1e-6 relative after 40 steps."
+    source: "DERIVED from U_{k+1}=U_k V_k (M2-C19); cross-checked against GTSAM 4.3.0"
+    kind: DERIVED
+    test_hint: "On the time-varying stream of M2-C19, accumulate J via Gal3.AdjointMap() on V_k.inverse() plus per-step C_k (FD at eps=1e-6); compare against the FD Jacobian of full re-integration at each of 40 steps. Measured 6.9e-9 absolute against |J| ~ 0.21, i.e. ~3e-8 relative."
+    domain: "Sign convention: C_k is the derivative w.r.t. the BIAS. The -C_k form in the literature uses the derivative w.r.t. the MEASUREMENT, which differs by the sign in (a_k - b_a). Fix the convention before comparing signs."
+
+  # ---------------------------------------------------- cross-baseline
+
+  - id: M2-C22
+    statement: "TIER 1 -- same discretization. Baselines 1 and 2 share Rai Eq. (9) and differ only in the rotation retraction, so at KF2 on the fixture they agree to 1e-6 in v and p and to 1e-10 in R, for both admissible readings of the Cayley substitution (raw phi_k = (omega_k - bbar_g) dt, and the Eq. (3) reparameterization phi_k = 2 tan(||.||/2) * unit)."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Propagate B1 and both B2 variants over the fixture; compare at KF2. Measured: reparameterized variant 1.5e-13 (v) / 5.8e-14 (p) / 2.3e-14 (R); raw variant 6.2e-8 (v) / 4.4e-8 (p) / 3.0e-8 (R). The 1e-6 tolerance gives ~16x margin over the worst case."
+    domain: "The paper does not state which reading is intended; the spec fixes the literal raw reading and records the gap as a bounded ambiguity (docs/02 Sec. 2.1)."
+
+  - id: M2-C23
+    statement: "TIER 2 -- different discretization. Baselines 1 and 2 differ from Baseline 3 at KF2 by at most 5e-3 in v and p at dt = 2.5e-3 (rotations agree to 1e-10), AND that gap is first order in dt: halving dt halves it, with gap(dt/2)/gap(dt) in [0.45, 0.55] across dt = 5e-3 down to 3.125e-4."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Two assertions, both required. (a) At dt=2.5e-3 assert |v_B1 - v_B3|_inf <= 5e-3 and likewise for p (measured 1.29e-3 and 1.20e-3, ~3.9x margin). (b) Re-run at n = 100,200,400,800,1600 and assert successive gap ratios in [0.45,0.55] (measured 0.5003, 0.5001, 0.5001, 0.5000). The magnitude test ALONE would pass for a baseline wrong by a constant 1e-3; the order test is the one with teeth."
+    domain: "The gap is O(dt) truncation of the Euler sums in Baselines 1-2, not an error in any baseline. Baseline 3 is exact ZOH (M2-C19) and is the reference side of this comparison."
+
+  - id: M2-C24
+    statement: "TIER 0 -- against exact ground truth. Baseline 3 reproduces the M2-C02 closed-form reference at KF1 and KF2 to 1e-10 in R, v and p; Baselines 1 and 2 reproduce the reference ROTATIONS to 1e-10 but only to the Tier-2 tolerance in v and p."
+    source: "DERIVED"
+    kind: DERIVED
+    test_hint: "Compare each baseline's KF1 and KF2 against the Sec. 0.4 literals. Measured B3: 1.7e-14 / 3.9e-14 / 1.7e-14 (R/v/p). Measured B1 and B2 rotation: 2.4e-14 -- exact only because the fixture's w is constant per edge; do not assert 1e-10 on rotations for a non-constant-twist trajectory."
+    domain: "Baseline 3 is the ground truth on this fixture to machine precision, which is precisely why the three baselines cannot share one tolerance."
+
+  - id: M2-C25
+    statement: "The fixture is bias-observable with NO bias prior: with per-keyframe bias (state dim 3 x (6 pose + 3 vel + 6 bias) = 45), two GalileanCombinedImuFactor edges, a pose and a velocity prior on KF0 and GNSS position factors on KF1 and KF2, the linearized Jacobian at ground truth has rank 45/45 (nullity 0); the IMU edges alone give rank 30/45, and adding only the KF0 pose+velocity priors gives 39/45 with the 6 remaining directions being exactly the bias block."
+    source: "DERIVED (re-measured on this fixture; reproduces the pre-flight F9 pattern on new data)"
+    kind: DERIVED
+    test_hint: "Build the graph in GTSAM, linearize at ground truth, take jacobian() and matrix_rank with tol = max(shape)*eps*s[0]. Assert the three ranks 30, 39, 45. Also assert total graph error at ground truth <= 1e-18 (measured 7.5e-23) and each IMU factor's unwhitened residual <= 1e-12 (measured 2.2e-14)."
+    domain: "Rank is invariant to positive reweighting, so this does not depend on the noise model. The CONDITION number does and is NOT claimed: measured 7.5e7 with tight covariances and 7.6e6 with realistic MEMS densities."
+
+seed:
+  id: M2-S01
+  statement: "In Baseline 1 the position bias Jacobians are an exact multiple of the velocity ones, J^{pa}_ij = 0.5 Dt_ij J^{va}_ij and J^{pg}_ij = 0.5 Dt_ij J^{vg}_ij, agreeing to 1e-6 on both fixture edges, because dp accumulates dv over the interval with the same frozen rotation sequence; only the velocity Jacobians therefore need to be propagated and the position ones can be formed by scaling."
+  source: "Forster et al. T-RO 2017 Eq. (44)"
+  kind: DERIVED
+  test_hint: "On each fixture edge obtain J^{va}, J^{pa}, J^{vg}, J^{pg} by finite differences at eps=1e-6 on the Baseline 1 increment recursion; assert max|J^{pa} - 0.5*Dt*J^{va}| <= 1e-6 and max|J^{pg} - 0.5*Dt*J^{vg}| <= 1e-6 with Dt = 0.5."
+  domain: "Holds for the frozen nominal bias bbar; the scaling is exact only while the Jacobians are not re-linearized."
