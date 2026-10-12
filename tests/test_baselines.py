@@ -9,7 +9,13 @@ not share a tolerance**:
 
 * Tier 0 (``1e-10``) -- against the exact closed form.  Only Baseline 3 qualifies; it is
   exact zero-order-hold and *is* ground truth on this fixture.
-* Tier 1 (``1e-6``)  -- Baselines 1 vs 2, which share a discretization.
+* Tier 1 (``1e-6``)  -- Baselines 1 vs 2, which share a discretization but not a
+  retraction.  The ``1e-6`` covers ``R`` as well as ``v`` and ``p``: Baseline 2's raw
+  Cayley retraction loses ``||omega||^3 T dt^2 / 12`` by construction, 3.0e-8 on this
+  fixture, so Tier 0 in ``R`` is not merely unmet between 1 and 2 -- it is unattainable
+  without a 64x refinement of a ``dt`` that M2-C01 pins.  That 3.0e-8 is a property of
+  the method and is asserted *positively* in
+  ``test_c22b_baseline2_retraction_really_is_cayley``.
 * Tier 2 (``5e-3``)  -- Baselines 1/2 vs Baseline 3, which do not.  A magnitude bound
   alone would pass a baseline that is wrong by a constant ``1e-3``, so Tier 2 is always
   paired with a convergence-order test.
@@ -138,6 +144,12 @@ def test_c02_closed_form_increment_is_the_exact_reference():
     states = T.exact_states()
     assert _max_abs(states[1].v, T.REF_V_KF1) <= 1e-12
     assert _max_abs(states[1].p, T.REF_P_KF1) <= 1e-12
+    # REF_R_KF1 used to be *defined* as R_0 @ REF_DR_01, which made this comparison
+    # circular -- it could not fail for any input.  It is now a transcribed literal, so
+    # the chaining relation genuinely has to reproduce it.
+    assert T.REF_R_KF1.flags.owndata, "REF_R_KF1 must be a literal, not a derived view"
+    assert _max_abs(states[1].R, T.REF_R_KF1) <= 1e-12
+    assert _max_abs(T.R_0 @ T.REF_DR_01, T.REF_R_KF1) <= 1e-12
     assert _max_abs(states[2].v, T.REF_V_KF2) <= 1e-12
     assert _max_abs(states[2].p, T.REF_P_KF2) <= 1e-12
     assert _max_abs(states[2].R, T.REF_R_KF2) <= 1e-12
@@ -175,6 +187,15 @@ def test_c04_forster_increment_is_first_order_in_dt():
 
     ``dR`` is exact here *only* because the fixture's body rate is constant per edge, so
     the product of per-step exponentials telescopes to ``Exp(w T)``.  Do not generalize.
+
+    Part (c) is the half with teeth.  A convergence *ratio* cannot see which rotation the
+    Eq. (9b)/(9c) sums use: ``dR_ik`` (the partial increment, correct) and ``dR_{i,k+1}``
+    (this step's rotation already folded in, wrong) are a left and a right rectangle rule
+    for the same integral, so both are O(dt) and both halve.  Worse, their *magnitudes*
+    agree to four digits -- at n = 200 the correct sum is off by 2.1709e-3 and the folded
+    one by 2.1710e-3 -- so asserting the magnitude cannot separate them either.  What
+    separates them is the **sign**: by Euler-Maclaurin the left rule's leading truncation
+    is ``-(dt/2)(Exp(w T) - I) a`` and the right rule's is ``+`` that.  Asserted below.
     """
     edge_dv, edge_dp, edge_dR = [], [], []
     for n in STEP_SWEEP:
@@ -190,6 +211,29 @@ def test_c04_forster_increment_is_first_order_in_dt():
         ratios = [errs[k + 1] / errs[k] for k in range(len(errs) - 1)]
         assert all(ORDER_BAND[0] <= r <= ORDER_BAND[1] for r in ratios), \
             f"{name} convergence ratios {ratios} (errors {errs})"
+
+    # -- (b) magnitude at the fixture's own dt, so the O(dt) constant is pinned too -----
+    for index, expected in ((0, 2.170879e-3), (1, 2.760238e-3)):
+        edge = T.edges()[index]
+        pim = B1.integrate_edge(edge, T.BIAS_TRUE)
+        _, dv, _ = edge.exact_increment()
+        got = _max_abs(pim.dv, dv)
+        assert abs(got - expected) <= 0.10 * expected, \
+            f"edge {index}: |dv - dv_exact| = {got:.6e}, expected {expected:.6e} +-10%"
+
+    # -- (c) the SIGNED leading truncation: this is what pins dR_ik vs dR_{i,k+1} -------
+    for n in STEP_SWEEP:
+        for edge in T.edges(n):
+            pim = B1.integrate_edge(edge, T.BIAS_TRUE)
+            _, dv, _ = edge.exact_increment()
+            a, w, duration = edge.f_body, edge.omega_body, edge.duration
+            predicted = -(edge.dt / 2.0) * (T.so3_exp(w * duration) - np.eye(3)) @ a
+            relative = _max_abs(pim.dv - dv, predicted) / np.abs(predicted).max()
+            assert relative <= 1e-3, (
+                f"edge {edge.index} n={n}: signed dv truncation {pim.dv - dv} does not "
+                f"match the LEFT rectangle rule's -(dt/2)(Exp(wT)-I)a = {predicted} "
+                f"(relative {relative:.4f}).  A relative gap of ~2 means the sums use "
+                f"dR_{{i,k+1}} instead of dR_ik.")
 
 
 @pytest.mark.claim("M2-C05")
@@ -346,36 +390,56 @@ def test_c09_rotation_residual_is_an_exact_restatement_of_eq16():
 
 
 @pytest.mark.claim("M2-C10")
-def test_c10_velocity_and_position_residuals_vanish_at_ground_truth():
-    """Rai Eq. (21b)/(21c) at ``db = 0``.
+def test_c10_velocity_and_position_residuals_at_both_state_sets():
+    """Rai Eq. (21b)/(21c) at ``db = 0``, evaluated at BOTH state sets.
 
-    This is **self-consistency**: ``dvbar``/``dpbar`` and the states both come from the
-    same Eq. (9) sums.  Evaluated against the *exact* increments instead, the residual is
-    the O(dt) truncation of M2-C04 (~2.2e-3) -- 1e-9 would be the wrong tolerance there,
-    and the contrast is asserted below so the distinction cannot quietly rot.
+    The distinction is the whole content of this test, and the claim used to get it
+    wrong.  Part (a) is **self-consistency** and is an algebraic tautology: ``chain()``
+    produces ``v_j = v_i + g Dt + R_i dvbar``, so ``r^v = R_i^T(v_j - v_i - g Dt) - dvbar``
+    reduces to ``dvbar - dvbar``.  Its measured 1.65e-13 is round-off, not accuracy, and
+    it can only fail on a sign error that ``chain()`` does not mirror.  It is kept as that
+    sign guard and labelled as nothing more.
+
+    Part (b) is the measurement.  At the fixture's **ground-truth** states the residual
+    does not vanish -- it *is* the O(dt) truncation of M2-C04, 2.760e-3, six orders above
+    the 1e-9 the claim used to assert there.  Asserting it equals ``|dvbar - dv_exact|``
+    to 1e-12 is sharp: any change to the Eq. (9) sums moves one side and not the other.
     """
-    states = B1.integrate_edge_states(T.edges(), T.BIAS_TRUE, T.initial_state(),
-                                      cls=B2.CayleyPreintegration)
+    self_states = B1.integrate_edge_states(T.edges(), T.BIAS_TRUE, T.initial_state(),
+                                           cls=B2.CayleyPreintegration)
+    ground_truth = T.exact_states()
     worst_self = 0.0
-    worst_exact = 0.0
+    worst_ground_truth = 0.0
     for k, edge in enumerate(T.edges()):
         factor = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
-        s_i, s_j = states[k], states[k + 1]
+
+        # -- (a) self-consistent states: a tautology, kept only as a sign guard ---------
+        s_i, s_j = self_states[k], self_states[k + 1]
         r_v = factor.velocity_residual(s_i.R, s_i.v, s_j.v, T.G_W)
         r_p = factor.position_residual(s_i.R, s_i.p, s_j.p, s_i.v, T.G_W)
         worst_self = max(worst_self, float(np.abs(r_v).max()), float(np.abs(r_p).max()))
 
-        dR_ex, dv_ex, dp_ex = edge.exact_increment()
-        r_v_ex = B2.velocity_residual_eq21b(s_i.R, s_i.v, s_j.v, dv_ex,
-                                            factor.Dt, T.G_W)
-        r_p_ex = B2.position_residual_eq21c(s_i.R, s_i.p, s_j.p, s_i.v, dp_ex,
-                                            factor.Dt, T.G_W)
-        worst_exact = max(worst_exact, float(np.abs(r_v_ex).max()),
-                          float(np.abs(r_p_ex).max()))
+        # -- (b) the fixture's ACTUAL ground-truth states ------------------------------
+        g_i, g_j = ground_truth[k], ground_truth[k + 1]
+        r_v_gt = factor.velocity_residual(g_i.R, g_i.v, g_j.v, T.G_W)
+        r_p_gt = factor.position_residual(g_i.R, g_i.p, g_j.p, g_i.v, T.G_W)
+        worst_ground_truth = max(worst_ground_truth, float(np.abs(r_v_gt).max()),
+                                 float(np.abs(r_p_gt).max()))
 
-    assert worst_self <= 1e-9, f"self-consistent residual {worst_self:.3e}"
-    assert 1e-4 <= worst_exact <= 1e-2, \
-        f"against the exact increment this should be the O(dt) truncation, got {worst_exact:.3e}"
+        # and it is exactly the Eq. (9) truncation, not something else that happens to
+        # be the same size
+        _, dv_ex, dp_ex = edge.exact_increment()
+        assert _max_abs(np.abs(r_v_gt), np.abs(factor.dvbar - dv_ex)) <= 1e-12, \
+            f"edge {k}: r^v at ground truth is not |dvbar - dv_exact|"
+        assert _max_abs(np.abs(r_p_gt), np.abs(factor.dpbar - dp_ex)) <= 1e-12, \
+            f"edge {k}: r^p at ground truth is not |dpbar - dp_exact|"
+
+    assert worst_self <= 1e-9, \
+        f"self-consistent residual {worst_self:.3e} (tautological; sign guard only)"
+    assert 1e-4 <= worst_ground_truth <= 1e-2, \
+        f"at ground truth this must be the O(dt) truncation, got {worst_ground_truth:.3e}"
+    assert abs(worst_ground_truth - 2.760341e-3) <= 0.10 * 2.760341e-3, \
+        f"ground-truth residual {worst_ground_truth:.6e}, expected 2.760e-3 +-10%"
 
 
 @pytest.mark.claim("M2-C11")
@@ -383,7 +447,13 @@ def test_c11_affine_lift_is_algebraically_identical_to_eq19():
     """Rai Eq. (22b) vs Eq. (19) under ``xi = J_R (b_g - bbar_g)``.
 
     An exact identity, so this is a cheap and very sharp test of a correct transcription:
-    a sign slip or a swapped ``Y``/``Y'`` shows up immediately.
+    a sign slip shows up immediately.
+
+    This docstring used to add "or a swapped ``Y``/``Y'``".  That was false and has been
+    struck.  Eq. (22b) combines them as ``-(1/2)(Y + Y')``; a sum is symmetric, so
+    exchanging the two is **literally a no-op** -- no test can catch it, and claiming one
+    does invites a reader to trust a guard that does not exist.  ``tests/test_mutation.py``
+    asserts the no-op rather than pretending otherwise.
     """
     rng = np.random.default_rng(20250215)
     worst = 0.0
@@ -434,16 +504,44 @@ def test_c13_frozen_jacobians_with_an_exact_retraction():
     edge = T.edges()[0]
     factor = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
 
-    # (a) re-linearization never happens: J_R is bitwise unchanged after a predict at a
-    #     perturbed bias.
+    # (a) the bias map really is the frozen AFFINE map xi = J_R (b_g - bbar_g), and the
+    #     retraction really is driven by it rather than by re-integration.
+    #
+    #     The byte-equality check that used to live here ("J_R is bitwise unchanged after
+    #     a predict at a perturbed bias") was unfalsifiable: no code path writes J_R after
+    #     construction, so it could not fail for any input, and it left the claim's actual
+    #     content -- the affine map -- exercised by nothing.  Dropping the bbar_g offset is
+    #     a 10x error in xi and used to survive the whole suite.
     before = factor.J_R.copy()
     before_bytes = before.tobytes()
-    perturbed_bias_g = T.B_G + np.array([2e-3, -1e-3, 5e-4])
     R_i = T.R_0
-    _ = factor.predicted_rotation(R_i, perturbed_bias_g)
-    _ = factor.rotation_residual(R_i, factor.predicted_rotation(R_i, perturbed_bias_g),
-                                 perturbed_bias_g)
-    assert factor.J_R.tobytes() == before_bytes, "J_R was re-linearized"
+    delta = np.array([2e-3, -1e-3, 5e-4])
+
+    # the offset is there: xi vanishes EXACTLY at the linearization point
+    assert np.array_equal(factor.xi(T.B_G), np.zeros(3)), \
+        f"xi(bbar_g) must be exactly zero, got {factor.xi(T.B_G)} -- the bbar_g offset " \
+        f"has been dropped from CayleyFactor.xi"
+    # ... and the map is linear in the OFFSET, not in the bias
+    assert _max_abs(factor.xi(T.B_G + delta), factor.J_R @ delta) <= 1e-15
+    assert _max_abs(factor.xi(T.B_G - delta), -(factor.J_R @ delta)) <= 1e-15
+    assert np.linalg.norm(factor.J_R @ T.B_G) >= 1e-3, \
+        "the fixture's bbar_g must make the dropped offset detectable at all"
+
+    # the retraction consumes exactly that xi, and is NOT a re-integration
+    for scale, floor in ((1.0, None), (25.0, 1e-6)):
+        b_g = T.B_G + scale * delta
+        frozen = factor.predicted_rotation(R_i, b_g)
+        assert _max_abs(frozen, R_i @ factor.dRbar @ B2.cay(factor.J_R @ (scale * delta))) \
+            <= 1e-15, "predicted_rotation is not R_i dRbar Cay(J_R db_g)"
+        relinearized = R_i @ B1.integrate_edge(
+            edge, np.concatenate([b_g, T.B_A]), cls=B2.CayleyPreintegration).dR
+        gap = _rot_err(frozen, relinearized)
+        if floor is not None:
+            assert gap >= floor, \
+                f"frozen and re-linearized predictions agree to {gap:.3e} at |db_g|=" \
+                f"{np.linalg.norm(scale * delta):.2e}: the factor is re-linearizing"
+
+    assert factor.J_R.tobytes() == before_bytes, "J_R was mutated in passing"
     assert np.array_equal(factor.J_R, before)
 
     # (b) the retraction is kept exact: truncating Cay to (I + hat(xi)) is a different
@@ -543,7 +641,17 @@ def test_c15_gal3_tangent_order_and_the_navstate_remap():
 @pytest.mark.claim("M2-C16")
 def test_c16_remap_is_a_permutation_not_a_chart_identification():
     """Getting the ``{0, 6, 3}`` remap right and then assuming the charts agree is the
-    obvious next mistake.  ``NavState``'s retraction is not the Gal(3) exponential."""
+    obvious next mistake.  ``NavState``'s *retraction* is not the Gal(3) exponential.
+
+    Its *group* is, though, and that is the sharper statement: the remapped Gal(3)
+    logarithm equals ``NavState.Logmap`` **exactly**, so the only thing that disagrees is
+    ``localCoordinates``.  Both halves are asserted, because the exact-equality half is
+    what pins which object the 0.1076 is a gap against.
+
+    The bound is near-tight: 0.107628 against ``>= 0.1``, a 7.6% margin.  The previously
+    recorded 0.763 is not reproducible here, so it is asserted away rather than left to
+    suggest 660% of headroom that does not exist.
+    """
     states = T.exact_states()
     s_i, s_j = states[0], states[2]
 
@@ -562,6 +670,21 @@ def test_c16_remap_is_a_permutation_not_a_chart_identification():
     assert _max_abs(remapped[0:3], local[0:3]) <= 1e-12
     gap = _max_abs(remapped, local)
     assert gap >= 0.1, f"charts unexpectedly close: {gap:.3e}"
+    assert abs(gap - 0.107628) <= 1e-5, \
+        f"recorded measurement is 0.107628, got {gap:.6f}"
+
+    # the GROUP logarithms agree exactly: NavState's group IS Gal(3) at t = 0, for all
+    # three keyframe pairs.  Nothing here is a tolerance -- it is bitwise zero.
+    for i, j in ((0, 1), (1, 2), (0, 2)):
+        a, b = states[i], states[j]
+        A, Bg = B3.gal3_lift(a, 0.0), B3.gal3_lift(b, 0.0)
+        remap = B3.gal3_tangent_to_navstate_order(
+            np.asarray(Gal3.Logmap(A.inverse().compose(Bg))))
+        na = NavState(Rot3(a.R), a.p, a.v)
+        nb = NavState(Rot3(b.R), b.p, b.v)
+        group_log = np.asarray(NavState.Logmap(na.inverse().compose(nb)))
+        assert _max_abs(remap, group_log) == 0.0, \
+            f"KF{i}->KF{j}: group logs differ by {_max_abs(remap, group_log):.3e}"
 
 
 @pytest.mark.claim("M2-C17")
@@ -804,38 +927,120 @@ def _kf2_states():
 
 @pytest.mark.claim("M2-C22")
 def test_c22_tier1_same_discretization():
-    """TIER 1, ``1e-6``.  Baselines 1 and 2 share Rai Eq. (9) and differ only in the
-    rotation retraction, so their gap is pure retraction, not discretization.
+    """TIER 1, ``1e-6``, in ``v``, ``p`` AND ``R``.
 
-    Both admissible readings of the Cayley substitution are exercised.  The paper does
-    not say which it intends; the spec fixes the literal raw reading and records the gap
-    as a bounded ambiguity rather than resolving it.
+    Baselines 1 and 2 share Rai Eq. (9) and differ only in the rotation retraction, so
+    their gap is pure retraction, not discretization.  The reading is the raw one, which
+    Rai Sec. IV-A fixes (see ``src/preintegration_cayley.py``'s module docstring); there
+    is no second admissible reading to exercise.  The reparameterized variant is run here
+    only to *exhibit* that it collapses onto Baseline 1, which is exactly why it cannot
+    be the spec.
 
-    NOTE -- this test currently fails, and the failure is the point.  Claim M2-C22 states
-    ``1e-10`` for R "for both admissible readings", but under the raw reading
-    ``Cay(theta a)`` is a rotation of ``2 arctan(theta/2)``, so each step loses
-    ``theta^3/12``; over 400 steps that accumulates to ``3.0e-8``.  The claim's own
-    test_hint records exactly that ("raw variant ... 3.0e-8 (R)"), i.e. the claim
-    contradicts its own measurement by 300x.  The hint also says "the 1e-6 tolerance
-    gives ~16x margin over the worst case", and ``1e-6 / 6.2e-8 = 16.1`` -- the author
-    was sizing 1e-6 against all six recorded numbers, R included.  The claim is not
-    edited here; the number actually achieved is reported instead.
+    This bound is an upper bound and nothing more.  The content of the gap -- that it is
+    3.0e-8 and that it is the Cayley deficit -- lives in
+    ``test_c22b_baseline2_retraction_really_is_cayley``, which is where a maintainer
+    would notice if the retraction were quietly replaced.
     """
     states = _kf2_states()
     b1 = states["B1"]
-    failures = []
-    measured = {}
-    for variant in ("B2-raw", "B2-reparam"):
-        s = states[variant]
-        gaps = {"v": _max_abs(s.v, b1.v), "p": _max_abs(s.p, b1.p),
-                "R": _max_abs(s.R, b1.R)}
-        measured[variant] = gaps
-        for key, tol in (("v", TIER1), ("p", TIER1), ("R", TIER0)):
-            if gaps[key] > tol:
-                failures.append(f"{variant} {key}: {gaps[key]:.3e} > {tol:.0e}")
-    assert not failures, (f"Tier-1 agreement: {failures}; measured {measured}. "
-                          "See this test's docstring: the R tolerance stated by M2-C22 "
-                          "is contradicted by M2-C22's own recorded measurement.")
+    raw = states["B2-raw"]
+    gaps = {"v": _max_abs(raw.v, b1.v), "p": _max_abs(raw.p, b1.p),
+            "R": _max_abs(raw.R, b1.R)}
+    failures = [f"{k}: {gaps[k]:.3e} > {TIER1:.0e}"
+                for k in ("v", "p", "R") if gaps[k] > TIER1]
+    assert not failures, f"Tier-1 agreement (B2-raw vs B1): {failures}; measured {gaps}"
+    assert max(gaps.values()) >= TIER1 / 100.0, (
+        f"B2-raw agrees with B1 to {max(gaps.values()):.3e} -- that is Exp's answer, not "
+        f"Cay's.  See test_c22b.")
+
+    # the contrast: the Eq. (3) reparameterization IS Exp, so it collapses onto B1
+    reparam = states["B2-reparam"]
+    collapse = max(_max_abs(reparam.v, b1.v), _max_abs(reparam.p, b1.p),
+                   _max_abs(reparam.R, b1.R))
+    assert collapse <= 1e-12, (
+        f"the reparameterized variant should be numerically indistinguishable from "
+        f"Baseline 1, got {collapse:.3e}")
+
+
+@pytest.mark.claim("M2-C22")
+@pytest.mark.claim("M2-F01")
+def test_c22b_baseline2_retraction_really_is_cayley():
+    """The one property that makes Baseline 2 a *distinct* baseline, asserted positively.
+
+    Before this test existed, replacing ``CayleyPreintegration.retract`` with ``Exp``
+    survived the whole suite -- and turned it green, because the only three tests that
+    could see the difference were the three that were failing.  A maintainer clearing a
+    red suite would have deleted Baseline 2's reason to exist and been rewarded.  So the
+    deficit is asserted as the measurement it is, from four independent directions:
+
+    (a) the retraction itself: ``Cay(theta a)`` rotates by ``2 arctan(theta/2)``;
+    (b) per edge, the gap against ``Exp`` equals ``||omega||^3 T dt^2 / 12`` -- the
+        per-step loss ``theta^3/12`` times the step count, exact here because the
+        fixture's body rate is constant per edge so the per-step deficits share an axis
+        and add;
+    (c) at KF2 the accumulated gap is 3.0e-8, two-sided;
+    (d) it is ``O(dt^2)``: the ratio is 0.25 per halving, not 0.5 and not 1.
+
+    Substituting ``Exp`` for ``Cay`` fails (a), (b), (c) and (d).
+    """
+    # -- (a) the retraction, directly ---------------------------------------------------
+    pim = B2.CayleyPreintegration(bias_hat=T.BIAS_TRUE, variant=B2.VARIANT_RAW)
+    for theta in (1e-3, 1e-2, 0.1, 0.5, 1.0):
+        axis = np.array([0.3, -0.5, 0.8])
+        axis = axis / np.linalg.norm(axis)
+        R = pim.retract(theta * axis)
+        angle = float(np.linalg.norm(T.so3_log(R)))
+        assert abs(angle - 2.0 * np.arctan(theta / 2.0)) <= 1e-13, (
+            f"retract({theta}) rotates by {angle:.12f}; Cay gives "
+            f"{2.0 * np.arctan(theta / 2.0):.12f}, Exp gives {theta:.12f}")
+        # it under-rotates, and for small theta the deficit IS theta^3/12
+        deficit = theta - angle
+        assert deficit > 0.0, f"retract({theta}) does not under-rotate -- it is not Cay"
+        if theta <= 0.1:
+            assert abs(deficit / (theta**3 / 12.0) - 1.0) <= 1e-2, (
+                f"retract({theta}) deficit {deficit:.6e} is not theta^3/12 = "
+                f"{theta**3 / 12.0:.6e}")
+        else:
+            assert deficit >= 0.5 * theta**3 / 12.0, \
+                f"retract({theta}) is indistinguishable from Exp -- it is not Cay"
+
+    # -- (b) the per-edge deficit is ||omega||^3 T dt^2 / 12 ----------------------------
+    for edge in T.edges():
+        forster = B1.integrate_edge(edge, T.BIAS_TRUE)
+        cayley = B1.integrate_edge(edge, T.BIAS_TRUE, cls=B2.CayleyPreintegration,
+                                   variant=B2.VARIANT_RAW)
+        deficit = T.so3_log(forster.dR.T @ cayley.dR)
+        rate = float(np.linalg.norm(edge.omega_body))
+        predicted = rate**3 * edge.duration * edge.dt**2 / 12.0
+        measured = float(np.linalg.norm(deficit))
+        assert abs(measured - predicted) <= 1e-3 * predicted, (
+            f"edge {edge.index}: Cayley deficit {measured:.6e} vs predicted "
+            f"||omega||^3 T dt^2/12 = {predicted:.6e}")
+        # and it is a pure LAG about the rotation axis: Cay under-rotates
+        cosine = float(deficit @ edge.omega_body / (measured * rate))
+        assert cosine <= -1.0 + 1e-6, \
+            f"edge {edge.index}: deficit is not anti-parallel to omega ({cosine:.9f})"
+
+    # -- (c) the accumulated KF2 gap, two-sided ----------------------------------------
+    states = _kf2_states()
+    gap = _max_abs(states["B2-raw"].R, states["B1"].R)
+    assert abs(gap - 2.9965e-8) <= 0.10 * 2.9965e-8, (
+        f"KF2 rotation gap {gap:.6e}; the Cayley retraction gives 3.0e-8 +-10%.  A gap "
+        f"near 1e-14 means Cay has been replaced by Exp.")
+
+    # -- (d) it is O(dt^2), not O(dt) and not zero -------------------------------------
+    gaps = []
+    for n in STEP_SWEEP:
+        s0 = T.initial_state()
+        b1 = B1.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0)[2]
+        b2 = B1.integrate_edge_states(T.edges(n), T.BIAS_TRUE, s0,
+                                      cls=B2.CayleyPreintegration,
+                                      variant=B2.VARIANT_RAW)[2]
+        gaps.append(_max_abs(b2.R, b1.R))
+    ratios = [gaps[k + 1] / gaps[k] for k in range(len(gaps) - 1)]
+    assert all(abs(r - 0.25) <= 0.01 for r in ratios), (
+        f"the Cayley deficit must scale as dt^2 (ratio 0.25 per halving); got {ratios} "
+        f"from gaps {gaps}.  0.5 would be O(dt); ~1 would be round-off, i.e. no deficit.")
 
 
 @pytest.mark.claim("M2-C23")
@@ -846,6 +1051,11 @@ def test_c23_tier2_magnitude_and_convergence_order():
     wrong by a constant ``1e-3``; the order test is the one with teeth.  Baseline 3 is
     exact ZOH and is the reference side of this comparison, so the gap is the O(dt)
     truncation of Baselines 1-2 and nothing else.
+
+    The rotations are held to Tier 1, not Tier 0.  The claim used to say ``1e-10`` here;
+    that holds for Baseline 1 (3.1e-15) but not for Baseline 2 under the raw Sec. IV-A
+    reading, whose 3.0e-8 is the Cayley retraction deficit and is asserted as such below
+    rather than forgiven.
     """
     # -- (a) magnitude at dt = 2.5e-3 ---------------------------------------------------
     states = _kf2_states()
@@ -861,9 +1071,17 @@ def test_c23_tier2_magnitude_and_convergence_order():
             failures.append(f"{name} v: {gaps['v']:.3e} > {TIER2:.0e}")
         if gaps["p"] > TIER2:
             failures.append(f"{name} p: {gaps['p']:.3e} > {TIER2:.0e}")
-        if gaps["R"] > TIER0:
-            failures.append(f"{name} R: {gaps['R']:.3e} > {TIER0:.0e}"
-                            " [see the note in test_c22]")
+        if gaps["R"] > TIER1:
+            failures.append(f"{name} R: {gaps['R']:.3e} > {TIER1:.0e}")
+    # Baseline 1 and the reparameterized variant are Exp and clear Tier 0 in R; the raw
+    # Cayley reading does not and must not -- its 3.0e-8 is the M2-C22 retraction deficit.
+    assert measured["B1"]["R"] <= TIER0, \
+        f"B1 rotation vs B3: {measured['B1']['R']:.3e}"
+    assert measured["B2-reparam"]["R"] <= TIER0, \
+        f"B2-reparam rotation vs B3: {measured['B2-reparam']['R']:.3e}"
+    assert abs(measured["B2-raw"]["R"] - 2.9965e-8) <= 0.10 * 2.9965e-8, (
+        f"B2-raw rotation vs B3 is {measured['B2-raw']['R']:.3e}; the Cayley deficit is "
+        f"3.0e-8 +-10% (see test_c22b)")
 
     # -- (b) the gap is first order in dt ------------------------------------------------
     # Computed unconditionally: the order test is the half with teeth, so it must not be
@@ -892,13 +1110,14 @@ def test_c24_tier0_against_exact_ground_truth():
     Baselines 1 and 2 match the reference ROTATIONS only because the fixture's body rate
     is constant per edge; in ``v`` and ``p`` they are held to Tier 2.
 
-    NOTE -- the Baseline 3 half passes outright.  The Baseline 2 half fails under the
-    raw Cayley reading for the reason set out in ``test_c22``'s docstring: ``3.0e-8``
-    against a stated ``1e-10``.  M2-C24's own test_hint records "B1 and B2 rotation:
-    2.4e-14", which is reproduced here by B1 (9.8e-15) and by B2 under the *Eq. (3)
-    reparameterized* reading (2.4e-14) -- so the variant M2-C24 was measured on is not
-    the raw variant that M2-C22's domain fixes as the spec reading.  The two claims pick
-    different Baseline 2s.
+    The three baselines do not share a rotation tolerance either.  Baseline 1 and the
+    reparameterized Cayley variant are both ``Exp`` and clear Tier 0 (9.8e-15 / 2.4e-14).
+    Baseline 2 under the raw Sec. IV-A reading clears only Tier 1, at 3.0e-8, because its
+    retraction loses ``||omega||^3 T dt^2 / 12`` by construction.  M2-C24 used to record
+    "B1 and B2 rotation: 2.4e-14" and demand 1e-10 of both -- but 2.4e-14 is the
+    *reparameterized* number, i.e. that line was measured on a Baseline 2 that is
+    Baseline 1.  Each variant now carries its own tolerance, and the raw one carries a
+    two-sided assertion so the deficit cannot silently vanish.
     """
     s0 = T.initial_state()
     exact = T.exact_states()
@@ -922,17 +1141,23 @@ def test_c24_tier0_against_exact_ground_truth():
                                                cls=B2.CayleyPreintegration,
                                                variant=B2.VARIANT_REPARAM),
     }
+    rotation_tolerance = {"B1": TIER0, "B2-reparam": TIER0, "B2-raw": TIER1}
     failures, measured = [], {}
     for name, states in euler.items():
         rot = max(_max_abs(states[k].R, exact[k].R) for k in (1, 2))
         vel = max(_max_abs(states[k].v, exact[k].v) for k in (1, 2))
         pos = max(_max_abs(states[k].p, exact[k].p) for k in (1, 2))
         measured[name] = {"R": rot, "v": vel, "p": pos}
-        if rot > TIER0:
-            failures.append(f"{name} R: {rot:.3e} > {TIER0:.0e}")
+        tol = rotation_tolerance[name]
+        if rot > tol:
+            failures.append(f"{name} R: {rot:.3e} > {tol:.0e}")
         if vel > TIER2 or pos > TIER2:
             failures.append(f"{name} v/p: {vel:.3e}/{pos:.3e} > {TIER2:.0e}")
-    assert not failures, f"Tier-0 rotations: {failures}; measured {measured}"
+    assert not failures, f"rotations against ground truth: {failures}; measured {measured}"
+    # two-sided on the raw Cayley reading: 3.0e-8 is the measurement, not a budget
+    assert abs(measured["B2-raw"]["R"] - 2.9965e-8) <= 0.10 * 2.9965e-8, (
+        f"B2-raw rotation vs ground truth is {measured['B2-raw']['R']:.3e}; the Cayley "
+        f"deficit is 3.0e-8 +-10% (see test_c22b)")
 
 
 # ======================================================================================
@@ -996,17 +1221,51 @@ def test_c25_fixture_is_bias_observable_without_a_bias_prior():
     A, rank_imu = _rank(imu_only, values, ordering)
     assert A.shape[1] == 45, f"state dimension is {A.shape[1]}, expected 45"
     assert rank_imu == 30, f"IMU edges alone: rank {rank_imu}/45, expected 30"
+    # NB rank 30 on a 30x45 matrix is FULL ROW RANK -- the maximum a 30-row system can
+    # have.  This assertion can only fail on row degeneracy; it says nothing whatever
+    # about observability.  It is a structural non-degeneracy check and is labelled as
+    # one so no reader counts it as evidence for the headline.
+    assert A.shape[0] == 30 and rank_imu == min(A.shape), \
+        "rank 30 is full ROW rank here, not an observability result"
 
     with_priors = imu_only.clone()
     with_priors.add(gtsam.PriorFactorPose3(
         X(0), Pose3(Rot3(exact[0].R), exact[0].p), noiseModel.Isotropic.Sigma(6, 1e-3)))
     with_priors.add(gtsam.PriorFactorVector(
         V(0), exact[0].v, noiseModel.Isotropic.Sigma(3, 1e-3)))
-    _, rank_priors = _rank(with_priors, values, ordering)
+    A_priors, rank_priors = _rank(with_priors, values, ordering)
     assert rank_priors == 39, f"IMU + KF0 priors: rank {rank_priors}/45, expected 39"
+    # Again full ROW rank (39 rows), so again structural and not observability.
+    assert A_priors.shape[0] == 39 and rank_priors == min(A_priors.shape), \
+        "rank 39 is full ROW rank here, not an observability result"
 
-    # the 6 remaining directions are the bias block: a bias prior on ONE keyframe, and
-    # nothing else, closes the gap exactly
+    # The 6 remaining directions are NOT "exactly the bias block" -- the claim used to
+    # say so and it is false.  Measure where they actually live.  Principal cosines are
+    # used rather than a per-direction energy split because the SVD nullspace basis is
+    # only defined up to an orthogonal mixing, so per-direction numbers are not
+    # reproducible while the cosines are.
+    singular = np.linalg.svd(A_priors, compute_uv=False)
+    nullspace = np.linalg.svd(A_priors)[2][rank_priors:].T      # 45 x 6
+    assert nullspace.shape == (45, 6)
+    assert np.abs(A_priors @ nullspace).max() <= 1e-6 * singular[0], \
+        "extracted nullspace does not annihilate the Jacobian"
+    # column layout under this ordering: X0 V0 X1 V1 X2 V2 B0 B1 B2 -> bias is cols 27:45
+    bias_columns = nullspace[27:45, :]
+    cosines = np.linalg.svd(bias_columns, compute_uv=False)
+    expected_cosines = np.array([0.978227, 0.978041, 0.839290, 0.815739,
+                                 0.299838, 0.299389])
+    assert _max_abs(cosines, expected_cosines) <= 1e-3, \
+        f"principal cosines to the bias block: {np.array2string(cosines, precision=6)}"
+    assert cosines.min() <= 0.35, \
+        "at least two null directions sit ~72 degrees off the bias block; if they were " \
+        "'exactly the bias block' every cosine would be 1.0"
+    pose_velocity_energy = float((nullspace[0:27, :] ** 2).sum())
+    assert abs(pose_velocity_energy - 2.537) <= 1e-2, \
+        f"pose/velocity energy in the nullspace {pose_velocity_energy:.3f} / 6"
+
+    # A bias prior on ONE keyframe does close the gap -- but only because no null
+    # direction is ORTHOGONAL to the bias block, which is strictly weaker than the
+    # sub-assertion above and must not be read as evidence for it.
     bias_pinned = with_priors.clone()
     bias_pinned.add(gtsam.PriorFactorConstantBias(
         B(0), B3.to_gtsam_bias(T.BIAS_TRUE), noiseModel.Isotropic.Sigma(6, 1e-3)))
@@ -1017,7 +1276,10 @@ def test_c25_fixture_is_bias_observable_without_a_bias_prior():
     full = with_priors.clone()
     for k in (1, 2):
         full.add(gtsam.GPSFactor(X(k), exact[k].p, noiseModel.Isotropic.Sigma(3, 1e-2)))
-    _, rank_full = _rank(full, values, ordering)
+    A_full, rank_full = _rank(full, values, ordering)
     assert rank_full == 45, f"full graph: rank {rank_full}/45, expected 45"
+    # THIS is the observability result: 45 on a square 45x45 system is not forced by the
+    # row count, so unlike the two above it could have come out lower.
+    assert A_full.shape == (45, 45), f"full Jacobian is {A_full.shape}, expected square"
 
     assert full.error(values) <= 1e-18, f"graph error {full.error(values):.3e}"

@@ -162,8 +162,15 @@ REF_R_KF2 = np.array([
     [2.301509945763355e-01, 9.638954740062700e-01, -1.339254825854730e-01],
     [1.027236828908148e-01, 1.127880656856546e-01, 9.882948432589516e-01]])
 
-#: ``REF_R_KF1`` is not tabulated in Sec. 0.4; it is pinned by the tabulated ``REF_DR_01``.
-REF_R_KF1 = R_0 @ REF_DR_01
+#: ``REF_R_KF1``, transcribed at 15 significant digits like every other reference above.
+#: It was previously *defined* as ``R_0 @ REF_DR_01``, which made it circular -- a value
+#: computed from two other references can never disagree with them, so any test asserting
+#: against it would have been testing nothing.  Written out as digits it is an independent
+#: literal that the chaining relation has to reproduce (test_c02 does exactly that).
+REF_R_KF1 = np.array([
+    [8.830871261831558e-01, -4.155630222754749e-01, -2.178634941582640e-01],
+    [3.366237044756558e-01, 8.845766662220124e-01, -3.228135733835191e-01],
+    [3.268663475407971e-01, 2.117344943386019e-01, 9.210466300641434e-01]])
 
 REF_INCREMENTS = ((REF_DR_01, REF_DV_01, REF_DP_01),
                   (REF_DR_12, REF_DV_12, REF_DP_12))

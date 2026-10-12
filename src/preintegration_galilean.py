@@ -16,8 +16,11 @@ Four ordering footguns are handled here and nowhere else:
    time); ``NavState``'s is (rotation, position, velocity).  Hence
    :data:`GAL3_BLOCK_FOR_NAVSTATE` (claim M2-C15).
 3. That remap is a block permutation **only**.  It does not make the two charts agree --
-   ``NavState``'s retraction is not the Gal(3) exponential, and the reordered logarithms
-   differ by ~0.76 on this fixture (claim M2-C16).
+   ``NavState``'s retraction is not the Gal(3) exponential, and the reordered Gal(3)
+   logarithm differs from ``localCoordinates`` by 0.1076 on this fixture (claim M2-C16).
+   It does NOT differ from ``NavState.Logmap``: against the *group* logarithm the gap is
+   exactly 0.0, because NavState's group is Gal(3) at ``t = 0``.  The disagreement is with
+   the retraction, and only with the retraction.
 4. ``imuBias.ConstantBias`` orders ``(accelerometer, gyroscope)``, so ``.vector()`` is
    ``[b_a; b_g]`` -- opposite the project's ``[b_g; b_a]``.  Every crossing swaps the two
    3-blocks, including Jacobian *columns* (claim M2-C17).

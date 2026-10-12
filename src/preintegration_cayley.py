@@ -2,9 +2,27 @@
 
 **FROM-PAPER REIMPLEMENTATION.**  Rai et al., arXiv:2609.38048v1.  No public code exists
 for this method; everything here is transcribed from the equations in the paper and is
-labelled with the equation number it came from.  Where the paper is ambiguous, the
-ambiguity is carried in the code as an explicit variant rather than silently resolved --
-see :data:`VARIANT_RAW` / :data:`VARIANT_REPARAM`.
+labelled with the equation number it came from.
+
+**There is one admissible reading of the Cayley substitution, and the paper fixes it.**
+This module used to describe the reading as an unresolved ambiguity.  It is not:
+
+* Sec. IV-A says the Sec. III-A derivation "carries over after replacing ``Exp`` and its
+  right Jacobian with ``Cay`` and the Cayley right Jacobian in (4)".  Substituted
+  literally into Eq. (9a) that gives ``prod Cay((omega_k - bbar_g) dt)`` -- the **raw**
+  reading, :data:`VARIANT_RAW`.  No reparameterization step appears anywhere in the paper.
+* Sec. II-A's "``Cay(phi) = Exp(phi) + O(||phi||^3)``" is *only* non-vacuous under the raw
+  reading: under the reparameterized reading ``Cay(2 tan(theta/2) a) == Exp(theta a)``
+  bit-for-bit (measured gap 1.1e-16), and nobody writes "agrees to second order" about two
+  maps that are equal.
+* Eq. (4) is decisive.  It is the right Jacobian of the **raw** map to finite-difference
+  precision (4.7e-11, flat in ``||phi||``) and is wrong by up to 0.36 for the
+  reparameterized map, whose right Jacobian is ``Exp``'s.  If the paper meant the
+  reparameterized reading, its own Eq. (4) would be wrong.
+
+:data:`VARIANT_REPARAM` is therefore **not** a rival reading of the spec.  It is kept only
+as the Eq. (3) contrast: it collapses ``Cay`` onto ``Exp`` and so collapses Baseline 2 onto
+Baseline 1, which is precisely why it cannot be what Sec. IV-A means.
 
 The point of the method is a rotation residual that is *polynomial* in the states: the
 Cayley transform is a rational map whose denominator Eq. (17) is provably non-vanishing,
@@ -25,11 +43,14 @@ import numpy as np
 from .preintegration_forster import ForsterPreintegration
 from .trajectory import hat
 
-#: The literal reading of the paper: the raw tangent ``(omega_k - bbar_g) dt`` is
-#: substituted straight into ``Cay``.  The spec fixes this reading.
+#: **The** reading, fixed by Rai Sec. IV-A: the raw tangent ``(omega_k - bbar_g) dt`` is
+#: substituted straight into ``Cay``.  Each step then rotates by ``2 arctan(theta/2)``
+#: instead of ``theta``, losing ``theta^3/12 + O(theta^5)``; that deficit is what makes
+#: Baseline 2 a distinct baseline at all (claim M2-C22).
 VARIANT_RAW = "raw"
-#: The Eq. (3) reading: ``Cay`` is fed the Cayley vector ``2 tan(theta/2) a``, which makes
-#: ``Cay`` numerically identical to ``Exp``.
+#: The Eq. (3) *contrast*, not a rival spec reading: ``Cay`` fed the Cayley vector
+#: ``2 tan(theta/2) a`` is bit-for-bit ``Exp``, so this variant **is** Baseline 1 with
+#: extra arithmetic.  Kept so tests can exhibit that collapse rather than assert it.
 VARIANT_REPARAM = "reparam"
 
 DEFAULT_VARIANT = VARIANT_RAW
@@ -94,9 +115,14 @@ def cay_denominator_det_closed_form(xi) -> float:
 class CayleyPreintegration(ForsterPreintegration):
     """Eq. (9) sums with the rotation retraction replaced by ``Cay``.
 
-    ``variant`` selects which reading of the Cayley substitution is used; the paper does
-    not say which it intends, so both stay available and the gap between them is reported
-    as a bounded ambiguity rather than resolved.
+    ``variant`` defaults to :data:`VARIANT_RAW`, the reading Rai Sec. IV-A instructs and
+    the only admissible one (see the module docstring).  :data:`VARIANT_REPARAM` is
+    available only so tests can exhibit that it collapses this class onto Baseline 1.
+
+    The raw retraction's rotation deficit against ``Exp`` is
+    ``||omega||^3 * T * dt^2 / 12`` -- 3.0e-8 at KF2 on the fixture, and ``O(dt^2)``.
+    That is a **property of the method**, not an error, and claim M2-C22's positive test
+    pins it: replacing ``Cay`` by ``Exp`` here must make that test fail.
     """
 
     def __init__(self, *args, variant: str = DEFAULT_VARIANT, **kwargs):
