@@ -581,8 +581,9 @@ def test_preintegration_chaining_is_the_group_product():
     # branches at their least accurate: per-step angles |omega| dt uniform in
     # [0.04, 0.0499] (just below THETA_SMALL = 0.05), per-step random directions, long
     # streams of 60 and 1000 steps, and dt of either sign.  With sin(th)/th truncated
-    # after th^4 in so3_exp alone (the M1-F15 regression) this gap is 1.2e-12 at n = 60
-    # and 5.8e-12 at n = 1000 (mutation harness: so3_exp_taylor_no_th6).
+    # after th^4 in so3_exp alone (the M1-F15 regression) this gap is 3.7e-12 on these
+    # streams (pass-6 verifier: 1.2e-12 at n = 60, 5.8e-12 at n = 1000; mutation harness:
+    # so3_exp_taylor_no_th6); clean 1.7e-13.
     worst_prod_switch = 0.0
     for n_sw, b_sw, dt_sw in ((60, 10, 0.01), (1000, 3, 0.01), (60, 10, -0.01)):
         ang = r_neg.uniform(0.04, 0.0499, size=(n_sw, b_sw))
