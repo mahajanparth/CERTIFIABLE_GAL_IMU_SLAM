@@ -14,7 +14,7 @@ from src.gal3 import compose, exp, gal, unpack, wedge
 
 from . import ode_truth
 from .conftest import (G, assert_discrete_converges, assert_stream_non_commuting, rand_axis,
-                       rand_rot, rng)
+                       rand_gravity, rand_rot, rng)
 
 I3 = np.eye(3)
 I5 = np.eye(5)
@@ -36,40 +36,46 @@ def _navstate_form_b(R_i, v_i, p_i, dR, dv, dp, Dt, g):
 
 
 @pytest.mark.claim("M1-C37")
-def test_gtsam_navstate_endpoint_form(endpoint_dataset):
+def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g):
     """X_j = W_ij Phi_Dt(X_i) U_ij reproduces (R_j, p_j, v_j) on gtsam 4.3.0."""
-    d = endpoint_dataset
-    Dt, g = d["Dt"], d["g"]
-
-    def residual(src):
+    def residual(d, src):
         worst = 0.0
         for k in range(d["n"]):
             N = _navstate_form_b(d["R_i"][k], d["v_i"][k], d["p_i"][k],
-                                 src["dR"][k], src["dv"][k], src["dp"][k], Dt, g)
+                                 src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"], d["g"][k])
             worst = max(worst,
                         float(np.abs(N.attitude().matrix() - src["R_j"][k]).max()),
                         float(np.abs(N.position() - src["p_j"][k]).max()),
                         float(np.abs(N.velocity() - src["v_j"][k]).max()))
         return worst
 
-    # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
-    worst = residual(d)
-    assert worst <= 1e-9, worst
-    # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
-    worst_id = residual(d["disc"])
-    assert worst_id <= 1e-12, worst_id
-    assert_discrete_converges(d)
-    assert_stream_non_commuting(d)
+    # g = (0, 0, -9.81) at Dt = +0.5, and random g at Dt = +0.4 and Dt = -0.3
+    # (mutation harness: integrate_truth_g_permuted, pass-6 Q52)
+    for d in (endpoint_dataset, *endpoint_datasets_rand_g):
+        # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
+        worst = residual(d, d)
+        assert worst <= 1e-9, (d["label"], worst)
+        # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
+        worst_id = residual(d, d["disc"])
+        assert worst_id <= 1e-12, (d["label"], worst_id)
+        assert_discrete_converges(d)
+        assert_stream_non_commuting(d)
 
     # 2000 algebraic instances against the Forster endpoint
+    # (the first 2000 with g = G_DEFAULT and Dt > 0, as recorded; 2000 appended draws
+    # with random g and Dt of either sign -- mutation harness: forster_endpoint_g_permuted,
+    # pass-6 Q51; forster_endpoint_abs_dt, Q30)
     r = rng(370)
     worst_alg = 0.0
-    for _ in range(2000):
+    for i_alg in range(4000):
         Dt2 = float(r.uniform(0.05, 1.0))
         R_i, v_i, p_i = rand_rot(r), 2.0 * r.normal(size=3), 5.0 * r.normal(size=3)
         dR, dv, dp = rand_rot(r, scale=0.4), r.normal(size=3), r.normal(size=3)
-        N = _navstate_form_b(R_i, v_i, p_i, dR, dv, dp, Dt2, G)
-        R_f, v_f, p_f = gal3.forster_endpoint(R_i, v_i, p_i, dR, dv, dp, Dt2, G)
+        g_alg = G
+        if i_alg >= 2000:
+            Dt2, g_alg = Dt2 * np.sign(r.normal()), rand_gravity(r)
+        N = _navstate_form_b(R_i, v_i, p_i, dR, dv, dp, Dt2, g_alg)
+        R_f, v_f, p_f = gal3.forster_endpoint(R_i, v_i, p_i, dR, dv, dp, Dt2, g_alg)
         worst_alg = max(worst_alg,
                         float(np.abs(N.attitude().matrix() - R_f).max()),
                         float(np.abs(N.position() - p_f).max()),
@@ -385,15 +391,14 @@ def test_increment_closed_form_blocks():
 
 
 @pytest.mark.claim("M1-C43")
-def test_forster_component_equations(endpoint_dataset):
+def test_forster_component_equations(endpoint_dataset, endpoint_datasets_rand_g):
     """R_j = R_i dR, v_j = v_i + g Dt + R_i dv, p_j = p_i + v_i Dt + 0.5 g Dt^2 + R_i dp."""
-    d = endpoint_dataset
-    Dt, g = d["Dt"], d["g"]
-
-    def residuals(src):
+    def residuals(d, src):
+        Dt = d["Dt"]
         worst = 0.0
         worst_block = 0.0
         for k in range(d["n"]):
+            g = d["g"][k]
             R_f, v_f, p_f = gal3.forster_endpoint(
                 d["R_i"][k], d["v_i"][k], d["p_i"][k],
                 src["dR"][k], src["dv"][k], src["dp"][k], Dt, g)
@@ -412,16 +417,20 @@ def test_forster_component_equations(endpoint_dataset):
                               abs(t_l))
         return worst, worst_block
 
-    # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
-    worst, worst_block = residuals(d)
-    assert worst <= 1e-9, worst
-    assert worst_block <= 1e-12, worst_block
+    # g = (0, 0, -9.81) at Dt = +0.5, and random g at Dt = +0.4 and Dt = -0.3.
+    # Mutation harness: forster_endpoint_g_permuted (pass-6 Q51), forster_endpoint_abs_dt
+    # (Q30), gravity_lift_ignores_g (Q49), integrate_truth_g_permuted (Q52).
+    for d in (endpoint_dataset, *endpoint_datasets_rand_g):
+        # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
+        worst, worst_block = residuals(d, d)
+        assert worst <= 1e-9, (d["label"], worst)
+        assert worst_block <= 1e-12, (d["label"], worst_block)
 
-    # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
-    worst_id, _ = residuals(d["disc"])
-    assert worst_id <= 1e-12, worst_id
-    assert_discrete_converges(d)
-    assert_stream_non_commuting(d)
+        # IDENTITY CHECK on the project's discrete recursion (not an accuracy check)
+        worst_id, _ = residuals(d, d["disc"])
+        assert worst_id <= 1e-12, (d["label"], worst_id)
+        assert_discrete_converges(d)
+        assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C44")

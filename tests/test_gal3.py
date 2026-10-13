@@ -945,12 +945,12 @@ def _endpoint_residuals(d, src):
     for k in range(d["n"]):
         X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
         D = gal(src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"])
-        lhs = gal3.endpoint(X_i, D, d["g"])
+        lhs = gal3.endpoint(X_i, D, d["g"][k])
         X_j = gal(src["R_j"][k], src["v_j"][k], src["p_j"][k], 0.0)
         worst_xj = max(worst_xj, float(np.abs(lhs - X_j).max()))
         R_f, v_f, p_f = gal3.forster_endpoint(
             d["R_i"][k], d["v_i"][k], d["p_i"][k],
-            src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"], d["g"])
+            src["dR"][k], src["dv"][k], src["dp"][k], d["Dt"], d["g"][k])
         worst_forster = max(worst_forster,
                             float(np.abs(lhs - gal(R_f, v_f, p_f, 0.0)).max()))
         worst_time = max(worst_time, abs(float(lhs[3, 4])))
@@ -958,26 +958,31 @@ def _endpoint_residuals(d, src):
 
 
 @pytest.mark.claim("M1-C31")
-def test_endpoint_relation(endpoint_dataset):
+def test_endpoint_relation(endpoint_dataset, endpoint_datasets_rand_g):
     """X_j = T(-Dt) H' X_i D_ij, exactly, on all 25 entries."""
-    d = endpoint_dataset
+    # Three datasets: g = (0, 0, -9.81) at Dt = +0.5, and RANDOM g (direction and
+    # magnitude) at Dt = +0.4 and at Dt = -0.3 -- the claim holds for arbitrary g and
+    # fixes no sign of Dt.  Mutation harness: gravity_lift ignoring its g argument
+    # (gravity_lift_ignores_g, pass-6 Q49), integrate_truth with g's x/y swapped
+    # (integrate_truth_g_permuted, Q52), endpoint reading |Dt| (endpoint_abs_dt, Q28),
+    # gravity_lift with velocity g |Dt| (gravity_lift_abs_dt, Q29).
+    for d in (endpoint_dataset, *endpoint_datasets_rand_g):
+        # ACCURACY: against the continuous truth -- X_j and D_ij from two separate
+        # DOP853 solves (rtol = atol = 1e-13) with time-varying inputs.
+        worst_ode, worst_alg, worst_time = _endpoint_residuals(d, d)
+        assert worst_ode <= 1e-9, (d["label"], worst_ode)
+        assert worst_alg <= 1e-12, (d["label"], worst_alg)
+        assert worst_time <= 1e-12, (d["label"], worst_time)
 
-    # ACCURACY: against the continuous truth -- X_j and D_ij from two separate
-    # DOP853 solves (rtol = atol = 1e-13) with time-varying inputs.
-    worst_ode, worst_alg, worst_time = _endpoint_residuals(d, d)
-    assert worst_ode <= 1e-9, worst_ode
-    assert worst_alg <= 1e-12, worst_alg
-    assert worst_time <= 1e-12, worst_time
+        # IDENTITY CHECK (not an accuracy check): the relation is an exact algebraic
+        # identity of the project's discrete recursion, for any dt.
+        worst_id, _, worst_time_id = _endpoint_residuals(d, d["disc"])
+        assert worst_id <= 1e-12, (d["label"], worst_id)
+        assert worst_time_id <= 1e-12, (d["label"], worst_time_id)
 
-    # IDENTITY CHECK (not an accuracy check): the relation is an exact algebraic
-    # identity of the project's discrete recursion, for any dt.
-    worst_id, _, worst_time_id = _endpoint_residuals(d, d["disc"])
-    assert worst_id <= 1e-12, worst_id
-    assert worst_time_id <= 1e-12, worst_time_id
-
-    # and that recursion really is a first-order discretisation of the ODE
-    assert_discrete_converges(d)
-    assert_stream_non_commuting(d)
+        # and that recursion really is a first-order discretisation of the ODE
+        assert_discrete_converges(d)
+        assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C32")
@@ -1015,21 +1020,21 @@ def test_gravity_one_parameter_subgroup():
 
 
 @pytest.mark.claim("M1-C34")
-def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset):
+def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset, endpoint_datasets_rand_g):
     """H X_i D_ij has time block Dt (not 0) and position p_j + g Dt^2 (not p_j)."""
-    d = endpoint_dataset
-    Dt = d["Dt"]
-
-    def residuals(src):
+    # Also on the random-g datasets (Dt = +0.4 and Dt = -0.3): mutation harness
+    # gravity_lift_uncorrected_ignores_g (pass-6 Q54), integrate_truth_g_permuted (Q52).
+    def residuals(d, src):
+        Dt = d["Dt"]
         worst_t = worst_p = worst_rv = 0.0
         least_wrong = np.inf
         for k in range(d["n"]):
             X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
             D = gal(src["dR"][k], src["dv"][k], src["dp"][k], Dt)
-            rhs = gal3.endpoint_uncorrected(X_i, D, d["g"])
+            rhs = gal3.endpoint_uncorrected(X_i, D, d["g"][k])
             worst_t = max(worst_t, abs(float(rhs[3, 4]) - Dt))
             worst_p = max(worst_p, float(np.abs(
-                rhs[0:3, 4] - (src["p_j"][k] + d["g"] * Dt ** 2)).max()))
+                rhs[0:3, 4] - (src["p_j"][k] + d["g"][k] * Dt ** 2)).max()))
             worst_rv = max(worst_rv, float(np.abs(rhs[0:3, 0:3] - src["R_j"][k]).max()),
                            float(np.abs(rhs[0:3, 3] - src["v_j"][k]).max()))
             # and it really is wrong: the position error is O(g Dt^2)
@@ -1037,20 +1042,21 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset):
                               float(np.abs(rhs[0:3, 4] - src["p_j"][k]).max()))
         return worst_t, worst_p, worst_rv, least_wrong
 
-    # ACCURACY: against the DOP853 continuous truth
-    worst_t, worst_p, worst_rv, least_wrong = residuals(d)
-    assert worst_t <= 1e-12, worst_t
-    assert worst_p <= 1e-9, worst_p
-    assert worst_rv <= 1e-9, worst_rv
-    assert least_wrong >= 1e-3, least_wrong
+    for d in (endpoint_dataset, *endpoint_datasets_rand_g):
+        # ACCURACY: against the DOP853 continuous truth
+        worst_t, worst_p, worst_rv, least_wrong = residuals(d, d)
+        assert worst_t <= 1e-12, (d["label"], worst_t)
+        assert worst_p <= 1e-9, (d["label"], worst_p)
+        assert worst_rv <= 1e-9, (d["label"], worst_rv)
+        assert least_wrong >= 1e-3, (d["label"], least_wrong)
 
-    # IDENTITY CHECK on the discrete recursion (not an accuracy check)
-    worst_t, worst_p, worst_rv, _ = residuals(d["disc"])
-    assert worst_t <= 1e-12, worst_t
-    assert worst_p <= 1e-12, worst_p
-    assert worst_rv <= 1e-12, worst_rv
-    assert_discrete_converges(d)
-    assert_stream_non_commuting(d)
+        # IDENTITY CHECK on the discrete recursion (not an accuracy check)
+        worst_t, worst_p, worst_rv, _ = residuals(d, d["disc"])
+        assert worst_t <= 1e-12, (d["label"], worst_t)
+        assert worst_p <= 1e-12, (d["label"], worst_p)
+        assert worst_rv <= 1e-12, (d["label"], worst_rv)
+        assert_discrete_converges(d)
+        assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C35")

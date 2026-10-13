@@ -92,6 +92,59 @@ def rand_xi_bounded_phi(r, lo=0.05, hi=2.9, scale=1.0):
 DISCRETE_ACCURACY_TOL = 2e-3
 
 
+def _build_endpoint_dataset(r, n_inst, n_steps, dt, g, label):
+    """One endpoint dataset; ``g`` is (3,) or one gravity vector per instance (n_inst, 3).
+
+    integrate_truth takes a single g, so the discrete recursion is run once per
+    distinct gravity vector and reassembled in instance order.
+    """
+    Dt = n_steps * dt
+    R_i = rand_rot(r, n_inst)
+    v_i = 2.0 * r.normal(size=(n_inst, 3))
+    p_i = 5.0 * r.normal(size=(n_inst, 3))
+    stream = ode_truth.Stream.random(r, n_inst)
+    g_inst = np.broadcast_to(np.asarray(g, dtype=float), (n_inst, 3)).copy()
+
+    R_j, v_j, p_j = ode_truth.solve_nav(stream, R_i, v_i, p_i, Dt, g_inst)
+    dR, dv, dp = ode_truth.solve_increment(stream, Dt)
+    groups = [np.flatnonzero((g_inst == gk).all(axis=1)) for gk in np.unique(g_inst, axis=0)]
+
+    def discrete(n, h):
+        om_s, acc_s = stream.sampled(h, n)
+        out = {k: np.empty((n_inst, 3, 3)) for k in ("R_j", "dR")}
+        out.update({k: np.empty((n_inst, 3)) for k in ("v_j", "p_j", "dv", "dp")})
+        for idx in groups:
+            (Rd, vd, pd), (dRd, dvd, dpd, Dt_out) = imu.integrate_truth(
+                R_i[idx], v_i[idx], p_i[idx], om_s[:, idx], acc_s[:, idx], h, n,
+                g_inst[idx[0]], per_step=True)
+            for k, val in zip(("R_j", "v_j", "p_j", "dR", "dv", "dp"),
+                              (Rd, vd, pd, dRd, dvd, dpd)):
+                out[k][idx] = val
+        out["Dt"] = Dt_out
+        return out
+
+    # INPUT GUARD data: the right-invariant rotation solution of the same stream
+    # (R^T of the omega -> -omega solve); far from the left-invariant one only if
+    # the stream is genuinely non-commuting.  See assert_stream_non_commuting.
+    dR_neg, _, _ = ode_truth.solve_increment(stream.negated_rate(), Dt)
+    order_gap = float(np.abs(dR - np.swapaxes(dR_neg, -1, -2)).max())
+
+    disc = discrete(n_steps, dt)
+    disc_half = discrete(max(n_steps // 2, 1), Dt / max(n_steps // 2, 1))
+    return dict(
+        label=label, n=n_inst, Dt=Dt, g=g_inst, dt=dt,
+        R_i=R_i, v_i=v_i, p_i=p_i,
+        R_j=R_j, v_j=v_j, p_j=p_j,
+        dR=dR, dv=dv, dp=dp,
+        stream=stream, disc=disc, disc_half=disc_half, order_gap=order_gap,
+    )
+
+
+def rand_gravity(r, n=None):
+    """Gravity of random DIRECTION and MAGNITUDE: |g| uniform in (2, 20) m/s^2."""
+    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)
+
+
 @pytest.fixture(scope="session")
 def endpoint_dataset():
     """200 instances with TIME-VARYING, non-commuting (omega(t), a(t)), Dt = 0.5.
@@ -108,39 +161,32 @@ def endpoint_dataset():
       dt, so it supports identity checks only.  It is also checked against the ODE
       truth (first order, see ``assert_discrete_converges``) so that a degraded
       fixture -- e.g. 2 steps at dt = 0.25 -- is caught.
+
+    ``g`` is stored per instance, shape (n, 3); here every row is (0, 0, -9.81).
     """
     r = rng(1031)
     n_inst, n_steps, dt = 200, 5000, 1e-4
-    Dt = n_steps * dt
-    R_i = rand_rot(r, n_inst)
-    v_i = 2.0 * r.normal(size=(n_inst, 3))
-    p_i = 5.0 * r.normal(size=(n_inst, 3))
-    stream = ode_truth.Stream.random(r, n_inst)
+    return _build_endpoint_dataset(r, n_inst, n_steps, dt, G, "g=G_DEFAULT, Dt=+0.5")
 
-    R_j, v_j, p_j = ode_truth.solve_nav(stream, R_i, v_i, p_i, Dt, G)
-    dR, dv, dp = ode_truth.solve_increment(stream, Dt)
 
-    def discrete(n, h):
-        om_s, acc_s = stream.sampled(h, n)
-        (Rd, vd, pd), (dRd, dvd, dpd, Dt_out) = imu.integrate_truth(
-            R_i, v_i, p_i, om_s, acc_s, h, n, G, per_step=True)
-        return dict(R_j=Rd, v_j=vd, p_j=pd, dR=dRd, dv=dvd, dp=dpd, Dt=Dt_out)
+@pytest.fixture(scope="session")
+def endpoint_datasets_rand_g():
+    """Two more endpoint datasets for the claims that hold for ARBITRARY g and Dt of
+    either sign (M1-C31, C34, C37, C43): 40 instances each, 4 random gravity vectors
+    (random direction, |g| in (2, 20)) of 10 instances each, built exactly like
+    ``endpoint_dataset``:
 
-    # INPUT GUARD data: the right-invariant rotation solution of the same stream
-    # (R^T of the omega -> -omega solve); far from the left-invariant one only if
-    # the stream is genuinely non-commuting.  See assert_stream_non_commuting.
-    dR_neg, _, _ = ode_truth.solve_increment(stream.negated_rate(), Dt)
-    order_gap = float(np.abs(dR - np.swapaxes(dR_neg, -1, -2)).max())
-
-    disc = discrete(n_steps, dt)
-    disc_half = discrete(max(n_steps // 2, 1), Dt / max(n_steps // 2, 1))
-    return dict(
-        n=n_inst, Dt=Dt, g=G, dt=dt,
-        R_i=R_i, v_i=v_i, p_i=p_i,
-        R_j=R_j, v_j=v_j, p_j=p_j,
-        dR=dR, dv=dv, dp=dp,
-        stream=stream, disc=disc, disc_half=disc_half, order_gap=order_gap,
-    )
+    * Dt = +0.4 (4000 steps of dt = 1e-4);
+    * Dt = -0.3 (3000 steps of dt = -1e-4): the ODEs are solved BACKWARD from t = 0
+      and the recursion steps backward.
+    """
+    out = []
+    for off, n_steps, dt, label in ((3101, 4000, 1e-4, "random g, Dt=+0.4"),
+                                    (3102, 3000, -1e-4, "random g, Dt=-0.3")):
+        r = rng(off)
+        g = np.repeat(rand_gravity(r, 4), 10, axis=0)
+        out.append(_build_endpoint_dataset(r, 40, n_steps, dt, g, label))
+    return out
 
 
 def _discrete_error(d, disc):

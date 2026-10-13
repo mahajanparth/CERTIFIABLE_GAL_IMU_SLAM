@@ -97,9 +97,13 @@ class Stream:
 
 
 def solve_nav(stream: Stream, R0, v0, p0, Dt: float, g):
-    """DOP853 solution of the navigation ODE at t = Dt, batched over the stream."""
+    """DOP853 solution of the navigation ODE at t = Dt, batched over the stream.
+
+    ``g`` is one gravity vector (3,) or one per instance (m, 3).  ``Dt`` may be
+    negative: solve_ivp then integrates backward from t = 0.
+    """
     m = stream.n
-    g = np.asarray(g, dtype=float).reshape(3)
+    g = np.broadcast_to(np.asarray(g, dtype=float), (m, 3))
     y0 = np.concatenate([np.asarray(R0, float).reshape(m, 9),
                          np.asarray(v0, float).reshape(m, 3),
                          np.asarray(p0, float).reshape(m, 3)], axis=1).ravel()
