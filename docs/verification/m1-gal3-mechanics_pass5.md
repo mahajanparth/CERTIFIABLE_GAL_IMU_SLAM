@@ -17,7 +17,7 @@ M1-F12 (the remainder of pass 4's F11). gtsam 4.3.0, numpy, scipy, sympy.
 | M1-F12 | **FIXED** for every named item: N01, N06 and N20. Two new residual classes are recorded below, neither a regression: symbol assumptions (P10, medium-narrow) and coefficient domain (P08/P11, low) |
 | Harness replay (all 27 `tests/test_mutation.py` mutants, as real file edits, both claim files run in full) | **27/27 killed**, each on every test it names |
 | Own sweep (27 new mutants, P01..P27) | 20 killed, 7 survived. Medium: 14 mutants, 12 killed, 2 survived (P10, P19). Low/equivalent: 13 mutants, 8 killed, 5 survived |
-| Full suite, clean tree | 102 passed (73 s) at the start of the pass, and again at the end (see the last section) |
+| Full suite, clean tree | 102 passed at the start of the pass (73 s) and again at the end (228 s, under load) |
 
 ## M1-C59: REFUTED
 
@@ -220,4 +220,4 @@ name, order and free-symbol pins, and the one for C41 does not mention the D(0) 
 
 ## Final suite run (clean tree)
 
-See the commit that closes this pass.
+`python -m pytest -q` on the clean tree with this report committed: **102 passed** (227.7 s; slower than at the start because the mutant runs were still finishing). `git status` was clean afterwards.
