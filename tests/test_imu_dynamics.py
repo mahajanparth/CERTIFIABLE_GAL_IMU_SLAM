@@ -102,6 +102,31 @@ def test_increment_left_invariant_ode():
                                   float(np.abs(gal(dR[k], dv[k], dp[k], Dt) - ref).max()))
     assert worst_ode_const <= 1e-11, worst_ode_const
 
+    # (a') the same closed form OUTSIDE (0, 2]: long intervals Dt in {5, 20} and
+    #      negative Dt (the ODE Ddot = D xi^ is solved backward from D(0) = I5, and
+    #      D(Dt) = exp(Dt xi) for every real Dt), against scipy expm of the generator
+    #      written by hand -- nothing from src.  Relative to max(1, max|expm|), since
+    #      dp grows like Dt^2.  Kills a closed form that is wrong only for Dt > 2
+    #      (preintegrate_constant_wrong_above_2, pass-5 P19) and one that integrates
+    #      |Dt| (preintegrate_constant_abs_dt, pass-5 P22).
+    def gen_by_hand(om, a):
+        A = np.zeros((5, 5))
+        A[0:3, 0:3] = [[0.0, -om[2], om[1]], [om[2], 0.0, -om[0]], [-om[1], om[0], 0.0]]
+        A[0:3, 3] = a
+        A[3, 4] = 1.0
+        return A
+
+    r_long = rng(4100)   # own stream: parts (b)..(c) keep their recorded draws
+    worst_long = 0.0
+    for Dt in (5.0, 20.0, -0.02, -0.4, -2.0, -5.0):
+        for _ in range(100):
+            om, a = 0.7 * r_long.normal(size=3), 2.0 * r_long.normal(size=3)
+            E = sla.expm(Dt * gen_by_hand(om, a))
+            D = imu.preintegrate_constant(om, a, Dt)
+            worst_long = max(worst_long, float(np.abs(D - E).max())
+                             / max(1.0, float(np.abs(E).max())))
+    assert worst_long <= 1e-12, worst_long
+
     # (b) the project's Euler scheme, constant inputs, at the WORST Dt of the stated
     #     range (the first-order error grows with Dt): 1000 configurations at Dt = 0.4.
     #     The worst error is 2.970 dt on these configurations, so tolerance 1e-5 needs
@@ -148,6 +173,13 @@ def test_increment_left_invariant_ode():
             worst_pow = max(worst_pow,
                             float(np.abs(gal(cR[k], cv[k], cp[k], cT) - P).max()))
     assert worst_coef <= 1e-2, worst_coef
+    # EQUIVALENT MUTANT (pass-3 V39: in euler_increment, dR + (dR @ W) dt replaced by
+    # dR @ (I3 + W dt)), proof: dR (I3 + W dt) = dR + dR W dt by distributivity, so both
+    # updates are the same explicit-Euler map D -> D (I5 + dt A) on the rotation block,
+    # with identical (D_n = (I5 + dt A)^n) iterates in exact arithmetic.  Per step they
+    # differ only in rounding, O(eps |dR|) with |dR| = 1; even accumulated linearly that
+    # is n eps = 1.8e-11 at n = 1.6e5 (part (b), bound 1e-5) and 4.4e-13 at n = 4000
+    # (part (b'), bounds 1e-2 and 1e-11; part (c) n <= 4e4, bound 1e-4).
     # the predicted coefficient also accounts for part (b)'s worst error (2.970 dt)
     assert 0.99 <= (worst / dt) / worst_pred <= 1.01, (worst / dt, worst_pred)
     assert worst_pow <= 1e-11, worst_pow
@@ -240,9 +272,25 @@ def test_increment_closed_form_blocks():
     phi = th[:, None] * rand_axis(r, th.size)
     worst_batch = float(np.abs(imu._so3_exp_batch(phi)
                                - Rotation.from_rotvec(phi).as_matrix()).max())
-    # (the Taylor branch is truncated after th^4: its first omitted term in sin(th)/th
-    # contributes th^7/5040 = 1.5e-13 just below the switch, which sets the bound)
-    assert worst_batch <= 1e-12, worst_batch
+    # Bound 1e-14 (measured 1.1e-15).  The Taylor branch carries sin(th)/th through th^6
+    # and (1 - cos th)/th^2 through th^4; the first omitted terms contribute
+    # th^9/9! = 5e-18 and th^8/8! = 1e-15 to the matrix just below the switch.  Mutation
+    # harness: dropping th^6/5040 gives 1.53e-13 (so3_exp_batch_taylor_no_th6), dropping
+    # th^4/120 gives 2.58e-9 (so3_exp_batch_taylor_no_th4), dropping th^4/720 in c gives
+    # 2.16e-11 (so3_exp_batch_c_no_th4, pass-4 N18), and th^4/720 -> th^4/700 in c -- a 3%
+    # coefficient error -- gives 6.19e-13 (so3_exp_batch_c_th4_over_700, pass-4 N19).
+    #
+    # EQUIVALENT MUTANT (pass-4 N15: switch th < THETA_SMALL lowered to th < 1e-3), proof:
+    # on [1e-3, 0.05) both branches evaluate the same two functions s = sin(th)/th and
+    # c = (1 - cos th)/th^2.  The Taylor branch's truncation errors are th^8/9! in s and
+    # th^6/8! in c, i.e. th^9/9! and th^8/8! (<= 1e-15) in the matrix.  The closed-form
+    # c has absolute rounding error <= ~eps/th^2 from 1 - cos th, but c enters the matrix
+    # only as c K K with |K K| <= th^2, so its contribution is <= ~eps; s = sin(th)/th is
+    # accurate to ~eps.  Both branches thus give Exp(phi) to within a few ulp of 1 on
+    # that interval (this check measures 5.6e-16 with the mutant, 1.1e-15 clean, both
+    # against scipy): no matrix-level test can separate them, and no claim depends on
+    # which branch evaluates s and c.
+    assert worst_batch <= 1e-14, worst_batch
     # and with extra leading axes, as the integrators call it
     phi3 = 1.5 * r.normal(size=(4, 5, 3))
     worst_batch3 = float(np.abs(imu._so3_exp_batch(phi3) - Rotation.from_rotvec(

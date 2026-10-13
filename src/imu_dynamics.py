@@ -84,7 +84,11 @@ def _so3_exp_batch(phi: np.ndarray) -> np.ndarray:
     K[..., 2, 1] = phi[..., 0]
     t2 = th * th
     small = th < gal3.THETA_SMALL
-    s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0,
+    # sin(th)/th carries its th^6 Taylor term: truncating after th^4 leaves th^7/5040
+    # = 1.5e-13 in the matrix just below the switch (M1-C42), whereas the next omitted
+    # term, th^9/9!, is 5e-18.  (1 - cos th)/th^2 stops at th^4: its first omitted
+    # term th^6/8! enters multiplied by |K K| <= th^2, i.e. <= 1e-15 at the switch.
+    s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0 - t2 * t2 * t2 / 5040.0,
                  np.sin(np.where(small, 1.0, th)) / np.where(small, 1.0, th))
     c = np.where(small, 0.5 - t2 / 24.0 + t2 * t2 / 720.0,
                  (1.0 - np.cos(np.where(small, 1.0, th))) / np.where(small, 1.0, t2))

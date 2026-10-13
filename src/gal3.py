@@ -488,7 +488,9 @@ def gravity_generator(g=G_DEFAULT) -> np.ndarray:
 
 def _check_keyframe_time(X_i) -> float:
     t_i = float(np.asarray(X_i)[3, 4])
-    if abs(t_i) > KEYFRAME_TIME_TOL:
+    # written as ``not (|t_i| <= tol)`` so that a NaN time is refused too
+    # (``abs(nan) > tol`` is False and would let it through)
+    if not abs(t_i) <= KEYFRAME_TIME_TOL:
         raise ValueError(
             "keyframe state must lie on the t = 0 slice: got t_i = "
             f"{t_i!r}. The endpoint relation X_j = T(-Dt) H' X_i D_ij is valid only "

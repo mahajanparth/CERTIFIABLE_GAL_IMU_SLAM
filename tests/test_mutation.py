@@ -55,6 +55,7 @@ C30 = G3 + "test_cayley_constraints_degree_two"
 C36 = G3 + "test_endpoint_only_valid_on_zero_time_slice"
 C42 = IMU + "test_increment_closed_form_blocks"
 C02 = G3 + "test_closure"
+C22 = G3 + "test_log_exp_roundtrip"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -207,7 +208,7 @@ MUTATIONS = {
         "src/gal3.py",
         "    return exprs, syms\n",
         "    syms = [sp.Symbol('alpha', real=True) if str(x) == 'alpha' else x for x in syms]\n    syms[9] = sp.Symbol('alpha', positive=True)\n    return exprs, syms\n",
-        [C30], {C30: "assert not stray, stray"},
+        [C30], {C30: "assert not sym_mismatch, sym_mismatch"},
     ),
     "keyframe_time_tol_1e-3": (                                   # verifier V26
         "src/gal3.py",
@@ -219,20 +220,145 @@ MUTATIONS = {
         "src/imu_dynamics.py",
         "(1.0 - np.cos(np.where(small, 1.0, th))) / np.where(small, 1.0, t2))",
         "(1.0 - np.cos(np.where(small, 1.0, th))) / np.where(small, 1.0, th))",
-        [C42, C45], {C42: "assert worst_batch <= 1e-12, worst_batch",
+        [C42, C45], {C42: "assert worst_batch <= 1e-14, worst_batch",
                      C45: "assert worst_large <= 1e-12, worst_large"},
     ),
     "so3_exp_batch_taylor_no_th4": (                              # verifier V33 (low)
         "src/imu_dynamics.py",
-        "s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0,",
-        "s = np.where(small, 1.0 - t2 / 6.0,",
-        [C42], {C42: "assert worst_batch <= 1e-12, worst_batch"},
+        "1.0 - t2 / 6.0 + t2 * t2 / 120.0 - t2 * t2 * t2 / 5040.0,",
+        "1.0 - t2 / 6.0 - t2 * t2 * t2 / 5040.0,",
+        [C42], {C42: "assert worst_batch <= 1e-14, worst_batch"},
     ),
     "structural_residual_no_det": (                               # verifier V06 (low)
         "src/gal3.py",
         "        abs(float(np.linalg.det(R)) - 1.0),\n",
         "",
         [C02], {C02: "assert not missed, missed"},
+    ),
+    # ---- fifth-pass SURVIVORS (M1-F13) and the advisory items of passes 3-4 (M1-F14) --
+    "cayley_symbolic_expr_foreign_alpha": (                       # stray-symbol pin itself
+        "src/gal3.py",
+        "    E3 = S * pe - (wv + alpha / 2 * uv)\n",
+        "    E3 = S * pe - (wv + sp.Symbol('alpha') / 2 * uv)\n",
+        [C30], {C30: "assert not stray, stray"},
+    ),
+    "cayley_symbolic_Re_column_major": (                          # pass-4 N06
+        "src/gal3.py",
+        "        + list(Re)\n",
+        "        + list(Re.T)\n",
+        [C30], {C30: "assert [str(x) for x in syms] == expected_names"},
+    ),
+    "cayley_symbolic_alpha_positive": (                           # pass-5 P10
+        "src/gal3.py",
+        '    alpha = sp.Symbol("alpha", real=True)\n',
+        '    alpha = sp.Symbol("alpha", positive=True)\n',
+        [C30], {C30: "assert not sym_mismatch, sym_mismatch"},
+    ),
+    "cayley_symbolic_not_real": (                                 # pass-5 P13
+        "src/gal3.py",
+        '    phi = sp.symbols("phi0:3", real=True)\n'
+        '    u = sp.symbols("u0:3", real=True)\n'
+        '    w = sp.symbols("w0:3", real=True)\n'
+        '    alpha = sp.Symbol("alpha", real=True)\n'
+        '    Re = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"Re{i}{j}", real=True))\n'
+        '    ve = sp.Matrix(3, 1, lambda i, j: sp.Symbol(f"ve{i}", real=True))\n'
+        '    pe = sp.Matrix(3, 1, lambda i, j: sp.Symbol(f"pe{i}", real=True))\n',
+        '    phi = sp.symbols("phi0:3")\n'
+        '    u = sp.symbols("u0:3")\n'
+        '    w = sp.symbols("w0:3")\n'
+        '    alpha = sp.Symbol("alpha")\n'
+        '    Re = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"Re{i}{j}"))\n'
+        '    ve = sp.Matrix(3, 1, lambda i, j: sp.Symbol(f"ve{i}"))\n'
+        '    pe = sp.Matrix(3, 1, lambda i, j: sp.Symbol(f"pe{i}"))\n',
+        [C30], {C30: "assert not sym_mismatch, sym_mismatch"},
+    ),
+    "cayley_symbolic_alpha_subclass": (                           # pass-5 P03
+        "src/gal3.py",
+        '    alpha = sp.Symbol("alpha", real=True)\n',
+        '    alpha = type("SymAlpha", (sp.Symbol,), {})("alpha", real=True)\n',
+        [C30], {C30: "assert not sym_mismatch, sym_mismatch"},
+    ),
+    "cayley_symbolic_alpha_printer_spoof": (                      # pass-5 P16
+        "src/gal3.py",
+        '    alpha = sp.Symbol("alpha", real=True)\n',
+        '    alpha = type("Spoof", (sp.Symbol,), {"_sympystr": lambda self, p: "alpha"})'
+        '("beta", real=True)\n',
+        [C30], {C30: "assert not sym_mismatch, sym_mismatch"},
+    ),
+    "cayley_symbolic_float_half": (                               # pass-5 P11
+        "src/gal3.py",
+        "    E3 = S * pe - (wv + alpha / 2 * uv)\n",
+        "    E3 = S * pe - (wv + 0.5 * alpha * uv)\n",
+        [C30], {C30: "assert not bad_domains, bad_domains"},
+    ),
+    "cayley_symbolic_opaque_half": (                              # pass-5 P08
+        "src/gal3.py",
+        "    E3 = S * pe - (wv + alpha / 2 * uv)\n",
+        "    E3 = S * pe - (wv + __import__('sympy.utilities.lambdify', fromlist=['x'])"
+        ".implemented_function('h', lambda: 0.5)() * alpha * uv)\n",
+        [C30], {C30: "assert not bad_domains, bad_domains"},
+    ),
+    "cayley_symbolic_returns_poly": (                             # pass-5 P15
+        "src/gal3.py",
+        "    return exprs, syms\n",
+        "    return [sp.Poly(e, *syms) for e in exprs], syms\n",
+        [C30], {C30: "assert not not_expr, not_expr"},
+    ),
+    "preintegrate_constant_wrong_above_2": (                      # pass-5 P19
+        "src/imu_dynamics.py",
+        "    return exp(float(Dt) * increment_generator(omega, acc))\n",
+        "    C = gal(gal3.so3_exp([0.01, 0.0, 0.0]), np.zeros(3), np.zeros(3), 0.0)\n"
+        "    return (C if float(Dt) > 2.0 else np.eye(5)) @ "
+        "exp(float(Dt) * increment_generator(omega, acc))\n",
+        [C41], {C41: "assert worst_long <= 1e-12, worst_long"},
+    ),
+    "preintegrate_constant_abs_dt": (                             # pass-5 P22
+        "src/imu_dynamics.py",
+        "    return exp(float(Dt) * increment_generator(omega, acc))\n",
+        "    return exp(abs(float(Dt)) * increment_generator(omega, acc))\n",
+        [C41], {C41: "assert worst_long <= 1e-12, worst_long"},
+    ),
+    "keyframe_time_tol_1.9e-12": (                                # pass-4 N14
+        "src/gal3.py",
+        "KEYFRAME_TIME_TOL = 1e-12",
+        "KEYFRAME_TIME_TOL = 1.9e-12",
+        [C36], {C36: "assert not edge_bad, edge_bad"},
+    ),
+    "keyframe_time_tol_9.9e-13": (
+        "src/gal3.py",
+        "KEYFRAME_TIME_TOL = 1e-12",
+        "KEYFRAME_TIME_TOL = 9.9e-13",
+        [C36], {C36: "assert not edge_ok, edge_ok"},
+    ),
+    "keyframe_guard_admits_nan": (                                # pass-4 NaN observation
+        "src/gal3.py",
+        "    if not abs(t_i) <= KEYFRAME_TIME_TOL:\n",
+        "    if abs(t_i) > KEYFRAME_TIME_TOL:\n",
+        [C36], {C36: "assert not nonfinite_bad, nonfinite_bad"},
+    ),
+    "so3_exp_batch_taylor_no_th6": (
+        "src/imu_dynamics.py",
+        "1.0 - t2 / 6.0 + t2 * t2 / 120.0 - t2 * t2 * t2 / 5040.0,",
+        "1.0 - t2 / 6.0 + t2 * t2 / 120.0,",
+        [C42], {C42: "assert worst_batch <= 1e-14, worst_batch"},
+    ),
+    "so3_exp_batch_c_th4_over_700": (                             # pass-4 N19
+        "src/imu_dynamics.py",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0",
+        "0.5 - t2 / 24.0 + t2 * t2 / 700.0",
+        [C42], {C42: "assert worst_batch <= 1e-14, worst_batch"},
+    ),
+    "so3_exp_batch_c_no_th4": (                                   # pass-4 N18
+        "src/imu_dynamics.py",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0",
+        "0.5 - t2 / 24.0",
+        [C42], {C42: "assert worst_batch <= 1e-14, worst_batch"},
+    ),
+    "so3_log_trace_branch_below_0": (                             # pass-3 V44
+        "src/gal3.py",
+        "    if tr > 0.0:\n",
+        "    if tr > -0.99:\n",
+        [C22], {C22: "assert worst_band <= 2.5e-15, worst_band"},
     ),
 }
 
@@ -300,8 +426,31 @@ def test_mutation_is_killed(mutation_results, mid):
     expect = MUTATIONS[mid][4] if len(MUTATIONS[mid]) > 4 else {}
     for node, needle in expect.items():
         section = _failure_section(out, node.split("::")[-1])
-        assert needle in section, (
-            f"{mid}: {node} failed, but not on `{needle}`\n{section[-3000:]}")
+        stmt, elines = _failing_statement(section)
+        assert elines, f"{mid}: {node} has no 'E ' failure lines\n{section[-3000:]}"
+        assert needle in stmt, (
+            f"{mid}: {node} failed, but not on `{needle}` (failing statement: {stmt!r})"
+            f"\n{section[-3000:]}")
+
+
+def _failing_statement(section: str) -> tuple[str, list[str]]:
+    """The source statement --tb=short prints directly above the FIRST block of 'E '
+    lines (the line that raised), and those 'E ' lines.  Matching the needle there,
+    not anywhere in the section, rules out a match on echoed source of an assertion
+    that did not fail."""
+    lines = section.splitlines()
+    first_e = next((i for i, ln in enumerate(lines) if ln.startswith("E ")), None)
+    if first_e is None:
+        return "", []
+    start = first_e
+    while start > 0 and not (": in " in lines[start - 1] and not lines[start - 1].startswith(" ")):
+        start -= 1
+    elines = []
+    for ln in lines[first_e:]:
+        if not ln.startswith("E "):
+            break
+        elines.append(ln)
+    return "\n".join(lines[start:first_e]), elines
 
 
 def _failure_section(out: str, test_name: str) -> str:

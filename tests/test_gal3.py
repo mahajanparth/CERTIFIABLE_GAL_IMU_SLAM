@@ -425,6 +425,13 @@ def test_log_and_gamma1_inverse():
         worst_log = max(worst_log,
                         float(np.abs(gamma1_inv(phi) - np.linalg.inv(gamma1(phi))).max()))
     assert worst_log <= 1e-12, worst_log
+    # EQUIVALENT MUTANT (pass-3 V18: in src log, u = gamma1_inv(phi) @ v replaced by
+    # u = np.linalg.solve(gamma1(phi), v)), proof: gamma1_inv(phi) = I - Phi/2 + c2 Phi^2
+    # is EXACTLY Gamma1(phi)^-1 (the identity asserted at the top of this test, an
+    # algebraic fact for theta != 2 pi k), so both lines compute the same vector
+    # Gamma1^-1 v; they differ only in rounding, bounded by ~cond(Gamma1) eps |v| with
+    # cond(Gamma1) <= pi/2 on the principal branch theta <= pi (M1-C24), i.e. ~4e-16 |v|.
+    # Every log claim (C21-C23, C51, C52) bounds absolute error at >= 1e-12.
 
     # the equivalent form 1/th^2 - (1+cos th)/(2 th sin th) must NOT be used:
     # it is the one that blows up on the chart edge.  Ours stays exact there
@@ -469,6 +476,30 @@ def test_log_exp_roundtrip():
         assert abs(float(np.linalg.norm(back[0:3])) - (2 * np.pi - 3.5)) <= 1e-9
         assert np.abs(back[0:3] + (2 * np.pi - 3.5) * ax).max() <= 1e-9
         assert float(np.abs(back[0:3] - xi[0:3]).max()) >= 1e-3
+
+    # The rotation block near the far end of the chart, where so3_log's quaternion
+    # extraction must use a DIAGONAL Shepperd branch: tr(R) in (-0.99, -0.9], i.e.
+    # theta in (2.69, 3.04).  R = Exp(phi) is built by scipy and phi itself is the
+    # reference.  The trace branch qw = sqrt(1 + tr)/2 is exact algebra there too, but
+    # it divides the skew part of R by s = 2 sqrt(1 + tr) >= 0.2, amplifying R's
+    # rounding up to 5x: taking it for every tr > -0.99 instead of tr > 0 (mutation
+    # harness: so3_log_trace_branch_below_0, pass-3 V44) gives 5.3e-15 here, against
+    # 8.9e-16 for the clean code (<= 1.3e-15 on four other seeds).
+    #
+    # EQUIVALENT MUTANT (pass-3 V02: the theta ~ 0 return 2 qv / qw replaced by 2 qv),
+    # proof: that return is reached only from the tr > 0 branch (tr <= 0 forces
+    # qw^2 = (1 + tr)/4 <= 1/4, so |qv|^2 >= 3/4 and n < 1e-10 is impossible).  There
+    # qw = sqrt(1 + tr)/2 and, for R orthogonal to within delta, qw^2 + n^2 = 1 + O(delta)
+    # with n < 1e-10, so qw = 1 + O(delta) + O(1e-20).  Hence 2 qv/qw = 2 qv (1 + O(delta)):
+    # the two returns differ by a RELATIVE O(delta) ~ eps, i.e. a few ulp of a result of
+    # size < 2e-10, which is below the rounding of the division itself.  No claim
+    # (C22, C23, C51, C52 all bound absolute error >= 1e-14) can separate them.
+    r_band = rng(2200)
+    tr_band = r_band.uniform(-0.99, -0.9, size=20000)
+    phi_band = np.arccos((tr_band - 1.0) / 2.0)[:, None] * rand_axis(r_band, 20000)
+    R_band = Rotation.from_rotvec(phi_band).as_matrix()
+    worst_band = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_band, phi_band))
+    assert worst_band <= 2.5e-15, worst_band
 
 
 @pytest.mark.claim("M1-C23")
@@ -777,6 +808,11 @@ def test_cayley_constraints_degree_two():
 
     exprs, syms = gal3.cayley_constraints_symbolic()
     assert len(exprs) == 15
+    # sympy EXPRESSIONS (not Poly objects or other Basic wrappers), so that consumers can
+    # diff, substitute and lambdify them (mutation harness: cayley_symbolic_returns_poly,
+    # pass-5 P15 -- before this pin it died only incidentally, inside lambdify).
+    not_expr = [type(e).__name__ for e in exprs if not isinstance(e, sp.Expr)]
+    assert not not_expr, not_expr
     # Symbol IDENTITY and ORDER (pass 4, N01/N06): the content check below matches values
     # to symbols by name, so a second sympy symbol sharing a name (e.g. a fresh "alpha")
     # would pass it while a QCQP builder differentiating w.r.t. ``syms`` silently drops
@@ -787,11 +823,35 @@ def test_cayley_constraints_degree_two():
                       + [f"Re{i}{j}" for i in range(3) for j in range(3)]
                       + [f"ve{i}" for i in range(3)] + [f"pe{i}" for i in range(3)])
     assert [str(x) for x in syms] == expected_names, [str(x) for x in syms]
+    # ... and every symbol IS sympy.Symbol(name, real=True): the plain Symbol class, the
+    # NAME (not only the printed string) and the real assumption.  A name-only pin admits
+    # alpha declared positive=True (sp.solve then drops every alpha < 0 root although
+    # alpha is a signed time increment -- pass-5 P10), all 25 symbols declared without
+    # real=True (P13), a same-named Symbol subclass (P03), and a symbol whose printer
+    # says "alpha" but whose name is "beta" (P16).  Mutation harness:
+    # cayley_symbolic_alpha_positive, cayley_symbolic_not_real,
+    # cayley_symbolic_alpha_subclass, cayley_symbolic_alpha_printer_spoof.
+    expected_syms = [sp.Symbol(n, real=True) for n in expected_names]
+    sym_mismatch = [(i, x.name if isinstance(x, sp.Symbol) else str(x), type(x).__name__,
+                     x.assumptions0.get("positive"), x.is_real)
+                    for i, (x, y) in enumerate(zip(syms, expected_syms))
+                    if not (type(x) is sp.Symbol and x == y)]
+    assert not sym_mismatch, sym_mismatch
+    assert syms == expected_syms
     assert len(set(syms)) == 25
     stray = set().union(*(e.free_symbols for e in exprs)) - set(syms)
     assert not stray, stray
     degrees = [sp.Poly(e, *syms).total_degree() for e in exprs]
     assert max(degrees) == 2, degrees
+    # Every coefficient is an exact RATIONAL: the polynomial ring is ZZ or QQ in the 25
+    # lifted variables.  A Float coefficient (0.5 * alpha -> domain RR; pass-5 P11) or an
+    # opaque constant such as a zero-argument function h() = 0.5 (domain QQ[h()]; P08)
+    # still evaluates to the right numbers, so the content check below cannot see it,
+    # but the exact constraint data an SDP relaxation is built from would no longer be
+    # exact.  Mutation harness: cayley_symbolic_float_half, cayley_symbolic_opaque_half.
+    bad_domains = sorted({str(sp.Poly(e, *syms).domain) for e in exprs}
+                         - {str(sp.ZZ), str(sp.QQ)})
+    assert not bad_domains, bad_domains
 
     # CONTENT of the 15 symbolic expressions (count and degree alone are blind to a
     # dropped (alpha/2) u term or a sign flip in S; mutation harness:
@@ -1040,6 +1100,20 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
     assert not near_bad, near_bad
     near_ok = [t for t in (0.0, -0.0, 5e-13, -5e-13) if refused(t)]
     assert not near_ok, near_ok
+    # The tolerance is EXACTLY the stated 1e-12 (inclusive): +-1e-12 is accepted and the
+    # next double above it is refused.  The two-sided check above admits any tolerance in
+    # [5e-13, 2e-12) -- e.g. 1.9e-12 (mutation harness: keyframe_time_tol_1.9e-12, pass-4
+    # N14) or 9.9e-13 (keyframe_time_tol_9.9e-13).
+    beyond = float(np.nextafter(1e-12, np.inf))
+    edge_bad = [t for t in (beyond, -beyond) if not refused(t)]
+    assert not edge_bad, edge_bad
+    edge_ok = [t for t in (1e-12, -1e-12) if refused(t)]
+    assert not edge_ok, edge_ok
+    # A NaN (or infinite) keyframe time is refused, not propagated: abs(nan) > tol is
+    # False, so a guard written that way lets NaN through (mutation harness:
+    # keyframe_guard_admits_nan).
+    nonfinite_bad = [t for t in (np.nan, np.inf, -np.inf) if not refused(t)]
+    assert not nonfinite_bad, nonfinite_bad
 
 
 # ==========================================================================
