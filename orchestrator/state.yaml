@@ -428,7 +428,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -577,10 +577,20 @@ milestones:
   - role: verifier
     agent_id: verify-M2-007
     started: '2026-10-13T09:13:28+00:00'
+    finished: '2026-10-13T09:42:00+00:00'
+    outcome: completed
+    note: Caught planted M2-C30 (covariance trace ratio 1.34 at n = 400; position variance ~n^3). 25/25
+      confirmed. F14, F15 partial; new F16 (gyro density unpinned), F17 (bias leak in six more functions),
+      F18 (constructors alias the caller's bias array); harness 'intended assertion' match is partly vacuous.
+      27 earlier mutants replayed, none regressed.
+  - role: implementer
+    agent_id: impl-M2-010-remediation
+    started: '2026-10-13T09:42:00+00:00'
     finished: null
     outcome: running
-    note: 'Seventh pass with a fresh planted claim: rule on F14/F15; search for any remaining input-independent
-      field.'
+    note: 'Systematic sweep: vary EVERY input of every public function away from its fixture value (bias,
+      edge duration, gravity, dt, noise densities); copy inputs; fix the harness''s assertion matching
+      (F16-F19).'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -678,19 +688,47 @@ milestones:
       |Log|inf 2.81e-8, |Log|2 3.51e-8 outside the band) and the record does not name it.'
     resolution: PARTIALLY fixed per verify-M2-006 (dRbar pinned at one bias); remainder is M2-F14.
   - id: M2-F14
-    resolved: false
+    resolved: true
     summary: Every from_edge call in tests passes BIAS_TRUE, so no field check can tell 'use the bbar
       input' from 'use the fixture constant'. S47 from_edge ignoring bbar passes all 112 tests (independently
       reproduced); S46/S48 integrating at the hard-coded fixture bias likewise. At bbar = 0 dRbar is off
       7.9e-3, dvbar 4.4e-2, dpbar 1.1e-2 -- and such a factor LEAKS the true bias, looking better than
       a correct one in noise-free comparisons. bbar[3:6] is read by no src method; zeroing/negating it
       dies only on the copy-of-src replay guard.
+    resolution: PARTIALLY fixed per verify-M2-007 (docs/verification/stage-b_m2-baselines_pass7.md); the
+      remainder is in M2-F16/F17/F19.
   - id: M2-F15
-    resolved: false
+    resolved: true
     summary: 'Baseline 3 noise model unchecked: sigma_int, sigma_bg, sigma_ba are used only by c25, which
       is weight-invariant. S35 integration covariance not squared (position covariance block moves 12%)
       and S36 gyro/accel bias random-walk covariances swapped (both bias blocks mis-weighted 100x) pass
       all 112 tests.'
+    resolution: PARTIALLY fixed per verify-M2-007 (docs/verification/stage-b_m2-baselines_pass7.md); the
+      remainder is in M2-F16/F17/F19.
+  - id: M2-F16
+    resolved: false
+    summary: 'Baseline 3 make_params'' white gyro density sigma_g is pinned by nothing: zeroing it (U20)
+      or quadrupling it (U26) passes the suite (independently reproduced: setGyroscopeCovariance(0) keeps
+      test_baselines 36/36). sigma_a is pinned only to ~1% (x1.005 survives). sigma_int is pinned at one
+      value only; hard-coding it to 1e-3 (U23/U23b) dies only on an edit-anchor change detector.'
+  - id: M2-F17
+    resolved: false
+    summary: 'The true-bias leak survives in six more places because every caller passes BIAS_TRUE: CayleyFactor.predicted_rotation
+      (U10, 7.9e-3), Baseline 3 predict (U30, 4.2e-2), corrected_increment_gal3 (U31, 4.8e-2), bias_jacobian_recursion
+      (U38), Baseline 1/2 and 3 integrate_edge_states (U13, U32, KF2 velocity 0.109). Fixture-degenerate
+      inputs are the same class: edge duration (always 0.5 s), gravity (one vector) and step dt can be
+      hard-coded without failing anything; on a 0.2 s edge the velocity residual shifts by 2.87.'
+  - id: M2-F18
+    resolved: false
+    summary: 'All three constructors keep a reference to the caller''s bias array instead of copying it:
+      an in-place update by the caller silently changes bbar while the frozen increments stay put (xi
+      moves 7.3e-3; Baseline 3 predict 4.2e-2). Tests pass bias.copy() and cannot see it.'
+  - id: M2-F19
+    resolved: false
+    summary: 'Harness: _run_in_copy''s ''killed on the intended assertion'' check searches the whole pytest
+      output, which includes the failing test''s source, so any message typed literally in the test always
+      counts as found (S36 ''found'' under the S35 edit; _BBAR_MSG in S12/S13/S47). Match only ''E ''
+      lines. File-level replays also fire on any edit of an anchor''s text (change detectors, not references).'
   advisory_findings:
   - id: M2-A01
     summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
