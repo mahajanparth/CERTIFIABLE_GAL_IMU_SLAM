@@ -195,7 +195,7 @@ claims:
   source: DERIVED
   kind: DERIVED
   test_hint: 'Build z_of_state with the reflected R_0 at bbar = 0; per family max |g|: expect <= 1e-12 for the satisfied list
-    and >= 1e-3 for the violated list.'
+    and >= 1e-3 for the violated list (measured P2 2.0, RH 8.5e-2, RS 1.5e-2; satisfied <= 8.3e-16).'
   domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
     KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
     at nominal bbar.'
@@ -204,7 +204,8 @@ claims:
     every lifting family and violates only P1 and RA1.
   source: DERIVED
   kind: DERIVED
-  test_hint: 'Per family max |g|: <= 1e-12 for P0, P2, P3, RB1, RB2, RC1, RG, RL, RH, RS; >= 0.5 for P1 and RA1.'
+  test_hint: 'Per family max |g|: <= 1e-12 for P0, P2, P3, RB1, RB2, RC1, RG, RL, RH, RS; >= 0.5 for P1 and RA1 (measured
+    1.0 each).'
   domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
     KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
     at nominal bbar.'
@@ -214,7 +215,7 @@ claims:
   source: DERIVED
   kind: DERIVED
   test_hint: 'Q = Exp([0.4,-0.3,0.9]); per family max |g|: <= 1e-12 for P0-P2, RA1, RB1, RB2, RC1, RG; >= 1e-6 for P3, RL,
-    RH, RS. Same pattern for the sign-flipped liftings.'
+    RH, RS. Same pattern for the sign-flipped liftings (measured violated >= 3.9e-3, satisfied <= 1.1e-16).'
   domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
     KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
     at nominal bbar, bbar = 0.'
