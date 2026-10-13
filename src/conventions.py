@@ -25,10 +25,14 @@ Conventions used for the structured (non-string) fields:
 * ``None`` means "this source has no such object", not "unknown".
 * ``error_handedness`` -- the translation invariance of the source's GROUP-VALUED ERROR
   COMPONENT.  Take the composition the source prints between a group-valued state and its
-  estimate / prediction (rai: the rotation residual r^R of Eq. (19) inside its weighted term
+  estimate, prediction or measurement (barfoot's C~_m, T~_m; for rai, R_j and its
+  prediction R_i dRbar_ij) (rai: the rotation residual r^R of Eq. (19) inside its weighted term
   tau_R ||r^R||_F^2 of Eq. (20); delama: log(Upsilon_k Upsilon_hat_k^-1) of Eq. (34); barfoot:
   cay^-1(C C~_m^T), cay^-1(T T~_m^-1) of Eqs. (25)/(28) with weight W_m; gtsam: Upsilon_hat^-1
-  Upsilon of Eq. (21)), with the weight the source prints (a general SPD weight unless a scalar
+  Upsilon of Eq. (21)), with the weight the source prints.  The tests evaluate it as a random
+  SPD quadratic form of vec(E - I) for the composed element E (and barfoot on SE(3), which
+  contains the SO(3) case); this gives the same verdict as the named log / cay^-1 terms because
+  on the invariant side E is unchanged and on the other side E -> S E S^-1 (a general SPD weight unless a scalar
   is printed).  ``"left-invariant"`` if it is unchanged when the state and its estimate are both
   left-multiplied by the same group element, ``"right-invariant"`` for right multiplication,
   ``"none"`` if neither.  Everything that is not that group-valued pair is HELD FIXED under both
@@ -38,7 +42,8 @@ Conventions used for the structured (non-string) fields:
   rai's rotation term bi-invariant, and bi-invariance is not a value of this field.
   Consequence, stated so nobody over-reads the field: it describes the error COMPONENT, not
   the whole minimised cost.  rai's full Eq. (20) cost is not invariant under either translation
-  with v_i, p_i in R^3 (only the yaw subgroup about gravity leaves it invariant), and delama's
+  with v_i, p_i in R^3 held fixed (a yaw about gravity leaves it invariant only if v_i, p_i are
+  rotated too), and delama's
   full Eq. (34) is right-invariant only when the bias moves under delama's own action (Eq. 24).
   Under this rule: rai left-invariant, delama right-invariant, barfoot right-invariant, gtsam
   left-invariant.  The tests decide every row by this one rule

@@ -1542,21 +1542,18 @@ _COST_WEIGHT = {
 
 
 def error_invariance(key: str, seed: int = 2101) -> dict[str, float]:
-    """Relative change of each row's minimised cost under left and right group translation.
+    """Relative change of each row's GROUP-VALUED ERROR COMPONENT under left and right translation.
 
-    THE definition of ``error_handedness`` (``src/conventions.py``): a cost is left- (right-)
-    invariant if it is unchanged when every group-valued state argument is left- (right-)
-    multiplied by the same group element.  The cost is evaluated from the source's printed
-    error / residual:
+    THE definition of ``error_handedness`` is in the ``src/conventions.py`` module docstring:
+    the invariance of the source's group-valued error component, with every non-group quantity
+    (R^3 states, bias terms, relative measurements entering as fixed data) held fixed.
 
     * a printed composition ``X Xh^-1`` / ``Xh^-1 X`` (delama, barfoot, gtsam) is EXECUTED on
       random group elements and enters ``vec(E - I)^T W vec(E - I)`` with the weight the
-      source prints (general SPD unless a scalar is printed); X and its estimate /
-      measurement Xh are both states and both translate;
+      source prints (general SPD unless a scalar is printed); X and Xh both translate;
     * rai's Eq. (19) composes no inverse; the residual is EVALUATED from its LaTeX and enters
-      the scalar-weighted Frobenius term of Eq. (20).  Its state arguments are R_i, R_j; the
-      pre-integrated increment dRbar_ij and xi_ij are relative measurements, not states, and
-      do not translate.
+      the scalar-weighted Frobenius term of Eq. (20).  R_i, R_j translate; dRbar_ij and xi_ij
+      are fixed data and are held fixed.
     """
     row = CONVENTIONS[key]
     rng = np.random.default_rng(seed)
@@ -1601,8 +1598,8 @@ def error_invariance(key: str, seed: int = 2101) -> dict[str, float]:
 
 
 def decide_error_handedness(key: str) -> str:
-    """``error_handedness`` decided by its ONE definition (cost invariance under group
-    translation, :func:`error_invariance`) for every row alike."""
+    """``error_handedness`` decided by its ONE definition (translation invariance of the
+    group-valued error component, :func:`error_invariance`) for every row alike."""
     rel = error_invariance(key)
     inv = [side for side, d in rel.items() if d < 1e-9]
     assert len(inv) < 2, (key, rel)          # bi-invariance is not a value of the field
