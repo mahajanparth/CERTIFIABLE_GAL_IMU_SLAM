@@ -783,7 +783,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: null
@@ -829,9 +829,18 @@ milestones:
   - role: implementer
     agent_id: impl-M3-002
     started: '2026-10-13T14:51:19+00:00'
+    finished: '2026-10-13T15:25:58+00:00'
+    outcome: completed
+    note: 'All 36 current claims pass under the stated instance (108 tests); 32/32 mutants killed. C39
+      fingerprint matches to 4 significant figures; C27 shrink factors 0.25 (rotation) / 0.50 (v, p).
+      I changed sigma_a 2.0e-3 -> 2.2e-3: C39 fails.'
+  - role: verifier
+    agent_id: verify-M3-001
+    started: '2026-10-13T15:25:58+00:00'
     finished: null
     outcome: running
-    note: Update src/qcqp and tests to the revised claims and noise model; drop the withdrawn SDP claims.
+    note: 'First independent verification of M3 with a planted claim, zero-survivor rule: own QCQP build,
+      spurious-point hunt, mutation sweep.'
   blocking_findings:
   - id: M3-F01
     resolved: false
