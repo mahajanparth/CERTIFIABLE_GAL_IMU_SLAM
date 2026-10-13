@@ -162,9 +162,6 @@ REF_R_KF2 = np.array([
     [2.301509945763355e-01, 9.638954740062700e-01, -1.339254825854730e-01],
     [1.027236828908148e-01, 1.127880656856546e-01, 9.882948432589516e-01]])
 
-#: ``REF_R_KF1`` is not tabulated in Sec. 0.4; it is pinned by the tabulated ``REF_DR_01``.
-REF_R_KF1 = R_0 @ REF_DR_01
-
 REF_INCREMENTS = ((REF_DR_01, REF_DV_01, REF_DP_01),
                   (REF_DR_12, REF_DV_12, REF_DP_12))
 

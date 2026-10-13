@@ -174,9 +174,9 @@ class GalileanPreintegration:
         """``U_ij = Gal3(dR, dp, dv, Dt)`` -- position argument second (claim M2-C14)."""
         return gal3(self.dR, self.dp, self.dv, self.dt_total)
 
-    def predict(self, state_i: NavTriple, bias=None) -> NavTriple:
-        b = self.bias_hat if bias is None else bias
-        return navtriple(self.pim.predict(navstate(state_i), to_gtsam_bias(b)))
+    def predict(self, state_i: NavTriple) -> NavTriple:
+        """GTSAM's ``predict`` at the integration bias ``bias_hat``."""
+        return navtriple(self.pim.predict(navstate(state_i), to_gtsam_bias(self.bias_hat)))
 
     def preint_cov(self) -> np.ndarray:
         """GTSAM's propagated covariance, in **NavState** (rot, pos, vel) block order."""

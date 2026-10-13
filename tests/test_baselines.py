@@ -327,6 +327,25 @@ def test_c05_forster_bias_correction_is_mixed_chart_and_quadratic():
                    "delPdelBiasOmega", "delPdelBiasAcc"):
         assert absent not in pimg_members, f"{absent} unexpectedly available"
 
+    # ``increment_error`` itself, on hand-computed cases (verification pass 3, P22: a
+    # version that ignored dp left this whole test blind to dp-correction errors).  Each
+    # case perturbs exactly one component by a known amount.
+    identity = (np.eye(3), np.zeros(3), np.zeros(3))
+    c, s = np.cos(0.25), np.sin(0.25)
+    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])   # 0.25 rad about z
+    for case, other, expected in (
+            ("dR", (Rz, np.zeros(3), np.zeros(3)), 0.25),
+            ("dv", (np.eye(3), np.array([0.0, -3e-4, 1e-4]), np.zeros(3)), 3e-4),
+            ("dp", (np.eye(3), np.zeros(3), np.array([2e-5, 0.0, -7e-5])), 7e-5)):
+        for a, b in ((other, identity), (identity, other)):
+            got = B1.increment_error(a, b)
+            assert abs(got - expected) <= 1e-15, \
+                f"increment_error on a {case}-only difference: {got!r}, expected {expected!r}"
+    # the max over components, not a sum
+    assert B1.increment_error((Rz, np.array([0.0, -3e-4, 1e-4]),
+                               np.array([2e-5, 0.0, -7e-5])), identity) == \
+        B1.increment_error((Rz, np.zeros(3), np.zeros(3)), identity)
+
     direction = np.array([1.0, -2.0, 3.0, -4.0, 5.0, -6.0])
     direction /= np.linalg.norm(direction)
     for edge in T.edges():
@@ -336,6 +355,7 @@ def test_c05_forster_bias_correction_is_mixed_chart_and_quadratic():
         assert J_R.shape == J_vg.shape == J_pa.shape == (3, 3)
 
         errors = {}
+        components = {"dR": {}, "dv": {}, "dp": {}}
         for mag in (1e-3, 1e-2):
             db = mag * direction
             corrected = B1.bias_corrected_increment(base.increment(), jac, db)
@@ -344,10 +364,22 @@ def test_c05_forster_bias_correction_is_mixed_chart_and_quadratic():
                                base.dR @ T.so3_exp(J_R @ db[0:3]), atol=0, rtol=0)
             reintegrated = B1.integrate_edge(edge, T.BIAS_TRUE + db).increment()
             errors[mag] = B1.increment_error(corrected, reintegrated)
+            # ... and component by component, without increment_error: dp's residual is
+            # ~7x below dv's (3.0e-9 vs 2.1e-8 at 1e-3), so a max over components can
+            # hide a first-order dp error behind dv's second-order one
+            components["dR"][mag] = _rot_err(reintegrated[0], corrected[0])
+            components["dv"][mag] = _max_abs(corrected[1], reintegrated[1])
+            components["dp"][mag] = _max_abs(corrected[2], reintegrated[2])
 
         ratio = errors[1e-2] / errors[1e-3]
         assert 50.0 <= ratio <= 200.0, \
             f"edge {edge.index}: not quadratic, ratio {ratio:.1f} (errors {errors})"
+        # measured 100.04 / 100.01 / 100.005 (edge 0), 100.10 / 100.01 / 100.01 (edge 1)
+        for name, errs in components.items():
+            ratio = errs[1e-2] / errs[1e-3]
+            assert 50.0 <= ratio <= 200.0, (
+                f"edge {edge.index}: the {name} correction is not quadratic, ratio "
+                f"{ratio:.1f} (errors {errs})")
 
 
 class _StreamEdge:
@@ -543,8 +575,7 @@ def _compose(X, Y):
     return (R1 @ R2, v1 + R1 @ v2, p1 + v1 * t2 + R1 @ p2, t1 + t2)
 
 
-@functools.lru_cache(maxsize=None)
-def _covariance_reference(edge_index):
+def _covariance_reference(edge_index, sigma_g=ANISO_SIGMA_G, sigma_a=ANISO_SIGMA_A):
     """Covariance of the DISCRETE noisy Eq. (9) integrator, by linearising it numerically.
 
     The noisy increment is a function of the 6n per-step noise samples ``eta_k`` (added to
@@ -554,9 +585,20 @@ def _covariance_reference(edge_index):
     suffix_k`` -- nothing from ``src.preintegration_forster`` is called.  With independent
     samples of covariance ``diag(sigma^2) / dt``, ``Sigma = sum_k J_k Q J_k^T`` to first
     order.  Eq. (63) is the exact first-order recursion of this same scheme, so the two
-    must agree to finite-difference precision, block by block.  Cached: it depends on the
-    fixture constants only, never on ``src`` code a mutant could change.
+    must agree to finite-difference precision, block by block.  The ``J_k`` are cached:
+    they depend on the fixture constants only, never on ``src`` code a mutant could
+    change.  The densities default to the anisotropic pair; either may be zero.
     """
+    dt = T.edges()[edge_index].dt
+    Q = np.diag(np.concatenate([np.broadcast_to(np.asarray(sigma_g, float), (3,))**2,
+                                np.broadcast_to(np.asarray(sigma_a, float), (3,))**2])) / dt
+    return sum(J @ Q @ J.T for J in _noise_jacobians(edge_index))
+
+
+@functools.lru_cache(maxsize=None)
+def _noise_jacobians(edge_index):
+    """Per-step noise Jacobians ``J_k`` (9x6, w.r.t. ``[eta_g; eta_a]``) of the discrete
+    noisy Eq. (9) integrator; see :func:`_covariance_reference`."""
     edge = T.edges()[edge_index]
     w = edge.gyro_stream() - T.BIAS_TRUE[0:3]
     a = edge.accel_stream() - T.BIAS_TRUE[3:6]
@@ -574,8 +616,7 @@ def _covariance_reference(edge_index):
     def error(X):
         return np.concatenate([_indep_so3_log(R0.T @ X[0]), X[1] - v0, X[2] - p0])
 
-    Q = np.diag(np.concatenate([ANISO_SIGMA_G**2, ANISO_SIGMA_A**2])) / dt
-    Sigma = np.zeros((9, 9))
+    jacobians = []
     eps = NOISE_FD_EPS
     for k in range(n):
         J = np.zeros((9, 6))
@@ -587,8 +628,8 @@ def _covariance_reference(edge_index):
             minus = _compose(_compose(prefix[k], _euler_step(w[k] - e[0:3], a[k] - e[3:6], dt)),
                              suffix[k + 1])
             J[:, m] = (error(plus) - error(minus)) / (2.0 * eps)
-        Sigma += J @ Q @ J.T
-    return Sigma
+        jacobians.append(J)
+    return tuple(jacobians)
 
 
 def _gtsam_anisotropic_params():
@@ -672,6 +713,48 @@ def test_c06b_forster_covariance_against_an_independent_reference():
             assert all(ORDER_BAND[0] <= r <= ORDER_BAND[1] for r in ratios), (
                 f"edge {index} block {k}: the chart-transformed residual is not O(dt) "
                 f"discretisation (ratios {ratios})")
+
+
+@pytest.mark.claim("M2-F11")
+def test_c06c_forster_covariance_with_a_single_noise_source():
+    """Eq. (63) with exactly ONE nonzero density, against the same independent reference.
+
+    Every other covariance check sets both densities, so the ``has_noise`` gate that
+    decides whether Eq. (63) runs at all was untested where it matters: an ``or -> and``
+    slip (verification pass 3, P17) silently returned a zero covariance for a gyro-only or
+    accel-only configuration and left the whole suite green.
+
+    * gyro only: every block is nonzero -- gyro noise reaches ``dv`` and ``dp`` through
+      the rotation coupling ``A[3:9, 0:3]`` (the reason M2-C26 was refuted);
+    * accel only: the rotation rows/columns are EXACTLY zero in both, since accel noise
+      never enters ``dR``; the other blocks are checked relatively.
+
+    Measured worst block: 5.2e-10 / 1.8e-9 (gyro-only, edges 0 / 1; tr = 2.3e-7) and
+    2.7e-9 / 8.3e-10 (accel-only; tr = 2.8e-4), against the 1e-6 bound of test_c06b.
+    """
+    zero = np.zeros(3)
+    for label, sigma_g, sigma_a in (("gyro-only", ANISO_SIGMA_G, zero),
+                                    ("accel-only", zero, ANISO_SIGMA_A)):
+        for edge in T.edges():
+            pim = B1.integrate_edge(edge, T.BIAS_TRUE, sigma_g=sigma_g, sigma_a=sigma_a)
+            ref = _covariance_reference(edge.index, sigma_g, sigma_a)
+            assert np.trace(ref) > 0.0
+            assert np.trace(pim.cov) >= 0.5 * np.trace(ref), (
+                f"{label}, edge {edge.index}: tr(Sigma) = {np.trace(pim.cov):.3e} against "
+                f"{np.trace(ref):.3e} -- the has_noise gate skipped Eq. (63)")
+            if label == "accel-only":
+                assert not np.any(ref[0:3, :]) and not np.any(ref[:, 0:3])
+                assert not np.any(pim.cov[0:3, :]) and not np.any(pim.cov[:, 0:3]), \
+                    f"accel-only, edge {edge.index}: accel noise leaked into the rotation"
+                a, b = _blocks(pim.cov), _blocks(ref)
+                rel = {k: float(np.abs(a[k] - b[k]).max() / np.abs(b[k]).max())
+                       for k in ((1, 1), (1, 2), (2, 2))}
+            else:
+                rel = _block_relative(pim.cov, ref)
+            bad = {k: f"{v:.3e}" for k, v in rel.items() if v > 1e-6}
+            assert not bad, (
+                f"{label}, edge {edge.index}: Eq. (63) disagrees with the linearised "
+                f"discrete integrator in blocks (rot=0, vel=1, pos=2) {bad}")
 
 
 # ======================================================================================
@@ -910,6 +993,13 @@ def test_c12_isotropic_precision_is_structurally_forced():
         best_weighted = max(best_weighted,
                             abs(B2.weighted_square(r, W) - B2.weighted_square(R @ r, W)))
     assert worst_isotropic <= 1e-12, f"isotropic invariance {worst_isotropic:.3e}"
+    # the isotropic half above is invariant under ANY function of ||r||, so it cannot see
+    # a weighted_square that forgot to square (verification pass 3, P33).  Pin the value.
+    r = np.array([1.0, -2.0, 3.0])
+    assert B2.weighted_square(r) == 14.0, \
+        f"weighted_square([1, -2, 3]) = {B2.weighted_square(r)!r}, expected 1 + 4 + 9 = 14"
+    assert B2.weighted_square(r, W) == 1.0 + 8.0 + 45.0, \
+        f"weighted_square([1, -2, 3], diag(1, 2, 5)) = {B2.weighted_square(r, W)!r}, expected 54"
     assert best_weighted >= 1.0, \
         f"a non-isotropic weight must break the identity, got {best_weighted:.3e}"
 
@@ -978,6 +1068,113 @@ def test_c13_frozen_jacobians_with_an_exact_retraction():
         assert np.abs(exact).max() <= 1e-12
         worst = max(worst, _max_abs(exact, truncated))
     assert worst >= 1e-6, f"truncation difference only {worst:.3e}"
+    # the lower bound above passes for ANY contrast at least that far from Eq. (19), even
+    # one that is worse than the first-order truncation (verification pass 3, P29: the
+    # contrast built on (I - hat(xi)) survived).  Pin the contrast itself: at
+    # R_i = R_j = dRbar = I it is exactly -hat(xi), typed out here.
+    xi = np.array([0.03, -0.02, 0.01])
+    minus_hat_xi = -np.array([[0.0, -0.01, -0.02],
+                              [0.01, 0.0, -0.03],
+                              [0.02, 0.03, 0.0]])
+    got = B2.rotation_residual_truncated(np.eye(3), np.eye(3), np.eye(3), xi)
+    assert _max_abs(got, minus_hat_xi) <= 1e-17, \
+        f"truncated contrast at the identity is not -hat(xi):\n{got}"
+
+
+def _indep_hat(v):
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+
+
+def _indep_cay(phi):
+    """``Cay(phi)`` in its closed polynomial form ``I + 4/(4 + |phi|^2) (K + K^2/2)``,
+    ``K = hat(phi)`` -- algebraically Eq. (3), but no linear solve, nothing from ``src``."""
+    K = _indep_hat(phi)
+    return np.eye(3) + (4.0 / (4.0 + float(phi @ phi))) * (K + 0.5 * (K @ K))
+
+
+def _indep_cayley_increment(gyro, accel, dt, bias):
+    """Baseline 2's Eq. (9) sums, retyped: ``dp += dv dt + dR a dt^2/2``, ``dv += dR a dt``,
+    ``dR <- dR Cay((omega - b_g) dt)``."""
+    R, v, p = np.eye(3), np.zeros(3), np.zeros(3)
+    for omega, acc in zip(gyro, accel):
+        w = omega - bias[0:3]
+        a = acc - bias[3:6]
+        p = p + v * dt + 0.5 * (R @ a) * dt**2
+        v = v + (R @ a) * dt
+        R = R @ _indep_cay(w * dt)
+    return R, v, p
+
+
+#: the reference's own FD step -- deliberately not src's FD_EPS (1e-6): truncation is
+#: below 1e-11 relative here and round-off ~1e-14/eps ~ 1e-9 absolute
+CAYLEY_REF_FD_EPS = 1e-5
+
+
+def _indep_cayley_bias_jacobians(edge, bias):
+    """``(J_R, A_vg, A_va, A_pg, A_pa)`` of the retyped CAYLEY integrator, by central
+    differences; J_R in the right chart ``dR(b + db) ~ dR(b) Exp(J_R db_g)``."""
+    gyro, accel, dt = edge.gyro_stream(), edge.accel_stream(), edge.dt
+    R0 = _indep_cayley_increment(gyro, accel, dt, bias)[0]
+    eps = CAYLEY_REF_FD_EPS
+    J_R = np.zeros((3, 3))
+    J_v = np.zeros((3, 6))
+    J_p = np.zeros((3, 6))
+    for m in range(6):
+        e = np.zeros(6)
+        e[m] = eps
+        Rp, vp, pp = _indep_cayley_increment(gyro, accel, dt, bias + e)
+        Rm, vm, pm = _indep_cayley_increment(gyro, accel, dt, bias - e)
+        J_v[:, m] = (vp - vm) / (2.0 * eps)
+        J_p[:, m] = (pp - pm) / (2.0 * eps)
+        if m < 3:
+            J_R[:, m] = (_indep_so3_log(R0.T @ Rp) - _indep_so3_log(R0.T @ Rm)) / (2.0 * eps)
+    return J_R, J_v[:, 0:3], J_v[:, 3:6], J_p[:, 0:3], J_p[:, 3:6]
+
+
+@pytest.mark.claim("M2-F11")
+def test_c13b_cayley_factor_jacobians_are_the_cayley_integrators():
+    """Rai Sec. IV-A: the frozen Jacobians are those of the CAYLEY retraction.
+
+    ``CayleyFactor.from_edge`` taking ``J_R`` and ``A`` from the Forster (Exp) integrator
+    instead survived the whole suite (verification pass 3, P35): the two differ by only
+    ~2.3e-7 relative, O(dt^2).  Pinned two-sidedly against an independent finite
+    difference of a retyped Cayley integrator (:func:`_indep_cayley_bias_jacobians`):
+
+    measured, relative to max|block| (edge 0 / edge 1)
+
+    =====  ====================  ====================  =========
+    block  factor vs reference   Forster vs reference  bound
+    =====  ====================  ====================  =========
+    J_R    1.6e-10 / 3.0e-10     2.32e-7 / 3.59e-7     1e-8
+    A_vg   2.9e-8 / 1.9e-8       2.32e-7 / 3.81e-7     1e-7
+    A_pg   3.1e-8 / 2.0e-8       2.32e-7 / 3.81e-7     1e-7
+    A_va   5.1e-9 / 1.4e-9       9.5e-9 / 2.0e-8       1e-7
+    A_pa   4.3e-9 / 5.1e-9       8.8e-9 / 1.3e-8       1e-7
+    =====  ====================  ====================  =========
+
+    The A floor (~3e-8) is round-off in the factor's own 1e-6-step differences, not a
+    Cayley/Exp effect; J_R is clean, and it alone separates the integrators by >20x on
+    both sides of its bound.  A_va / A_pa cannot separate them (the gap is at the noise).
+    """
+    names = ("J_R", "A_vg", "A_va", "A_pg", "A_pa")
+    bounds = {"J_R": 1e-8, "A_vg": 1e-7, "A_va": 1e-7, "A_pg": 1e-7, "A_pa": 1e-7}
+    for edge in T.edges():
+        factor = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
+        ref = dict(zip(names, _indep_cayley_bias_jacobians(edge, T.BIAS_TRUE)))
+        got = {"J_R": factor.J_R, "A_vg": factor.A_vg, "A_va": factor.A_va,
+               "A_pg": factor.A_pg, "A_pa": factor.A_pa}
+        rel = {k: float(np.abs(got[k] - ref[k]).max() / np.abs(ref[k]).max()) for k in names}
+        bad = {k: f"{v:.3e}" for k, v in rel.items() if v > bounds[k]}
+        assert not bad, (
+            f"edge {edge.index}: CayleyFactor's frozen Jacobians are not the Cayley "
+            f"integrator's {bad} (bounds {bounds})")
+
+        # the other side: the check resolves the retraction at all.  Forster's (Exp)
+        # J_R is >= 1e-7 from the Cayley reference, 10x outside the bound above.
+        forster_J_R = B1.bias_jacobians_fd(edge, T.BIAS_TRUE)[0]
+        gap = float(np.abs(forster_J_R - ref["J_R"]).max() / np.abs(ref["J_R"]).max())
+        assert gap >= 1e-7, \
+            f"edge {edge.index}: Exp and Cay bias Jacobians agree to {gap:.3e}"
 
 
 # ======================================================================================

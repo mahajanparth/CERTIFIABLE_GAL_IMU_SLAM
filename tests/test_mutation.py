@@ -37,6 +37,11 @@ the fixture bias constants (N29).  ``PASS2_SURVIVORS`` replays all 14 and
 ``test_pass2_survivor_is_killed`` asserts each now dies; N29 is additionally replayed as
 a real on-disk edit by ``test_n29_file_level_bias_edit_is_killed``.
 
+Verification pass 3 (``docs/verification/stage-b_m2-baselines_pass3.md`` Sec. 4, finding
+M2-F11) left P17, P35 and P22 gating, plus P33 and P29.  ``PASS3_SURVIVORS`` replays them
+(and P22b, a dp-correction error the old c05 metric hid) and
+``test_pass3_survivor_is_killed`` checks that each dies on the assertion written for it.
+
 Mutations are applied with ``monkeypatch`` against the imported modules rather than by
 editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
@@ -698,3 +703,107 @@ def test_n29_file_level_bias_edit_is_killed(tmp_path):
     assert code != 0, "a file-level edit of B_G/B_A leaves test_c01 green"
     assert "is not the claimed [b_g; b_a]" in out, \
         f"test_c01 died, but not on the bias pin:\n{out[-2000:]}"
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-3 sweep (docs/verification/stage-b_m2-baselines_pass3.md
+# Sec. 4, finding M2-F11).  Each kill is checked against the ASSERTION written for it: the
+# failure message must contain the given text, so a mutant that dies of something
+# incidental is not counted as pinned.
+# ======================================================================================
+
+
+def _p17_has_noise_and(monkeypatch):
+    """``has_noise``: ``or`` -> ``and``.  Eq. (63) is skipped when only one density is
+    nonzero, and the covariance is silently zero."""
+    monkeypatch.setattr(
+        B1.ForsterPreintegration, "has_noise",
+        property(lambda self: bool(np.any(np.asarray(self.sigma_g) > 0.0)
+                                   and np.any(np.asarray(self.sigma_a) > 0.0))))
+
+
+def _p35_cayley_factor_takes_forster_jacobians(monkeypatch):
+    """``CayleyFactor.from_edge``: ``J_R`` and ``A`` from the Forster (Exp) integrator."""
+    def from_edge(cls, edge, bbar, variant=B2.DEFAULT_VARIANT):
+        bbar = np.asarray(bbar, dtype=float)
+        pim = B1.integrate_edge(edge, bbar, cls=B2.CayleyPreintegration, variant=variant)
+        J_R, A_vg, A_va, A_pg, A_pa = B1.bias_jacobians_fd(
+            edge, bbar, cls=B1.ForsterPreintegration)                 # MUTANT
+        return cls(bbar=bbar, dRbar=pim.dR, dvbar=pim.dv, dpbar=pim.dp,
+                   Dt=pim.dt_total, J_R=J_R, A_vg=A_vg, A_va=A_va,
+                   A_pg=A_pg, A_pa=A_pa, variant=variant)
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", classmethod(from_edge))
+
+
+def _p22_increment_error_ignores_dp(monkeypatch):
+    """``increment_error``: the dp term dropped from the max."""
+    def increment_error(a, b):
+        dRa, dva, _ = a
+        dRb, dvb, _ = b
+        return max(float(np.abs(T.so3_log(dRb.T @ dRa)).max()),
+                   float(np.abs(dva - dvb).max()))
+    monkeypatch.setattr(B1, "increment_error", increment_error)
+
+
+def _p22b_dp_correction_slightly_wrong(monkeypatch):
+    """Eq. (44) dp correction with ``J_pg`` scaled by ``1 + 3e-4``: a FIRST-order dp error
+    that the max over components hides behind dv's second-order residual (the old c05
+    ratio stays 100.01 on both edges; the dp-only ratio drops to 28)."""
+    original = B1.bias_corrected_increment
+
+    def bias_corrected_increment(base_increment, jacobians, db):
+        J_R, J_vg, J_va, J_pg, J_pa = jacobians
+        return original(base_increment,
+                        (J_R, J_vg, J_va, (1.0 + 3e-4) * J_pg, J_pa), db)   # MUTANT
+    monkeypatch.setattr(B1, "bias_corrected_increment", bias_corrected_increment)
+
+
+def _p33_weighted_square_unsquared(monkeypatch):
+    """``weighted_square(r)`` returns ``||r||``, not ``||r||^2``."""
+    def weighted_square(r, W=None):
+        r = np.asarray(r, dtype=float)
+        if W is None:
+            return float(np.sqrt(r @ r))                              # MUTANT
+        return float(r @ np.asarray(W) @ r)
+    monkeypatch.setattr(B2, "weighted_square", weighted_square)
+
+
+def _p29_truncated_contrast_sign(monkeypatch):
+    """M2-C13's truncated contrast built on ``(I - hat(xi))``."""
+    def rotation_residual_truncated(R_i, R_j, dRbar, xi):
+        A = np.asarray(R_i) @ np.asarray(dRbar)
+        return np.asarray(R_j) - A @ (np.eye(3) - T.hat(xi))         # MUTANT
+    monkeypatch.setattr(B2, "rotation_residual_truncated", rotation_residual_truncated)
+
+
+#: ``(id, mutation, killer, text the killing assertion's message must contain)``
+PASS3_SURVIVORS = [
+    ("P17",  _p17_has_noise_and,                         "c06c",
+     "the has_noise gate skipped Eq. (63)"),
+    ("P35",  _p35_cayley_factor_takes_forster_jacobians, "c13b",
+     "CayleyFactor's frozen Jacobians are not the Cayley integrator's {'J_R'"),
+    ("P22",  _p22_increment_error_ignores_dp,            "c05",
+     "increment_error on a dp-only difference"),
+    ("P22b", _p22b_dp_correction_slightly_wrong,         "c05",
+     "the dp correction is not quadratic"),
+    ("P33",  _p33_weighted_square_unsquared,             "c12",
+     "expected 1 + 4 + 9 = 14"),
+    ("P29",  _p29_truncated_contrast_sign,               "c13",
+     "truncated contrast at the identity is not -hat(xi)"),
+]
+
+
+@pytest.mark.claim("M2-F11")
+@pytest.mark.parametrize("mutant_id,apply_mutation,killer,message", PASS3_SURVIVORS,
+                         ids=[m[0] for m in PASS3_SURVIVORS])
+def test_pass3_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killer, message):
+    """Every pass-3 survivor must fail its killer, on the assertion written for it."""
+    assert _outcome(killer) is None, \
+        f"{_test_function(killer)[0]} fails BEFORE {mutant_id} is applied"
+    apply_mutation(monkeypatch)
+    outcome = _outcome(killer)
+    assert outcome is not None, \
+        f"{mutant_id} (survived pass 3) still SURVIVES {_test_function(killer)[0]}"
+    assert outcome.startswith("AssertionError") and message in outcome, (
+        f"{mutant_id} kills {_test_function(killer)[0]}, but not on the intended "
+        f"assertion: {outcome}")
