@@ -336,7 +336,16 @@ E is the largest change over that sample.
 
 ### 5.5 Full-suite runs of the survivors
 
-FULLSUITE_PLACEHOLDER
+| mutant | full suite (249) | notes |
+|---|---|---|
+| Y18, Y24, Y30, Y31, Y55, Y56, Y59 | **249 passed** | not even a change detector fires |
+| Y20, Y57, Y58 | 238 passed, **11 errors**, 0 failures | see below |
+
+**The 11 errors are change detectors, not kills.** All of them are in `test_mutation.py::test_pass9_mutant_is_killed_as_a_file_edit[*]`. The cause is the module fixture `pass9_runs`: its `_run_in_copy` asserts that each PASS9 edit anchor occurs exactly once.
+* Y20 and Y58 rewrite the `has_noise` lines, which are X21's and X22's anchors.
+* Y57 rewrites `A[0:3, 0:3] = dR_step.T`, which is X24's anchor.
+
+The assertion fails, the fixture errors, and all 11 parametrised cases error with it. This is an edit-anchor change detector, so under the owner's rule it is not a kill. No reference test failed in any of the 10 runs.
 
 ## 6. Tests and assertions that cannot fail, or that compare the code to itself
 
@@ -358,4 +367,12 @@ No new test compares `src` with a copy of `src`.
 
 ## 7. Final state
 
-FINAL_PLACEHOLDER
+This commit contains this report only. The worktree is clean:
+* the scratch directory (`results/p10`, gitignored) was deleted;
+* every mutant copy was a `tempfile` directory and was removed;
+* no file outside the worktree was written;
+* `src/`, `tests/` and `docs/claims/` are untouched.
+
+Full suite on the clean tree at the end (`eb5011c` plus this report): **249 passed** in 248.7 s, under load.
+
+**Gate: NOT passed.** There are 10 non-equivalent survivors, all low: Y18, Y20, Y24, Y30, Y31, Y55, Y56, Y57, Y58 and Y59. M2-C33 is REFUTED. M2-F26 is FIXED; M2-F27 is PARTIALLY FIXED.
