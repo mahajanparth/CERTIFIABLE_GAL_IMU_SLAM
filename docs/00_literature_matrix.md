@@ -38,6 +38,14 @@ and the prose location is given instead.
 
 ## 2. Master convention-comparison table
 
+> **Superseded rows (orchestrator note, 2026-10-13).** Two rows of the table below are out of date with
+> `src/conventions.py`, which is authoritative and source-tested. Under the project definition of
+> *error handedness* (invariance of the minimised cost under group translation; see the
+> `src/conventions.py` docstring), Rai is **left-invariant**: r(S R_i, S R_j) = S r, so the cost is unchanged
+> under left translation (verify-M0-003, impl-M0-005). Rai's bias correction is on the **right**, Eq. (15).
+> Barfoot's minimised costs Eqs. (25)/(28) are X X~^-1 errors, so Barfoot is **right-invariant**.
+
+
 | | `rai` | `delama` | `barfoot` | `gtsam` (and this project) |
 | --- | --- | --- | --- | --- |
 | **Group / manifold the estimate lives on** | `SO(3)` **only**; `v_i, p_i ∈ R^3` are plain Euclidean variables. State set Eq. (36). No `Gal(3)`, no `SE_2(3)`. | Manifold `M = Gal(3) × R^10` (Sec. IV-C); *symmetry* group `G = Gal(3) ⋉ gal(3)`, **dim 20**. Keyframe states live on `SE_2(3) × R^9` (Sec. IV-A). | `SO(3)` (Eq. 5) and `SE(3)` (Eq. 8); also `Ad(SE(3))` (Eq. 11), unused. No velocity in the state. | `M = Gal(3) × R^6` **direct product**, Eq. (1) of `galileanimufactor`. Keyframe states stay `SE_2(3)` (`NavState`). |
