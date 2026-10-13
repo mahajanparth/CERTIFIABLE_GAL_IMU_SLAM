@@ -320,10 +320,18 @@ milestones:
   - role: verifier
     agent_id: verify-M2-003
     started: '2026-10-13T00:00:47+00:00'
+    finished: '2026-10-13T00:16:54+00:00'
+    outcome: completed
+    note: Caught planted M2-C26 (velocity block changes 0.23 relative at 10x gyro noise vs claimed 1e-12).
+      25/25 confirmed; F07-F09 fixed, F10 partial (C25 statement wording). 37 of 48 new mutants killed.
+      Chart explanation independently derived and confirmed.
+  - role: implementer
+    agent_id: impl-M2-005-remediation
+    started: '2026-10-13T00:16:54+00:00'
     finished: null
     outcome: running
-    note: Third verification pass with a fresh planted claim; rulings on F07-F10, circularity checks,
-      its own 30+ mutant sweep.
+    note: Kill P17/P35/P22 with single-density covariance cases, Cayley-Jacobian pin and an explicit dp
+      check; delete or test the dead code (M2-F11).
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -368,27 +376,43 @@ milestones:
       nowhere. Statement CONFIRMED, recorded measurement REFUTED.
     resolution: Ruled FIXED by verify-M2-002 (docs/verification/stage-b_m2-baselines_pass2.md).
   - id: M2-F07
-    resolved: false
+    resolved: true
     summary: 'Eight covariance mutants survive C06: flipping the rotation-coupling sign (cross block 200%
       wrong), Jr->I, rotation block ->I or untransposed, the 1/2 in the noise-input and propagation matrices,
       transposed noise input, noise x0.995. C06''s symmetry/PSD/monotone checks cannot fail. Independently
       reproduced the sign flip: 26/26 baseline tests stay green. Also: unmutated Forster covariance differs
       from GTSAM''s by 17% in the rot-vel cross block, unexplained.'
+    resolution: Ruled FIXED by verify-M2-003 (docs/verification/stage-b_m2-baselines_pass3.md).
   - id: M2-F08
-    resolved: false
+    resolved: true
     summary: 'Order errors invisible to constant-input tests: accumulating Baseline 1/2 rotation on the
       LEFT survives (1.7e-15 on the fixture, 4.7e-5 on the time-varying stream, which no B1/B2 test uses);
       J_R -> dR J_R dR^T survives because they commute for constant twist.'
+    resolution: Ruled FIXED by verify-M2-003 (docs/verification/stage-b_m2-baselines_pass3.md).
   - id: M2-F09
-    resolved: false
+    resolved: true
     summary: 'Eq. (21b)/(21c) never evaluated at nonzero db: flipping the sign of the bias terms survives.
       The dp-only dR_{i,k+1} fold in Eq. (9c) also survives (5e-6 shift).'
+    resolution: Ruled FIXED by verify-M2-003 (docs/verification/stage-b_m2-baselines_pass3.md).
   - id: M2-F10
     resolved: false
-    summary: 'Record hygiene: C20 test_hint records 2.8e-4..1.3e-1, measured 1.96e-5..1.02e-2 (13-14x
-      off); fixture bias constants B_G/B_A unpinned; C23 claims B2 is first order but only B1 is swept
-      (B2 measured 0.5003); C25 ''happens to be orthogonal'' wording wrong; C20 contrast-model p/v swap
-      survives (lower bound only).'
+    summary: 'REMAINING after pass 3: the M2-C25 statement still says the null directions ''happen to
+      be orthogonal''; structurally none can be orthogonal to the bias block. Claim conclusion holds.
+      Rewording a claim statement is the user''s call -- awaiting decision. (Hint numbers, fixture pins,
+      C23 B2 sweep, C20 swap: fixed per verify-M2-003.)'
+  - id: M2-F11
+    resolved: false
+    summary: 'Pass-3 survivors of medium severity: P17 has_noise or->and makes the covariance silently
+      zero when only one noise density is nonzero (independently reproduced: 88/88 green) -- no single-density
+      test; P35 CayleyFactor taking its Jacobians from the Forster (Exp) integrator instead of Cayley
+      survives (2.3e-7 relative); P22 increment_error ignoring dp makes c05 blind to dp-correction errors.
+      Dead code: REF_R_KF1 unread, predict(bias=) argument unused.'
+  advisory_findings:
+  - id: M2-A01
+    summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
+      truncated contrast with (I - xi^) (lower bound only); P33 weighted_square unsquared (c12 invariant);
+      P40 corrected increment clock zeroed (trivially J[9,:]=0); P44 bias random-walk covariances swapped
+      (rank invariant, equivalent). Tests that cannot fail are listed in pass3 report section 7.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
