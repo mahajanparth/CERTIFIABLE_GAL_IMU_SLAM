@@ -10,9 +10,13 @@ claims:
   test_hint: Build z(state) for a random state; assert len(z)==124 (136 aniso), decode each block from its range and compare
     with the defining expression (R_k flattened order='F'; Y = R_i dRbar [J_R b_g]_x; Y' = R_j [J_R b_g]_x; V = R_i dRbar
     J_nu b; V' = R_j J_nu b; P, P' likewise with J_rho; rho = (R_i dRbar)^T r) to 1e-14; assert z[123]==1.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Edge (i,i+1) uses b_i.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). Edge (i,i+1) uses b_i.'
 - id: M3-C02
   statement: Counting Rai Eq. (28) for this instance (3 KF, 2 edges, 3 bias blocks) gives 15*3 + 6*3 + 24*2 + 1 = 112; the
     M3 base lifting has 124 = 112 + 12, the 12 being the R_j-side vector liftings V', P' (3+3 per edge) required by the right-composed
@@ -34,13 +38,15 @@ claims:
 - id: M3-C04
   statement: GTSAM's Galilean right-chart bias Jacobian J (10x6, rows (omega,nu,rho,alpha), columns [b_g;b_a] in project order)
     satisfies J[0:3,3:6] = 0, J[9,:] = 0 and J[3:6,3:6] = J[0:3,0:3] (velocity/accel block equals rotation/gyro block).
-  source: GTSAM doc Eq. (34)-(36); equality of blocks DERIVED from Eq. (35) and measured
+  source: GTSAM doc Eq. (9), (20), (34)-(36); block equality DERIVED (proof in docs/03 Sec. b.1)
   kind: DERIVED
-  test_hint: Finite-difference J (central, h=1e-6) of Log(Ubar^-1 U(b)) from pim.predict on both fixture edges and on >= 5
-    random time-varying streams (150 samples, dt 2.5e-3); expect |J[0:3,3:6]| = 0, |J[9]| = 0 exactly and |J[3:6,3:6]-J[0:3,0:3]|
-    <= 1e-8 (measured <= 2.7e-10 with |J_R| ~ 0.4-0.5).
-  domain: PreintegratedImuMeasurementsG, GTSAM 4.3.0. FD tolerance bounds the equality test; the third identity is not proven
-    for the Gal(3) right Jacobian here.
+  test_hint: 'Finite-difference J (central, h=1e-6) of Log(Ubar^-1 U(b)) from pim.predict on both fixture edges and on >=
+    5 random time-varying streams (150 samples, dt 2.5e-3); expect |J[0:3,3:6]| = 0, |J[9]| = 0 exactly and |J[3:6,3:6]-J[0:3,0:3]|
+    <= 1e-8 (measured <= 2.7e-10 with |J_R| ~ 0.4-0.5). Proof step: the Gal(3) right Jacobian J_R(x) = sum_n (-ad_x)^n/(n+1)!
+    has (omega,omega) = (nu,nu) = (rho,rho) blocks; check the series against a FD right Jacobian of Gal3.Expmap for 200 random
+    x (|x| ~ 0.8): agreement <= 1e-8 (measured 5.2e-10) and block differences exactly 0.'
+  domain: PreintegratedImuMeasurementsG, GTSAM 4.3.0, any input stream; the proof uses only the recursion Eq. (35), the adjoint
+    Eq. (9), E of Eq. (20) and the standard right-Jacobian series. FD tolerance bounds the numerical test.
 - id: M3-C05
   statement: With A = G^-1 X_j, B = X_i Ubar, G = X(I, g Dt, -1/2 g Dt^2, -Dt) and x = J(b - bbar), the cleared residual r
     = A(I5 - x^/2) - B(I5 + x^/2) vanishes iff X_j = G X_i Ubar Cay(x); its bottom two rows are identically zero for every
@@ -70,9 +76,14 @@ claims:
   kind: DERIVED
   test_hint: '500 random lifted states (R ~ Exp(N(0,4I)), |b| ~ 0.2): compare the three blocks against the direct 5x5 residual;
     expect <= 1e-12 absolute.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Both bbar = b_true and bbar = 0.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). Both bbar = b_true and
+    bbar = 0.'
 - id: M3-C08
   statement: 'Lifted form: in the IMU cost the rotation-residual linear forms (9 x n) have coefficient exactly -1/2 I9 on
     the vec(Y) columns and on the vec(Y'') columns and exactly 0 on every bias column; the velocity (position) residual forms
@@ -83,9 +94,13 @@ claims:
   kind: DERIVED
   test_hint: Extract the linear forms F of each IMU term; assert the stated coefficient blocks with max deviation 0 (exact);
     perturb z_truth[63:72] by 1e-6*N(0,I) and assert the factored cost >= 1e-6 (measured 1.5e-4 from 1.2e-20).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C09
   statement: The primary families P0 (s^2=1), P1 (R_k^T R_k = s^2 I), P2 (cyclic column cross products R^(a) x R^(b) = s R^(c))
     and P3 (M^T Y = [w]_x s, R_j^T Y' = [w]_x s, M^T V = c^v s, R_j^T V' = c^v s, M^T P = c^p s, R_j^T P' = c^p s, M = R_i
@@ -94,9 +109,13 @@ claims:
   kind: DERIVED
   test_hint: Evaluate z^T A_k z - b_k for every primary constraint at z_truth (bbar in {b_true, 0}) and at 200 random z(state);
     expect max <= 1e-12 (measured 8.3e-16 at truth, 1.9e-14 random).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C10
   statement: The redundant families that are analogues of Rai's Table I -- RA1 (R_k R_k^T = s^2 I), RB1 (Y w = 0, Y' w = 0),
     RB2 (Y^T Y = |w|^2 I - w w^T and for Y'), RC1 (|V|^2 = |c^v|^2, |P|^2 = |c^p|^2, both lifting sides) -- vanish at the
@@ -104,9 +123,13 @@ claims:
   source: Rai et al. Eq. (32)-(35), Table I; R_j-side C1 DERIVED
   kind: DERIVED
   test_hint: As for the primary families; expect max <= 1e-12 (measured <= 5.7e-17 at truth, <= 1.9e-14 random).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C11
   statement: The Galilean redundant families RG (Y^T V = [w]_x^T c^v, Y^T P = [w]_x^T c^p, V.P = c^v.c^p, both sides), RL
     (s Y = M[w]_x, s V = M c^v, s P = M c^p, both sides), RH ((M e_a) x L_k = M (e_a x E_k) for each lifted column L_k = M
@@ -115,18 +138,27 @@ claims:
   source: DERIVED
   kind: DERIVED
   test_hint: As for the primary families; expect max <= 1e-12 (measured <= 7.2e-16 at truth, <= 1.6e-14 random).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. RH and RS use det(M) = +1.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). RH and RS use det(M) =
+    +1.'
 - id: M3-C12
   statement: In the anisotropic variant (n=136), P4 (M rho_v = s r_v, M rho_p = s r_p) and RR (|rho_v|^2 = |r_v|^2, |rho_p|^2
     = |r_p|^2, rho_v.rho_p = r_v.r_p) vanish at the ground-truth lifted state and at 200 random lifted states.
   source: DERIVED
   kind: DERIVED
   test_hint: Expect max <= 1e-10 (measured 1.5e-15 / 9.4e-15 at truth, 2.6e-13 / 5.7e-12 random; RR scales with |r|^2).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C13
   statement: 'Every constraint family is non-trivial off the variety: at z_truth + 1e-3 N(0, I_n) each family''s max |z^T
     A_k z - b_k| exceeds 1e-7.'
@@ -134,9 +166,13 @@ claims:
   kind: DERIVED
   test_hint: 20 perturbations per family; take the minimum over draws of the family max; expect > 1e-7 (smallest measured
     3.3e-6, P0).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C14
   statement: 'Family sizes on the 3-KF instance (base): P0 1, P1 18, P2 27, P3 60 (primary 106, rank 106); RA1 18, RB1 12,
     RB2 24, RC1 8, RG 28, RL 60, RH 180, RS 36 (redundant 366); each family has full rank as vech vectors and the joint rank
@@ -144,9 +180,14 @@ claims:
   source: DERIVED
   kind: DERIVED
   test_hint: Stack upper-triangular parts of all A_k; numpy matrix_rank with tol 1e-9; compare counts and ranks.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Ranks depend on the instance''s Jacobians only through genericity.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). Ranks depend on the instance''s
+    Jacobians only through genericity.'
 - id: M3-C15
   statement: 'Row handedness R_(a) x R_(b) = s R_(c) (rows, cyclic) is not an additional constraint family: its 9 quadratic
     forms per rotation are identical to the 9 column-handedness forms P2 (both are cof(R)_ij - s R_ij).'
@@ -176,12 +217,19 @@ claims:
     P3 admits liftings off their definitions, dropping P1 admits det R ~ 0.'
   source: DERIVED (proof in docs/03_qcqp_derivation.md Sec. (e))
   kind: DERIVED
-  test_hint: 'scipy least_squares (trf, tol 1e-15) on stacked z^T A_k z - b_k; among solutions with residual < 1e-10 assert
-    |z - s z(state(z))|_inf <= 1e-9 and |det R_k - 1| <= 1e-9 (measured 200/200 converged, 3.2e-13). Repeat with each of P2,
-    P3, P1 removed (60 starts): expect some det = -1 solution, some consistency error > 1e-3, some |det| < 1e-6 respectively.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar, bbar = 0. Sampling-based: a property test, not a proof.'
+  test_hint: 'Starts z_0 ~ N(0, I_124) (numpy default_rng(7)); scipy.optimize.least_squares(method=''trf'', analytic jac 2
+    A_k z, xtol=ftol=gtol=1e-15, max_nfev=2000) on stacked z^T A_k z - b_k. Assert >= 150/200 reach max residual < 1e-10,
+    and for every such solution |z - s z(state(z))|_inf <= 1e-9 and |det R_k - 1| <= 1e-9 (measured 200/200 converged, 3.2e-13).
+    Repeat with each of P2, P3, P1 removed (60 starts): expect some det = -1 solution, some consistency error > 1e-3, some
+    |det| < 1e-6 respectively.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]), bbar = 0. Sampling-based:
+    a property test, not a proof.'
 - id: M3-C19
   statement: With s = 1, the column-handedness equations P2 alone imply R in SO(3) union {0}.
   source: DERIVED (columns mutually orthogonal, |a|=|b||c| cyclically, so prod of norms in {0,1})
@@ -196,9 +244,13 @@ claims:
   kind: DERIVED
   test_hint: 'Build z_of_state with the reflected R_0 at bbar = 0; per family max |g|: expect <= 1e-12 for the satisfied list
     and >= 1e-3 for the violated list (measured P2 2.0, RH 8.5e-2, RS 1.5e-2; satisfied <= 8.3e-16).'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C21
   statement: The point R_0 = 0, b_0 = 0 (all other blocks from ground truth, liftings recomputed) satisfies P0, P2, P3 and
     every lifting family and violates only P1 and RA1.
@@ -206,9 +258,13 @@ claims:
   kind: DERIVED
   test_hint: 'Per family max |g|: <= 1e-12 for P0, P2, P3, RB1, RB2, RC1, RG, RL, RH, RS; >= 0.5 for P1 and RA1 (measured
     1.0 each).'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C22
   statement: Edge-0 i-side liftings replaced by Q[w]_x, Q c^v, Q c^p with a rotation Q != M (and, separately, by their negatives)
     satisfy RB1, RB2, RC1 and RG but violate P3, RL, RH and RS; i.e. the Gram/kernel identities do not pin a lifting.
@@ -216,9 +272,13 @@ claims:
   kind: DERIVED
   test_hint: 'Q = Exp([0.4,-0.3,0.9]); per family max |g|: <= 1e-12 for P0-P2, RA1, RB1, RB2, RC1, RG; >= 1e-6 for P3, RL,
     RH, RS. Same pattern for the sign-flipped liftings (measured violated >= 3.9e-3, satisfied <= 1.1e-16).'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar, bbar = 0.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]), bbar = 0.'
 - id: M3-C23
   statement: The global sign flip z -> -z preserves every constraint and the cost exactly and decodes (dividing by s) to the
     same state; it is not a spurious point.
@@ -236,9 +296,14 @@ claims:
   kind: DERIVED
   test_hint: 500 (base) / 300 (aniso) random lifted states; expect |zQz - J_direct| / max(1, J_direct) <= 1e-12 (measured
     1.1e-15, 7.1e-16).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. bbar in {b_true, 0}. Q may be dense-evaluated here; see M3-C26 for cancellation at truth.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). bbar in {b_true, 0}. Q
+    may be dense-evaluated here; see M3-C26 for cancellation at truth.'
 - id: M3-C25
   statement: Q = sum_t F_t^T W_t F_t is symmetric PSD (min eig / max eig >= -1e-12), has Q[b, non-b] = 0 exactly, and its
     bias-bias block equals the random-walk contribution alone.
@@ -246,9 +311,14 @@ claims:
   kind: DERIVED
   test_hint: Assemble Q; eigvalsh; check the bias rows/columns 45..62 against non-bias columns (exact 0) and against sum of
     rw terms (exact).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. max|Q| ~ 1.1e10 on this instance.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). max|Q| ~ 1.1e10 on this
+    instance.'
 - id: M3-C26
   statement: At bbar = b_true the factored cost sum_t (F_t z)^T W_t (F_t z) at the ground-truth lifted state is <= 1e-15,
     and for 50 perturbed states (R Exp(eps N), v, p + eps N, b + 0.1 eps N) it matches the GTSAM factor-graph cost (GalileanImuFactor
@@ -258,21 +328,33 @@ claims:
   kind: DERIVED
   test_hint: 'Measured: truth 1.2e-20 (the dense z^T Q z gives -5.6e-8 from cancellation -- evaluate factored); ratios 1.2e-4,
     3.7e-6, 2.5e-7 at eps 1e-2, 1e-3, 1e-4.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar, bbar = b_true (noise-free, model-consistent nominal bias). Agreement is first order in the state error,
-    not equality.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]), bbar = b_true (noise-free,
+    model-consistent nominal bias). Agreement is first order in the state error, not equality.'
 - id: M3-C27
-  statement: At bbar = 0 the M3 cost and the GTSAM-weighted reference cost differ at ground truth, with relative difference
-    <= 1e-2 that halves (ratio in [0.45, 0.55]) each time the bias offset |b_true - bbar| is halved (bbar = (1 - lam) b_true,
-    lam in {1, 1/2, 1/4, 1/8}).
-  source: DERIVED
+  statement: 'Truth-cost discrepancy vs GTSAM, per component and weight-free: at the ground-truth state with bbar = (1 - lam)
+    b_true, lam in {1, 1/2, 1/4, 1/8}, the ratios 1/2 sum_e ||r_R||_F^2 / sum_e |r_rot|^2, sum_e |r_v|^2 / sum_e |r_vel|^2
+    and sum_e |r_p|^2 / sum_e |r_pos|^2 (GTSAM residuals from GalileanImuFactor.unwhitenedError) each differ from 1 by <=
+    3e-2, and on halving the bias offset the rotation deviation shrinks by a factor in [0.2, 0.3] (quadratic) while the velocity
+    and position deviations shrink by a factor in [0.45, 0.55] (linear). The total weighted discrepancy is a weight-dependent
+    mix and no rate is claimed for it.'
+  source: 'DERIVED (rotation: (I - Om/2)(I - Om/2)^T = I - Om^2/4 has no linear term; v/p: O(|x|) mixing of eps_omega by the
+    (I - x^/2) factor and Cay vs Exp)'
   kind: DERIVED
-  test_hint: 'Measured rel. diff 5.72e-3, 2.94e-3, 1.48e-3, 7.49e-4 (ratios 0.514, 0.503, 0.506). Sources: Cay vs Exp (see
-    M3-C28) and the (I - x^/2) metric distortion.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  test_hint: 'Measured (followup_checks.py (7)): deviations rot/vel/pos 2.01e-2/1.22e-2/2.10e-3 at offset 0.117; halving ratios
+    rot 0.250, 0.249, 0.249; vel 0.501, 0.500, 0.502; pos 0.504, 0.501, 0.502. These ratios do not depend on the noise model.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C28
   statement: 'The Cayley surrogate deviates from GTSAM''s right-Exp correction cubically: max |Ubar (Cay(x) - Exp(x))| with
     x = J(s b_true) drops by a factor in [7.5, 8.5] each time s is halved (s in {1, 1/2, 1/4, 1/8}).'
@@ -286,9 +368,13 @@ claims:
   source: Rai et al. Eq. (20) (deviation stated); DERIVED
   kind: DERIVED
   test_hint: bbar = b_true, 30 perturbations at eps 1e-4; measured 6.1e-7 vs 7.9e-1.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C30
   statement: 'The whitened residual Jacobian of the M3 cost with respect to the 45-dim local state (per KF: R Exp(dtheta),
     v + dv, p + dp, b + db) at ground truth has rank 45.'
@@ -296,9 +382,13 @@ claims:
   kind: DERIVED
   test_hint: Central differences h = 1e-6 of the stacked sqrt(W_t) F_t z(state); singular values with relative cut 1e-12;
     expect rank 45 for bbar in {b_true, 0} (condition measured 3.95e7 / 4.53e7, not claimed).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C31
   statement: 'Isotropy obstruction: for a body-frame weight W on rho_v = (R_i dRbar)^T r_v (or rho_p), rho^T W rho equals
     a quadratic form in the base z (n = 124) on the feasible set only if W = cI. Concretely, the lam^2 coefficient of rho_v^T
@@ -308,19 +398,30 @@ claims:
   kind: DERIVED
   test_hint: d = [0.3,-1,0.5]; second difference at lam in {0,1,2}; measured constant 4.020000 for 3I, range [1.348, 6.693]
     for diag(1,2,5).
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Holds for any rotation-dependent frame change of the weight.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). Holds for any rotation-dependent
+    frame change of the weight.'
 - id: M3-C32
   statement: 'Least-squares fit of f over all 2278 degree-<=2 monomials of the 67-entry edge-0 sub-vector of base z, on 6000
     random lifted states: relative residual <= 1e-12 for f = 3|rho_v|^2 and for f = rho_v.rho_p, and >= 1e-4 for f = rho_v^T
     diag(1,2,5) rho_v and for f = rho_v^T W rho_v with a random SPD W.'
   source: DERIVED
   kind: DERIVED
-  test_hint: Measured 2.4e-15, 3.1e-15 vs 7.9e-2, 1.6e-1 (and 8.7e-4 for diag(1,1,1.01)); sample-matrix rank 2015.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar, bbar = 0. Numerical evidence for M3-C31, restricted to the edge-0 sub-vector.'
+  test_hint: 'Sampler (numpy default_rng(2)): R_k = Exp(2 N(0,I3)), v_k, p_k ~ N(0,I3), b_k ~ 0.3 N(0,I6), liftings from definitions,
+    s = 1; numpy lstsq. Measured 2.4e-15, 3.1e-15 vs 7.9e-2, 1.6e-1 (and 8.7e-4 for diag(1,1,1.01)); sample-matrix rank 2015.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]), bbar = 0. Numerical evidence
+    for M3-C31, restricted to the edge-0 sub-vector.'
 - id: M3-C33
   statement: 'Free partial anisotropy: the right-multiplied weight tr(rt G rt^T) on the 3x5 top block rt = [r_R | r_v | r_p]
     with G = blkdiag(D, G2), D = tr(W_R)/2 I - W_R >= 0, W_R = Sigma_rot^-1, G2 = (trace-reduced 2x2 vel/pos covariance)^-1,
@@ -330,20 +431,31 @@ claims:
   kind: DERIVED
   test_hint: bbar = b_true, 30 perturbations per eps; measured 1.4e-4, 3.7e-6, 2.0e-7; D eigenvalues ~3.46e7 >= 0; G2 correlation
     -0.867.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Requires lambda_max(W_R) <= tr(W_R)/2. Directional vel/pos anisotropy is not available this way (M3-C31).'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]). Requires lambda_max(W_R)
+    <= tr(W_R)/2. Directional vel/pos anisotropy is not available this way (M3-C31).'
 - id: M3-C34
-  statement: 'Full vel/pos anisotropy with residual lifting (n = 136): with W_vp the inverse of GTSAM''s (vel,pos) 6x6 preintMeasCov
-    block, the lifted cost [rho_v; rho_p]^T W_vp [rho_v; rho_p] matches GTSAM weighted by the same W_vp on [r_vel; r_pos]
-    with max |ratio - 1| <= 0.05*eps for eps in {1e-2, 1e-3, 1e-4} at bbar = b_true, whereas applying W_vp to the world-frame
-    [r_v; r_p] leaves max |ratio - 1| >= 1e-3 at eps = 1e-4.'
+  statement: 'Frame of the anisotropic lifting (noise-model independent): with the synthetic weight W_vp = 1e6 blkdiag(diag(1,2,5),
+    diag(1,2,5)) on [rho_v; rho_p] (n = 136, rotation weight tau_R iso), the lifted cost matches GTSAM weighted by the same
+    W_vp on [r_vel; r_pos] with max |ratio - 1| <= 1.0*eps for eps in {1e-2, 1e-3, 1e-4} (30 perturbations, bbar = b_true),
+    whereas W_vp applied to the world-frame [r_v; r_p] gives max |ratio - 1| >= 1e-2 at every one of these eps.'
   source: DERIVED
   kind: DERIVED
-  test_hint: 30 perturbations per eps; measured 1.0e-4, 5.2e-6, 4.2e-7 (body frame) vs 1.4e-2 (world frame) at eps 1e-4.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Rotation-translation cross-covariance would need a further rho_R lifting (not built).'
+  test_hint: 'followup_checks.py (8): body frame 2.6e-3, 1.7e-4, 2.2e-5 (about 0.2 eps: the frames of M^T r and of GTSAM''s
+    NavState logmap at X_j differ at O(eps)); world frame max 6.2e-2, 9.0e-2, 6.6e-2, not shrinking. With Sigma-derived W_vp
+    the world-frame contrast is noise-model dependent (1.4e-2 under M3-C39''s model) and is not claimed.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'
 - id: M3-C35
   statement: 'AutoTight-style cross-check on the 67-entry edge-0 sub-vector (2278 monomials, 6000 i.i.d. lifted samples):
     the null space of the sample matrix has dimension 263; the hand-derived families restricted to the sub-vector span 236
@@ -351,38 +463,30 @@ claims:
     it to 1e-10.'
   source: 'DERIVED (method: AutoTight as cited by Rai et al. Sec. V)'
   kind: DERIVED
-  test_hint: SVD of the sample matrix with relative cut 1e-10 (gap 6.0e-5 -> 1.4e-13); projection of each hand form onto the
-    null space.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar, bbar = 0. Basis-dependent: identities outside the 2278 monomials are not seen.'
-- id: M3-C36
-  statement: The 27 null-space directions on the edge-0 sub-vector not spanned by the hand-derived families contain at least
-    one quadratic identity that, added to the full redundant set, strictly lowers the SDP relaxation's rank or optimality
-    gap on the 3-KF instance.
-  source: OPEN-HYPOTHESIS
-  kind: OPEN-HYPOTHESIS
-  test_hint: 'Settle in M4: solve the Shor relaxation (Clarabel) with all M3 families, then with the 27 discovered directions
-    appended (per edge); compare numerical rank (eigenvalues > 1e-6 lambda_max) and the gap eta of Rai Sec. VII-A.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Noise level to be stated by M4.'
-- id: M3-C37
-  statement: 'The Shor SDP relaxation of the base M3 QCQP with all primary and redundant families of this document is tight
-    on the noise-free 3-KF instance at bbar = b_true: rank-one by sigma_1/sigma_2 >= 1e5 and relative gap eta <= 1e-4.'
-  source: OPEN-HYPOTHESIS
-  kind: OPEN-HYPOTHESIS
-  test_hint: Settle in M4 with Clarabel (not SCS); also report the Rai Table I-only ablation. A failure is a finding, not
-    a bug.
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar. Certifies only the frozen-weight Cayley surrogate (docs/03 Sec. (f)).'
-- id: M3-C38
-  statement: Adding the anisotropic residual liftings (n = 136, P4 + RR) does not destroy tightness of the relaxation on the
-    same instance.
-  source: OPEN-HYPOTHESIS
-  kind: OPEN-HYPOTHESIS
-  test_hint: 'Settle in M4: same solve and criteria as the base case with W_vp from preintMeasCov; compare rank and gap.'
-  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
-    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
-    at nominal bbar.'
+  test_hint: 'Sampler (numpy default_rng(4)): R_k = Exp(2 N(0,I3)), v_k, p_k ~ N(0,I3), b_k ~ 0.3 N(0,I6), s = 1. SVD of the
+    sample matrix; place the cut at the largest relative singular-value gap (with this sampler 6.0e-5 -> 1.4e-13, so a relative
+    cut 1e-10 works; other samplers move the gap, e.g. smaller b scales shrink it) and use a projection tolerance a decade
+    above the gap''s lower edge. Expect null dimension 263 and hand-derived span 236.'
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]), bbar = 0. Basis-dependent:
+    identities outside the 2278 monomials are not seen.'
+- id: M3-C39
+  statement: 'Instance fingerprint for the noise model of the domain string: both edges have Dt = 0.5 (0.5000000000000003);
+    edge 0 tau_R = 6.9204e7, tau_v = 4.8049e5, tau_p = 5.8906e6; edge 1 tau_R = 6.9204e7, tau_v = 4.8167e5, tau_p = 5.8972e6;
+    Lambda_rw diagonal = 5.5402e9 (gyro) and 2.2222e5 (accel).'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Build the PIM per edge at bbar = 0 with the stated params; taus = 3 / trace of the preintMeasCov() blocks; compare
+    to 4 significant figures. If this fails the instance differs and the weight-dependent claims (C26, C29, C33) are not comparable.
+  domain: 'M3 instance (see M3-C39): M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, no bias prior. GTSAM 4.3.0 PreintegrationParams.MakeSharedU(9.81)
+    with gyroscopeCovariance = (1.7e-4)^2 I3 [(rad/s)^2/Hz], accelerometerCovariance = (2.0e-3)^2 I3 [(m/s^2)^2/Hz], integrationCovariance
+    = 1e-10 I3, all isotropic, all other params default; PreintegratedImuMeasurementsG at nominal bbar; measurements noise-free.
+    Weights: KF0 prior 1/2 w_R ||R_0 - Rbar_0||_F^2 + w_v|v_0 - vbar_0|^2 + w_p|p_0 - pbar_0|^2 with w = 1/sigma^2, sigma
+    = 1e-3 (so the chordal coefficient is 1/(2 sigma^2)); GNSS on KF1, KF2 w_g = 1/0.05^2; random walk Lambda_rw = diag(I3/(sigma_bg^2
+    Dt), I3/(sigma_ba^2 Dt)), sigma_bg = 1.9e-5, sigma_ba = 3.0e-3 read as continuous-time densities, Dt = edge duration 0.5;
+    IMU taus by Rai Eq. (23) on preintMeasCov() (NavState blocks rot [0:3], pos [3:6], vel [6:9]).'

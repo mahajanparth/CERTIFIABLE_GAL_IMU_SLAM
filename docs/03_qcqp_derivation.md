@@ -50,7 +50,13 @@ piecewise-constant body twist, 400 Hz, `T = 0.5 s` per edge, `g_W = [0,0,-9.81]`
 | bias random walk | `b_1 - b_0`, `b_2 - b_1`, `Lambda_rw = diag(sigma_bg^-2 Dt^-1 I, sigma_ba^-2 Dt^-1 I)` (Rai, text after Eq. (39)), `sigma_bg = 1.9e-5`, `sigma_ba = 3.0e-3` |
 | bias prior | **none** (pre-flight F9) |
 | preintegration | `gtsam.PreintegratedImuMeasurementsG` at nominal `bbar` (two settings used: `bbar = b_true` and `bbar = 0`) |
+| IMU noise model (weights only; data are noise-free) | `PreintegrationParams.MakeSharedU(9.81)`, `gyroscopeCovariance = (1.7e-4)^2 I3` (rad/s)^2/Hz, `accelerometerCovariance = (2.0e-3)^2 I3` (m/s^2)^2/Hz, `integrationCovariance = 1e-10 I3`, all isotropic, other params default |
+| weight conventions | prior `1/2 w_R ||R_0 - Rbar_0||_F^2` (chordal coefficient `1/(2 sigma^2)`), `w_v|.|^2`, `w_p|.|^2`, `w = 1/sigma^2`; GNSS `1/0.05^2`; `Lambda_rw` with densities read as continuous-time and `Dt_b = 0.5` (edge duration) |
 
+**The weights, and every claim that compares weighted costs, depend on this noise model.** An
+implementer using M2's densities (`sigma_a = 1e-2`, `sigma_int = 1e-6`) obtained different
+aggregate numbers; the claims were restated (follow-up below) so that weight-free statements carry
+the rates and the weight-dependent ones name this model (claim M3-C39 is its fingerprint).
 `Dt = 0.5000000000000003` per edge (`instance.py`). Isotropic precisions by Rai Eq. (23) applied to
 GTSAM's `preintMeasCov()`: edge 0 `tau_R = 6.92e7, tau_v = 4.80e5, tau_p = 5.89e6`; edge 1
 `6.92e7, 4.82e5, 5.90e6` (`instance.py`).
@@ -126,8 +132,20 @@ lifting are needed. Note also Rai's `W^v` uses `R_i`, ours uses `M = R_i dRbar`.
 **Structure of `J` (measured, `jacobian_structure.py`).** `J[0:3,3:6] = 0`, `J[9,:] = 0`, and
 **`J[3:6,3:6] = J[0:3,0:3]`** to FD noise (`<= 2.7e-10` vs `|J_R| ~ 0.4–0.5`, on the fixture and
 on five random time-varying streams). This follows the recursion GTSAM doc Eq. (35) given
-`J^{omega,a} = 0`, if the `(nu,nu)` and `(omega,omega)` blocks of the `Gal(3)` right Jacobian
-coincide; that last step is measured, not proven here.
+`J^{omega,a} = 0`. **Proof.** By GTSAM doc Eq. (35), `J_{k+1} = Ad_{V_k^-1} J_k - J_R(x_k) h E`,
+`J_i = 0`. (1) From Eq. (9) the `omega` row of `Ad` is `[R, 0, 0, 0]` and the `nu` row is
+`[v^ R, R, 0, 0]`; for `Ad_{V^-1}` both diagonal blocks are `R_V^T`. (2) In the hat bracket
+`[x, y]` the `omega` component is `omega_x x omega_y` and the `nu` component is
+`omega_x x nu_y - omega_y x nu_x`, so `ad_x` preserves the flag `span(nu,rho,alpha) ⊃
+span(rho,alpha)`, with induced maps `omega_x^` on both quotients. Every power series in `ad_x`
+therefore has equal `(omega,omega)` and `(nu,nu)` blocks and vanishing `(omega, ·≠omega)` and
+`(nu, rho|alpha)` blocks; in particular the right Jacobian `J_R(x) = sum_n (-ad_x)^n/(n+1)!` (the
+standard series; checked against a finite-difference right Jacobian of `Gal3.Expmap` to `5.2e-10`
+over 200 random `x`, block differences exactly `0`, `followup_checks.py` (9)). (3) `E` (Eq. (20))
+sends gyro to `omega` and accel to `nu`. Induction: `J^{omega,a}_{k+1} = R^T J^{omega,a}_k - 0 = 0`;
+then `J^{nu,a}_{k+1} = R^T J^{nu,a}_k + (v^R)^T-term · J^{omega,a}_k - h [J_R]_{nu nu} =
+R^T J^{nu,a}_k - h [J_R]_{nu nu}` and `J^{omega,g}_{k+1} = R^T J^{omega,g}_k - h [J_R]_{omega omega}`:
+the same recursion from the same start, hence equal for all `k`. ∎
 
 ### b.2 Index map (0-based, half-open), `n = 124`
 
@@ -228,7 +246,7 @@ Eq. (21): "we have been developing a tool to automatically find such constraints
 
 1. Choose a sub-vector `z_S` (here the 67 entries touched by edge 0: `R_0, v_0, p_0, R_1, v_1,
    p_1, b_0`, the 30 edge-0 liftings, `s`).
-2. Draw `N` i.i.d. feasible points by sampling the *state* (`R_k ~ Exp(N(0,4I))` so all of
+2. Draw `N` i.i.d. feasible points (`numpy default_rng(4)`) by sampling the *state* (`R_k ~ Exp(N(0,4I))` so all of
    `SO(3)` including near-`pi` is covered; `v, p ~ N(0,I)`; `b ~ N(0, 0.09 I)`) and computing
    the liftings from their definitions.
 3. Evaluate all `m(m+1)/2` monomials `z_a z_b` (`a <= b`); the null space of the `N x 2278`
@@ -240,7 +258,8 @@ Result (`autotight_nullspace.py`, `N = 6000`): sample rank `2015`, null space **
 (singular-value gap `6.0e-5 -> 1.4e-13`). Hand-derived span by stage: primary `60`; + Rai Table I
 analogues `92`; + RG `106`; + RL `136`; + RH `226`; + RS `236`. Every hand-derived form lies in the
 null space (outside-component `<= 1.3e-11`). **27 null-space directions remain unidentified**; 18
-of them involve only lifted, bias and `s` entries (no rotation entries), and none are in the pure
+of them involve only lifted, bias and `s` entries. The singular-value gap depends on the sampler
+(an implementer with a different sampler saw a gap at `1.4e-8`); place the cut at the largest gap (no rotation entries), and none are in the pure
 lifted×lifted / bias×bias class (where the Gram identities account for all 30). They are not
 included in the families above. Sampling only `s = +1` is sufficient because every form is even
 under `z -> -z`.
@@ -282,10 +301,16 @@ J(z) = sum_e [ 1/2 tau_R ||r_R||_F^2 + tau_v ||r_v||^2 + tau_p ||r_p||^2 ]      
     `-5.6e-8` from cancellation, since `max|Q| = 1.1e10`). Near truth `max|cost/J_gtsam - 1|` over
     50 perturbations: `1.2e-4, 3.7e-6, 2.5e-7` at `eps = 1e-2, 1e-3, 1e-4`.
   - `bbar = 0` (bias correction active, `|b_true - bbar| = 0.117`): at truth the two costs are
-    `3.2968e-3` vs `3.3157e-3` (rel. diff `5.7e-3`); the relative difference halves with the bias
-    offset (`5.72e-3, 2.94e-3, 1.48e-3, 7.49e-4` for offsets `0.117, 0.0585, 0.0292, 0.0146`). Its
-    sources are `Cay` vs `Exp` (`max|Ubar(Cay(x) - Exp(x))|` scales by `8.0` per halving, i.e.
-    cubically) and the `(I - x^/2)` metric distortion; both vanish as `bbar -> b`.
+    `3.2968e-3` vs `3.3157e-3` (rel. diff `5.7e-3`, under this noise model). **The total is a
+    weight-dependent mix and no rate is claimed for it.** Split per component (weight-free:
+    `1/2||r_R||_F^2/|r_rot|^2`, `|r_v|^2/|r_vel|^2`, `|r_p|^2/|r_pos|^2`), the deviations at offsets
+    `0.117 -> 0.0146` are rot `2.01e-2 -> 3.1e-4` (factor `0.250` per halving: **quadratic**, since
+    `(I - Om/2)(I - Om/2)^T = I - Om^2/4` has no linear term), vel `1.22e-2 -> 1.54e-3` and pos
+    `2.10e-3 -> 2.66e-4` (factor `0.50`: **linear**, from the `O(|x|)` mixing of `eps_omega` into the
+    translational columns by `(I - x^/2)` and from `Cay` vs `Exp`, whose
+    `max|Ubar(Cay(x) - Exp(x))|` scales by `8.0` per halving) (`followup_checks.py` (7)). An
+    implementer with different weights saw the components partly cancel (total ratios `3.09, 0.79,
+    0.59`), which is why only the per-component rates are claimed.
   The two costs are therefore **not equal** off truth; they agree to first order in the state error
   at a model-consistent `bbar`. That is the precise sense of "the cost is GTSAM's factor".
 
@@ -333,8 +358,13 @@ and redundant RR; then `[rho_v; rho_p]^T W_vp [rho_v; rho_p]` is quadratic for a
 `W_vp >= 0`. Measured (`isotropy_fit.py` (c)): `z^T Q z` equals the direct anisotropic cost
 (`7.1e-16`); with `W_vp` the inverse of GTSAM's (vel,pos) marginal block, agreement with GTSAM
 weighted by the same `W_vp` is `1.0e-4, 5.2e-6, 4.2e-7` at `eps = 1e-2, 1e-3, 1e-4`
-(`bbar = b_true`), while the same `W_vp` applied to the world-frame `r` stalls at `1.4e-2` — the
-frame is right only with `M^T`. Rotation–translation cross-correlations would additionally need
+(`bbar = b_true`), while the same `W_vp` applied to the world-frame `r` stalls at `1.4e-2` under
+this noise model (an implementer with other densities saw `2.6e-6`: with a nearly isotropic `Sigma`
+the frame barely matters, so this contrast is **not** claimed). The noise-independent test uses a
+synthetic `W_vp = 1e6 blkdiag(diag(1,2,5), diag(1,2,5))`: body frame `2.6e-3, 1.7e-4, 2.2e-5` at
+`eps = 1e-2, 1e-3, 1e-4` (about `0.2 eps`, the `O(eps)` frame offset between `M^T r` and GTSAM's
+NavState logmap at `X_j`), world frame `6.2e-2, 9.0e-2, 6.6e-2`, not shrinking
+(`followup_checks.py` (8)). The frame is right only with `M^T`. Rotation–translation cross-correlations would additionally need
 `rho_R = M^T r_R` (9 per edge, `n = 154`); that extension is described, **not built or checked**.
 
 **Answer.** Yes, the direct-product Galilean formulation admits an anisotropic weight with a
@@ -359,7 +389,9 @@ violated (smallest family-max over 20 draws `3.3e-6`, P0).
 `|a| = |b||c|` cyclically, so the product of norms is 0 or 1, and a zero column forces `R = 0`);
 P1 excludes `R = 0`; with `M` orthogonal, P3 determines each lifting uniquely
 (`Y = M [w]_x s`, ...). Numerically (`spurious.py`, trust-region least squares onto the primary
-constraints from 200 random `z_0`): 200/200 converged, every solution equals `s z(state(z))` to
+constraints, `scipy least_squares(method='trf')`, analytic Jacobian, `xtol = ftol = gtol = 1e-15`,
+`max_nfev = 2000`, from 200 starts `z_0 ~ N(0, I_124)`, `default_rng(7)`): 200/200 converged
+(the claim asks only `>= 150/200`, since convergence depends on the solver build), every solution equals `s z(state(z))` to
 `3.2e-13`, `det R_k in [1 - 3e-16, 1 + 4e-16]`. `misc_checks.py` (5): P2 alone from 300 random
 starts gives 238 `SO(3)` points, 62 zero matrices, 0 others.
 
@@ -407,7 +439,7 @@ estimation problem.
 | --- | --- |
 | **QCQP-representable** | **Yes, by construction**: affine residuals in `z`, `Q = sum F^T W F`, every constraint `z^T A_k z = b_k`; feasible set = `{+- z(state)}` (§e). |
 | **Exact physical dynamics** | **No.** `Ubar` is exact ZOH at `bbar` (M2 §3.6), but the bias dependence is first order and the retraction is `Cay`, not `Exp`; weights are frozen and isotropised. |
-| **Exact (tight) convex relaxation** | **Unknown.** Nothing has been solved. OPEN-HYPOTHESIS for M4. |
+| **Exact (tight) convex relaxation** | **Unknown, and not decidable in M3** (see "Hypotheses handed to M4"). |
 | **Certified global optimum** | **Not claimed.** Would need, in M4, a Clarabel (not SCS) solve with rank-1 by Barfoot's criterion (log singular-value ratio `>= 5`, Barfoot Fig. 2 caption) and a small duality gap, and would then apply to the surrogate of §f only. |
 
 ---
@@ -433,6 +465,28 @@ estimation problem.
 
 ---
 
+## Hypotheses handed to M4 (removed from the M3 claims)
+
+The former M3-C36 (the 27 unidentified AutoTight directions improve the relaxation), M3-C37 (the
+base relaxation is tight on the noise-free instance, rank one and `eta <= 1e-4`) and M3-C38 (the
+anisotropic lifting keeps it tight) **cannot be decided in M3** and are withdrawn from
+`claims/M3.yaml`; their ids are not reused. The implementer's attempt showed why: Clarabel reported
+"optimal" with primal `646.5` / dual `630.6` while ground truth is feasible at cost `8.7e-23` —
+weak duality violated, so the solve is invalid (`max|Q| ~ 1.1e10`; tighter tolerances gave
+`optimal_inaccurate`) — and on noise-free data `eta`'s denominator is `~1e-22`. These numbers are
+the implementer's, not reproduced here. They go to M4 as hypotheses, to be stated there with:
+
+1. **Solver-validity preconditions**, checked before any tightness verdict: the SDP dual value
+   `<=` the cost of a known feasible point (ground truth or a local solution); relative primal and
+   dual residuals and complementarity below a stated threshold; the status is "optimal", not
+   "optimal_inaccurate".
+2. **The scaling used**, stated explicitly (e.g. `Q / max|Q|` or a diagonal congruence `D Q D`,
+   `D A_k D` with the matching change of variables), since `max|Q| = 1.1e10` here.
+3. **A noisy instance** with a named seed and stated noise levels, so that the optimum cost is
+   bounded away from zero and `eta = |x^T Q x - p*| / |x^T Q x|` is meaningful.
+4. Rank-one by Barfoot's criterion (log singular-value ratio `>= 5`, Barfoot Fig. 2 caption), with
+   Clarabel, and the Rai Table I-only ablation alongside the full set.
+
 ## Reproduce
 
 ```bash
@@ -445,4 +499,5 @@ $PY -m experiments.m3_scratch.isotropy_fit         # isotropy (a)-(d)
 $PY -m experiments.m3_scratch.spurious             # spurious points, reverse direction (~5 min)
 $PY -m experiments.m3_scratch.autotight_nullspace  # AutoTight-style cross-check
 $PY -m experiments.m3_scratch.misc_checks          # per-claim small checks
+$PY -m experiments.m3_scratch.followup_checks      # per-component rates, synthetic-W frame test, J_R blocks, fingerprint
 ```
