@@ -1,0 +1,46 @@
+{
+  "_comment": "Provenance of every cached source the M0 claim suite reads. 'bytes' and 'sha256' are of the DECOMPRESSED document; 'utf8_chars' is its length as decoded text. tests/test_conventions.py::test_fixture_provenance re-measures all three. The rai figure '456 935 B' in docs/verification/m0-literature-matrix.md is the utf8_chars count, not the byte size: the fixture is 462407 bytes, and a fresh fetch of the URL at 2026-10-13T00:17Z was byte-identical to it (same sha256).",
+  "rai_2609.38048v1.html.gz": {
+    "url": "https://arxiv.org/html/2609.38048v1",
+    "retrieved": "2026-10-12; re-fetched 2026-10-13T00:17Z, byte-identical",
+    "bytes": 462407,
+    "utf8_chars": 456935,
+    "sha256": "2a66413a4ae86833631462321498f5e9abce82af4a7c769ed40ea6597cc4c66a"
+  },
+  "delama_2411.05548v8.html.gz": {
+    "url": "https://arxiv.org/html/2411.05548v8",
+    "retrieved": "2026-10-12",
+    "bytes": 641374,
+    "utf8_chars": 630251,
+    "sha256": "efc2c26da28452f2ecd64c9edbf85a4ece17b2812b66956495fdb7134766af7a"
+  },
+  "barfoot_2308.12418v2.html.gz": {
+    "url": "https://arxiv.org/html/2308.12418v2",
+    "retrieved": "2026-10-12",
+    "bytes": 650414,
+    "utf8_chars": 643088,
+    "sha256": "63ec40f48beff1bd268f6813e7ab5e7145f0fa18912dc9e2f0c3c0cf237bfa90"
+  },
+  "gtsam_galileanimufactor.html.gz": {
+    "url": "https://borglab.github.io/gtsam/galileanimufactor/",
+    "retrieved": "2026-10-12",
+    "bytes": 1692613,
+    "utf8_chars": 1688785,
+    "sha256": "eef019ebd6a39ff3b80fe9c5ea373021ad92f0dbd1f2b56ad5a5a00e3ce12235"
+  },
+  "barfoot_2308.12418v2_pdf_p4_cayley.txt": {
+    "url": "https://arxiv.org/pdf/2308.12418v2",
+    "retrieved": "2026-10-13T00:17Z",
+    "note": "text excerpt (page 4, left column) of the PDF; the PDF itself is not committed. PDF sha256 7aca0ca9b34cb8b3d2482935d6ef9eab008eeb30daa323679c2287b65be5a02c, 3536041 bytes",
+    "bytes": 3562,
+    "utf8_chars": 3471,
+    "sha256": "a1e7a00dbd29cb8e8264f4a1e7576e3943657ce504067795765212d3f9949c50"
+  },
+  "crossref_10.1177_02783649241269337.json": {
+    "url": "https://api.crossref.org/works/10.1177/02783649241269337",
+    "retrieved": "2026-10-13T00:17Z",
+    "bytes": 20759,
+    "utf8_chars": 20759,
+    "sha256": "86c435a73a7dc0c2b13523316b34eb6d2a6f7be78d5545af17472d696f9f6ddb"
+  }
+}

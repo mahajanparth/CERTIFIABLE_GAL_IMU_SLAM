@@ -1,0 +1,68 @@
+# Verbatim text excerpt of a primary source -- NOT the PDF itself (references/*.pdf is
+# gitignored on purpose; only this extracted text is committed).
+# source_url:      https://arxiv.org/pdf/2308.12418v2
+# retrieved:       2026-10-12 (America/New_York); 2026-10-13T00:17Z
+# pdf_bytes:       3536041
+# pdf_sha256:      7aca0ca9b34cb8b3d2482935d6ef9eab008eeb30daa323679c2287b65be5a02c
+# pdf_info:        22 pages, pdfTeX-1.40.25, CreationDate Mon Jun 3 20:06:57 2024 EDT
+# extracted_with:  pdftotext 22.02.0: pdftotext -layout -f 4 -l 4 -x 0 -y 0 -W 302 -H 794
+#                  (page 4, left column only), output lines 36-89 kept unchanged below.
+# why:             the arXiv HTML render (tests/fixtures/barfoot_2308.12418v2.html.gz) prints the
+#                  tags (14b), (15b), (16b) but drops (14a), (15a), (16a): its rows S2.E14.x1,
+#                  S2.E15.x1, S2.E16.x1 are emitted as unnumbered. The PDF prints them.
+# ---- excerpt begins ----
+2003), SE(3) (Barfoot et al. 2022), and Ad(SE(3))
+(Bauchau and Choi 2003; Bauchau 2011).
+   In particular, it is well known that for the Cayley-Gibbs-
+Rodrigues parameterization of rotation we can write the
+rotation matrix in terms of the Cayley map, cay(A) =
+          −1
+ I − 21 A       I + 12 A , according to (Borri et al. 2000;
+                         
+
+Bauchau and Trainelli 2003):
+                                                −1 
+                                                 
+                                           1 1
+C(ϕ)           =   cay(ϕ∧ ) =           I − ϕ∧
+                                        I + ϕ∧ ,
+                                           2 2
+                                                  (14a)
+                      −1  ∨                 −1 ∨
+                                               
+          ϕ    =   cay (C) = 2(C − I)(C + I)     ,(14b)
+
+for some ϕ = 2 tan φ2 a ∈ R3 with φ the rotation angle and
+a the unit axis. Borri et al. (2000) and later Selig (2007)
+demonstrated that the Cayley map can also be used to map
+pose vectors to SE(3) according to
+                                  −1 
+                                                
+                                           11
+ T(ξ)          =   cay(ξ ∧ ) =          I − ξ∧
+                                        I + ξ∧ ,
+                                           22
+                                                    (15a)
+                      −1  ∨                  −1 ∨
+                                               
+           ξ   =   cay (T) = 2(T − I)(T + I)      , (15b)
+
+for some ξ ∈ R6 . Although we will not need it, the Cayley
+map can be used to map pose vectors to Ad(SE(3))
+according to
+                        −1        
+                     1 ⋏   ⋏     1 ⋏
+T (ξ) = cay(ξ ) = I − ξ        I+ ξ    ,
+                     2           2
+                                                                       (16a)
+                                                                 ⋎
+          ξ    = cay−1 (T )⋎ = 2(T − I)(T + I)−1                      . (16b)
+
+However, Selig (2007) demonstrates that starting from
+the same ξ and applying (15) and (16) does not result
+in an equivalent transformation, i.e., T (ξ) ̸= Ad(T(ξ));
+the commutative property for adjoints does not hold.
+Nevertheless, we shall not require this property here.
+   Figure 1 provides examples comparing two rotational
+distributions derived from the exponential and Cayley maps
+# ---- excerpt ends ----
