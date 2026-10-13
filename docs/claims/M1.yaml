@@ -8,7 +8,8 @@ conventions:
     (rot, vel, pos, time).
   bias: b = [b_g ; b_a] (gyro first) throughout this project.
   gravity: g in the world frame; all claims hold for arbitrary g unless they name a numeric value. Tests
-    use g = (0, 0, -9.81).
+    use g = (0, 0, -9.81) and, in every gravity-facing claim test, also random g (uniform random direction,
+    |g| uniform in (2, 20)), except M1-C53, whose domain fixes gtsam's MakeSharedU gravity.
   rng: 'All sample counts are independent draws from numpy.random.default_rng with a fixed, recorded seed.
     Random rotations: Exp_SO3 of N(0, I3) unless a |phi| range is stated. Random v, p ~ N(0, I3) scaled
     as stated; random t ~ N(0,1).'
@@ -29,10 +30,12 @@ claims:
     in SO(3) (P_R^T P_R = I, det = +1), P[3,0:3] = 0, P[4,0:4] = 0, P[3,3] = 1, P[4,4] = 1.'
   source: DERIVED
   kind: DERIVED
-  test_hint: 2000 random pairs as in M1-C01. max over all structural residuals <= 1e-12 (measured 2.2e-15
-    at the test seed). The residual is shown to see each defect alone (reflection block with det = -1, a
-    non-orthogonal block, nonzero row-3 / row-4 entries, non-unit diagonal entries), each flagged >= 0.2
-    (mutation harness structural_residual_no_det).
+  test_hint: '2000 random pairs as in M1-C01. max over all structural residuals <= 1e-12 (measured
+    2.2e-15 at the test seed). The residual is shown to see each defect alone (reflection block with det
+    = -1, a non-orthogonal block, EACH of the 7 structural zeros X[3,0..2], X[4,0..3] probed
+    individually, non-unit diagonal entries), each flagged >= 0.2 (mutation harness
+    structural_residual_no_det). Probing one entry per row let a residual reading X[3,0:2] pass
+    (mutation harness structural_residual_row3_short, pass-6 Q25: row3[2] flagged 0.0).'
   domain: Total.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -238,13 +241,19 @@ claims:
   statement: log(exp(xi)) = xi for every xi in gal(3) with ||phi|| < pi.
   source: DERIVED
   kind: DERIVED
-  test_hint: '2000 random xi with |phi| uniform in (0.05, pi - 1e-3), u, w ~ N(0,I3), alpha ~ N(0,1). max abs
-    err <= 1e-9 (measured 5.6e-15). Also assert it FAILS (returns the other branch) for |phi| > pi, e.g. |phi|
-    = 3.5 returns |phi''| = 2*pi - 3.5 = 2.783. Rotation block near the chart edge, where so3_log must use
-    a diagonal Shepperd branch: 20000 R = Exp(phi) built by scipy with tr(R) uniform in (-0.99, -0.9] (theta
-    in (2.69, 3.04), seed 20241012+2200), max |so3_log(R) - phi| <= 2.5e-15 (measured 8.9e-16; <= 1.3e-15 on
-    four other seeds); taking the trace branch for tr > -0.99 gives 5.3e-15 (mutation harness so3_log_trace_branch_below_0,
-    pass-3 V44). Equivalent mutant (proof in the test): the theta ~ 0 return 2 qv / qw -> 2 qv (pass-3 V02).'
+  test_hint: '2000 random xi with |phi| uniform in (0.05, pi - 1e-3), u, w ~ N(0,I3), alpha ~ N(0,1).
+    max abs err <= 1e-9 (measured 5.6e-15). Also assert it FAILS (returns the other branch) for |phi| >
+    pi, e.g. |phi| = 3.5 returns |phi''| = 2*pi - 3.5 = 2.783. Rotation block near the chart edge, where
+    so3_log must use a diagonal Shepperd branch: 20000 R = Exp(phi) built by scipy with tr(R) uniform in
+    (-0.99, -0.9] (theta in (2.69, 3.04), seed 20241012+2200), max |so3_log(R) - phi| <= 2.5e-15
+    (measured 8.9e-16; <= 1.3e-15 on four other seeds); taking the trace branch for tr > -0.99 gives
+    5.3e-15 (mutation harness so3_log_trace_branch_below_0, pass-3 V44). Equivalent mutant (proof in the
+    test): the theta ~ 0 return 2 qv / qw -> 2 qv (pass-3 V02). SMALL angles: 20000 R = Exp(phi) by
+    scipy with theta log-uniform in [1e-10, 1e-2] (seed 20241012+2201), max |so3_log(R) - phi| <= 1e-15
+    (measured 3.5e-18); moving the n -> 0 branch to n < 1e-4 gives 6.5e-13 (mutation harness
+    so3_log_small_branch_1e-4, pass-6 Q07). Pass-6 equivalents Q08, Q09, Q12 with measured effects in
+    the test; Q09 (1.1e-15) and Q12 (1.6e-15) exceed 1/10 of the 2.5e-15 band bound and are marked OPEN
+    there.'
   domain: '||phi|| < pi. At ||phi|| = pi the SO(3) log is two-valued; above pi, log returns the wrapped
     branch.'
   verdict: CONFIRMED
@@ -307,13 +316,14 @@ claims:
     gal(3) -> Gal(3) and its sole denominator never vanishes.
   source: DERIVED; pre-flight F8
   kind: DERIVED
-  test_hint: '2000 random xi, including |alpha| up to ~3 and large |u|, |w| (seed 20241012+26). Assert the
-    MATRIX cay_denominator(xi) = I5 - xi^/2 entrywise, with xi^ written by hand in the test (measured 0.0)
-    -- I5 + xi^/2 has the same determinant 1 + |phi|^2/4, so a determinant-only check cannot see that sign
-    (mutation harness: cay_denominator_minus->plus). max |det - (1 + |phi|^2/4)| <= 1e-10 (measured
-    8.9e-16). Also 20000 Cayley evaluations with nonzero alpha, |phi| up to 50 and |u|, |w| ~ 1e3 (seed
-    20241012+2600): finite, equal to the defining (I5 - xi^/2)^-1 (I5 + xi^/2) (rel 2.4e-15), and (I5 -
-    xi^/2) Cay(xi) = I5 + xi^/2 (rel 5.5e-15).'
+  test_hint: '2000 random xi, including |alpha| up to ~3 and large |u|, |w| (seed 20241012+26). Assert
+    the MATRIX cay_denominator(xi) = I5 - xi^/2 entrywise, with xi^ written by hand in the test
+    (measured 0.0) -- I5 + xi^/2 has the same determinant 1 + |phi|^2/4, so a determinant-only check
+    cannot see that sign (mutation harness: cay_denominator_minus->plus). max |det - (1 + |phi|^2/4)| <=
+    1e-10 (measured 8.9e-16). Also 20000 Cayley evaluations with nonzero alpha, |phi| up to 50 and |u|,
+    |w| ~ 1e3 (seed 20241012+2600): finite, equal to the defining (I5 - xi^/2)^-1 (I5 + xi^/2) (rel
+    2.4e-15), and (I5 - xi^/2) Cay(xi) = I5 + xi^/2 (rel 5.5e-15). (A per-draw d > 0 assertion was
+    deleted in pass 6: the 1e-10 determinant bound implies it.)'
   domain: Total. The determinant is independent of u, w, alpha -- only phi enters.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -361,24 +371,27 @@ claims:
   source: 'DERIVED (first two and the alpha=0 case of the third: pre-flight F3; the (alpha/2) u coupling
     is new here)'
   kind: DERIVED
-  test_hint: '2000 random xi with alpha != 0: substitute (Re, ve, pe) = Cay(xi) blocks and assert all three
-    residuals <= 1e-10 (measured 8.9e-16). The returned symbolic object is pinned before its content: all 15
-    expressions are sympy Expr (not Poly; mutation harness cayley_symbolic_returns_poly); the 25 symbols, in
-    the documented order (phi0..2, u0..2, w0..2, alpha, Re row-major, ve0..2, pe0..2), print as those names
-    (cayley_symbolic_Re_column_major, pass-4 N06) AND each IS sympy.Symbol(name, real=True) -- plain Symbol
-    class, same .name, real assumption -- so a same-named fresh/positive alpha (cayley_symbolic_alpha_fresh_symbol
-    N01, cayley_symbolic_alpha_positive P10: sp.solve would drop every alpha < 0 root), all symbols non-real
-    (cayley_symbolic_not_real P13), a Symbol subclass (cayley_symbolic_alpha_subclass P03) or a symbol that
-    prints ''alpha'' but is named ''beta'' (cayley_symbolic_alpha_printer_spoof P16) all fail that pin; the
-    25 are distinct; every expression''s free symbols lie among them (cayley_symbolic_expr_foreign_alpha).
-    Each of the 15 has sympy total_degree <= 2 in those symbols (measured max exactly 2), and its Poly domain
-    is ZZ or QQ (measured QQ for all 15): a Float coefficient (cayley_symbolic_float_half P11, domain RR) or
-    an opaque constant h() = 0.5 (cayley_symbolic_opaque_half P08, domain QQ[h()]) fails. CONTENT of the 15
-    symbolic expressions (lambdified, fed by symbol name): at 300 true Cayley points from a test-local 5x5
-    solve (I5 - A/2)^-1 (I5 + A/2), A = xi^ by hand, all 15 vanish <= 1e-12 (measured 1.3e-15); at 300 perturbed/arbitrary
-    points (residual >= 1e-2 by input guard, measured min 0.127) the symbolic AND the numeric cayley_constraint_residuals
-    equal a hand-written residual to <= 1e-12 relative (measured 6.7e-16 / 0.0). Mutation harness: cayley_symbolic_E3_no_alpha_u
-    (2.20), cayley_symbolic_S_plus (7.15).'
+  test_hint: '2000 random xi with alpha != 0: substitute (Re, ve, pe) = Cay(xi) blocks and assert all
+    three residuals <= 1e-10 (measured 8.9e-16). The returned symbolic object is pinned before its
+    content: all 15 expressions are sympy Expr (not Poly; mutation harness
+    cayley_symbolic_returns_poly); the 25 symbols, in the documented order (phi0..2, u0..2, w0..2,
+    alpha, Re row-major, ve0..2, pe0..2), print as those names (cayley_symbolic_Re_column_major, pass-4
+    N06) AND each IS sympy.Symbol(name, real=True) -- plain Symbol class, same .name, real assumption --
+    so a same-named fresh/positive alpha (cayley_symbolic_alpha_fresh_symbol N01,
+    cayley_symbolic_alpha_positive P10: sp.solve would drop every alpha < 0 root), all symbols non-real
+    (cayley_symbolic_not_real P13), a Symbol subclass (cayley_symbolic_alpha_subclass P03) or a symbol
+    that prints ''alpha'' but is named ''beta'' (cayley_symbolic_alpha_printer_spoof P16) all fail that
+    pin; every expression''s free symbols lie among them (cayley_symbolic_expr_foreign_alpha). Each of
+    the 15 has sympy total_degree <= 2 in those symbols (measured max exactly 2), and its Poly domain is
+    ZZ or QQ (measured QQ for all 15): a Float coefficient (cayley_symbolic_float_half P11, domain RR)
+    or an opaque constant h() = 0.5 (cayley_symbolic_opaque_half P08, domain QQ[h()]) fails. CONTENT of
+    the 15 symbolic expressions (lambdified, fed by symbol name): at 300 true Cayley points from a
+    test-local 5x5 solve (I5 - A/2)^-1 (I5 + A/2), A = xi^ by hand, all 15 vanish <= 1e-12 (measured
+    1.3e-15); at 300 perturbed/arbitrary points (residual >= 1e-2 by input guard, measured min 0.127)
+    the symbolic AND the numeric cayley_constraint_residuals equal a hand-written residual to <= 1e-12
+    relative (measured 6.7e-16 / 0.0). Mutation harness: cayley_symbolic_E3_no_alpha_u (2.20),
+    cayley_symbolic_S_plus (7.15). (The former syms == expected_syms and len(set(syms)) == 25 assertions
+    were deleted in pass 6: the name-list equality and the per-element Symbol pin imply both.)'
   domain: Total. The (alpha/2) u product is degree 2, not 3, because alpha and u are independent lifted
     variables.
   verdict: CONFIRMED
@@ -389,11 +402,20 @@ claims:
     T(-Dt) = (I, 0, 0, -Dt) applied on the LEFT; the result has time block exactly 0.
   source: DERIVED; pre-flight F2
   kind: DERIVED
-  test_hint: Smooth, time-varying, non-commuting omega(t), a(t); ground truth from an independent DOP853
-    solve (tests/ode_truth.py, rtol=atol=1e-13, imports nothing from src). Endpoint vs ODE truth on the
-    full 5x5 <= 1e-9 (measured 1.5e-14). Separately, an IDENTITY CHECK of the relation on the discrete
-    recursion's own increment on the same stream <= 1e-12 (measured 1.6e-13).
-  domain: Requires t_i = 0 exactly (see M1-C36). Holds for arbitrary g.
+  test_hint: 'Smooth, time-varying, non-commuting omega(t), a(t); ground truth from an independent
+    DOP853 solve (tests/ode_truth.py, rtol=atol=1e-13, imports nothing from src). Endpoint vs ODE truth
+    on the full 5x5 <= 1e-9 (measured 1.5e-14). Separately, an IDENTITY CHECK of the relation on the
+    discrete recursion''s own increment on the same stream <= 1e-12 (measured 1.6e-13). The same checks
+    on two more DOP853 datasets (tests/conftest.py endpoint_datasets_rand_g, 40 instances each, 4 random
+    g of 10 instances each, random g = |g| * (uniform random direction), |g| uniform in (2, 20)): Dt =
+    +0.4 (4000 steps of dt = 1e-4, seed 20241012+3101) and Dt = -0.3 (3000 steps of dt = -1e-4, ODEs
+    solved BACKWARD from t = 0, seed 20241012+3102): vs ODE truth measured 1.7e-14 (Dt = +0.4) and
+    1.2e-14 (Dt = -0.3), identity check 7.1e-14 and 1.1e-13; recursion first order on both (error 4.7e-4
+    and 4.2e-4, ratio 2.000), stream input guard 0.37 and 0.22. Mutation harness: gravity_lift_ignores_g
+    (pass-6 Q49), integrate_truth_g_permuted (Q52), forster_endpoint_g_permuted (Q51),
+    forster_endpoint_abs_dt (Q30), endpoint_abs_dt (Q28), gravity_lift_abs_dt (Q29).'
+  domain: 'Requires t_i = 0 exactly (see M1-C36). Holds for arbitrary g. Dt of either sign (tested Dt =
+    +0.5, +0.4 and -0.3).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C32
@@ -402,9 +424,15 @@ claims:
     hence X_j = exp(Dt*zeta_g) . X_i . D_ij.
   source: DERIVED
   kind: DERIVED
-  test_hint: '200 random Dt in (0.05, 1.0): max|G(Dt) - T(-Dt)H''| <= 1e-12 and max|G(Dt) - exp(Dt*(0,g,0,-1))|
-    <= 1e-10 (both measured 0.0). Note the opposite fusion order H'' . T(-Dt) = (I, g Dt, -1.5 g Dt^2,
-    -Dt) is DIFFERENT -- assert that too.'
+  test_hint: '200 random Dt in (0.05, 1.0): max|G(Dt) - T(-Dt)H''| <= 1e-12 and max|G(Dt) -
+    exp(Dt*(0,g,0,-1))| <= 1e-10 (both measured 0.0). Note the opposite fusion order H'' . T(-Dt) = (I,
+    g Dt, -1.5 g Dt^2, -Dt) is DIFFERENT -- assert that too. Plus 400 draws with random g = |g| *
+    (uniform random direction), |g| uniform in (2, 20) and Dt of either sign (|Dt| in (0.05, 1), 182
+    negative; seed 20241012+3200) against the claim''s G(Dt) formula and scipy expm of zeta_g^ written
+    by hand: gravity_generator(g) = (0, g, 0, -1) exactly; G(Dt), T(-Dt) H'' and src exp(Dt zeta_g) vs
+    those references <= 1e-12 / 1e-12 / 1e-10 (measured 1.8e-15, 1.8e-15, 5.3e-15); opposite order vs
+    (I, g Dt, -1.5 g Dt^2, -Dt) <= 1e-12 (3.6e-15). Mutation harness: gravity_element_g_permuted (Q50),
+    gravity_generator_g_permuted (Q53), gravity_lift_ignores_g (Q49), gravity_lift_abs_dt (Q29).'
   domain: Total in Dt.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -413,8 +441,12 @@ claims:
     all real s1, s2.'
   source: DERIVED
   kind: DERIVED
-  test_hint: 500 random (s1, s2) ~ 2*N(0,1), including negative values. max abs err <= 1e-10 (measured
-    1.1e-13).
+  test_hint: '500 random (s1, s2) ~ 2*N(0,1), including negative values. max abs err <= 1e-10 (measured
+    1.1e-13). Plus 500 draws with random g = |g| * (uniform random direction), |g| uniform in (2, 20)
+    (seed 20241012+3300): the product identity (measured 5.7e-14) AND G(s) against the statement''s
+    formula (I, g s, -0.5 g s^2, -s) written in the test, <= 1e-10 (measured 5.7e-14) -- the product
+    identity alone holds for any vector in place of g (mutation harness gravity_element_g_permuted,
+    pass-6 Q50).'
   domain: Total.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -424,9 +456,16 @@ claims:
     and velocity blocks are correct.'
   source: DERIVED; pre-flight F2 (error in the project's CLAUDE.md)
   kind: DERIVED
-  test_hint: Same time-varying stream and DOP853 truth as M1-C31. Assert |RHS[3,4] - Dt| <= 1e-12 and
-    max|RHS[0:3,4] - (p_j + g*Dt^2)| <= 1e-9 (measured 7.1e-15), while the R and v blocks match. This
-    is a claim that a specific published formula is FALSE in a specific, quantified way.
+  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31. Assert |RHS[3,4] - Dt| <= 1e-12 and
+    max|RHS[0:3,4] - (p_j + g*Dt^2)| <= 1e-9 (measured 7.1e-15), while the R and v blocks match. This is
+    a claim that a specific published formula is FALSE in a specific, quantified way. The same checks on
+    two more DOP853 datasets (tests/conftest.py endpoint_datasets_rand_g, 40 instances each, 4 random g
+    of 10 instances each, random g = |g| * (uniform random direction), |g| uniform in (2, 20)): Dt =
+    +0.4 (4000 steps of dt = 1e-4, seed 20241012+3101) and Dt = -0.3 (3000 steps of dt = -1e-4, ODEs
+    solved BACKWARD from t = 0, seed 20241012+3102): position vs p_j + g Dt^2 measured 5.3e-15 /
+    4.4e-15, R and v 1.7e-14 / 1.2e-14, least position miss 0.946 / 0.368 (>= 1e-3); identity checks
+    7.1e-14 / 1.1e-13. Mutation harness gravity_lift_uncorrected_ignores_g (pass-6 Q54),
+    integrate_truth_g_permuted (Q52).'
   domain: t_i = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -435,8 +474,11 @@ claims:
     block but corrupts the position block by exactly -v_j*Dt.'
   source: DERIVED; pre-flight F2
   kind: DERIVED
-  test_hint: 500 random instances. max|RHS[0:3,4] - (p_j - v_j*Dt)| <= 1e-10 and |RHS[3,4]| <= 1e-12 (both
-    measured 3.6e-15).
+  test_hint: '500 random instances. max|RHS[0:3,4] - (p_j - v_j*Dt)| <= 1e-10 and |RHS[3,4]| <= 1e-12
+    (both measured 3.6e-15). Plus 500 instances with random g = |g| * (uniform random direction), |g|
+    uniform in (2, 20) and Dt of either sign (|Dt| in (0.05, 1), seed 20241012+3500), X_j from the
+    Forster component equations written in the test: position 3.6e-15, time 0.0. Mutation harness
+    gravity_lift_ignores_g (pass-6 Q49).'
   domain: t_i = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -446,13 +488,18 @@ claims:
     v blocks remain correct.
   source: DERIVED
   kind: DERIVED
-  test_hint: '500 random instances with t_i ~ 2*N(0,1). max|RHS[0:3,4] - (p_j + g*Dt*t_i)| <= 1e-10 and |RHS[3,4]
-    - t_i| <= 1e-12 (measured 3.6e-15). Implementation must assert t_i == 0 on keyframe states. The guard (KEYFRAME_TIME_TOL
-    = 1e-12, inclusive) is tested on both sides of its tolerance -- t_i in {+-1e-11, +-2e-12, 1e-6, -1e-4,
-    0.25} must raise ValueError; t_i in {0, -0.0, +-5e-13} must be accepted (mutation harness keyframe_time_tol_1e-3)
-    -- and exactly AT it: +-1e-12 accepted, +-nextafter(1e-12, inf) = +-1.0000000000000002e-12 refused (keyframe_time_tol_1.9e-12,
-    pass-4 N14; keyframe_time_tol_9.9e-13). t_i in {NaN, +inf, -inf} must raise ValueError too: a guard of
-    the form abs(t_i) > tol admits NaN (keyframe_guard_admits_nan).'
+  test_hint: '500 random instances with t_i ~ 2*N(0,1). max|RHS[0:3,4] - (p_j + g*Dt*t_i)| <= 1e-10 and
+    |RHS[3,4] - t_i| <= 1e-12 (measured 3.6e-15). Implementation must assert t_i == 0 on keyframe
+    states. The guard (KEYFRAME_TIME_TOL = 1e-12, inclusive) is tested on both sides of its tolerance --
+    t_i in {+-1e-11, +-2e-12, 1e-6, -1e-4, 0.25} must raise ValueError; t_i in {0, -0.0, +-5e-13} must
+    be accepted (mutation harness keyframe_time_tol_1e-3) -- and exactly AT it: +-1e-12 accepted,
+    +-nextafter(1e-12, inf) = +-1.0000000000000002e-12 refused (keyframe_time_tol_1.9e-12, pass-4 N14;
+    keyframe_time_tol_9.9e-13). t_i in {NaN, +inf, -inf} must raise ValueError too: a guard of the form
+    abs(t_i) > tol admits NaN (keyframe_guard_admits_nan). Plus 500 instances with random g = |g| *
+    (uniform random direction), |g| uniform in (2, 20) and Dt of either sign (seed 20241012+3600)
+    against the Forster component equations written in the test: position vs p_j + g Dt t_i 7.1e-15,
+    time vs t_i 8.9e-16, R and v 0.0 (<= 1e-10 / 1e-12 / 1e-12). Mutation harness gravity_lift_ignores_g
+    (pass-6 Q49), endpoint_abs_dt (Q28).'
   domain: Stated for all t_i; the correction g*Dt*t_i vanishes iff t_i = 0 or Dt = 0 or g = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -462,9 +509,16 @@ claims:
     dp, dv), reproduces (R_j, p_j, v_j).
   source: VERIFIED-PUBLISHED (measured on the installed gtsam 4.3.0 NavState)
   kind: VERIFIED-PUBLISHED
-  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err on R, p, v <= 1e-9 (measured
-    1.5e-14); identity check on the discrete recursion <= 1e-12. Note W_ij''s position entry is +0.5*g*Dt^2
-    (PLUS).'
+  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err on R, p, v <= 1e-9
+    (measured 1.5e-14); identity check on the discrete recursion <= 1e-12. Note W_ij''s position entry
+    is +0.5*g*Dt^2 (PLUS). The same checks on two more DOP853 datasets (tests/conftest.py
+    endpoint_datasets_rand_g, 40 instances each, 4 random g of 10 instances each, random g = |g| *
+    (uniform random direction), |g| uniform in (2, 20)): Dt = +0.4 (4000 steps of dt = 1e-4, seed
+    20241012+3101) and Dt = -0.3 (3000 steps of dt = -1e-4, ODEs solved BACKWARD from t = 0, seed
+    20241012+3102): 1.7e-14 / 1.2e-14 vs ODE truth, identity 6.9e-14 / 1.1e-13. The 2000 algebraic
+    instances against forster_endpoint are followed by 2000 more with random g and Dt of either sign
+    (measured 3.6e-15 over all 4000, <= 1e-12). Mutation harness: integrate_truth_g_permuted (pass-6
+    Q52), forster_endpoint_g_permuted (Q51), forster_endpoint_abs_dt (Q30).'
   domain: NavState has no time coordinate, so no t_i restriction arises; the restriction reappears on
     lifting to Gal(3) (M1-C36).
   verdict: CONFIRMED
@@ -476,9 +530,14 @@ claims:
   source: DERIVED
   kind: DERIVED
   test_hint: 'Assert max|T(-Dt) H'' T(Dt) - W_g| <= 1e-12 (measured 0.0) and max|T(Dt) U_g - D_ij| <=
-    1e-12 (measured 0.0) for 500 random Dt. Then 200 random instances: max over (R, v, p) of |form(a)
-    - form(b)| <= 1e-9 (measured 3.6e-15), and |form(a)[3,4]| <= 1e-12. The sign difference between W_g''s
-    +0.5 g Dt^2 and H''s -0.5 g Dt^2 is EXACTLY conjugation by T(Dt) and is not a disagreement.'
+    1e-12 (measured 0.0) for 500 random Dt. Then 200 random instances: max over (R, v, p) of |form(a) -
+    form(b)| <= 1e-9 (measured 3.6e-15), and |form(a)[3,4]| <= 1e-12. The sign difference between W_g''s
+    +0.5 g Dt^2 and H''s -0.5 g Dt^2 is EXACTLY conjugation by T(Dt) and is not a disagreement. Plus 500
+    instances with random g = |g| * (uniform random direction), |g| uniform in (2, 20) and Dt of either
+    sign (seed 20241012+3800): T(-Dt) H'' T(Dt) and W_g vs (I, g Dt, +0.5 g Dt^2, 0) written in the test
+    8.9e-16, T(Dt) U_g = D_ij 0.0, both forms vs the Forster component equations written in the test
+    4.4e-15, both time blocks 0.0. Mutation harness gravity_lift_ignores_g (pass-6 Q49),
+    gravity_lift_abs_dt (Q29), endpoint_abs_dt (Q28).'
   domain: t_i = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -501,17 +560,21 @@ claims:
     restricted to the t = 0 slice, exactly.
   source: DERIVED
   kind: DERIVED
-  test_hint: 'All parts go through src.gal3.navstate_phi (seed 20241012+40, Dt = 0.5). (i) navstate_phi(I)
-    == I exactly; 2000 random X: navstate_phi(X) has the R and v of X and position p + v*Dt, compared with
-    the definition evaluated on gtsam NavState accessors, to 1e-12 (measured 0.0), so the identity factor
-    misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max over draws 2.02 >= 0.5). No lower bound
-    is claimed for a factor FITTED on one element and applied to a second: N_L = Phi_Dt(X) X^-1 is exact
-    at X by construction (not asserted -- it holds for any map) and its residual goes continuously to 0 as
-    Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs, products by gtsam
-    NavState.compose: max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured 8.9e-16; verifier
-    1.8e-15 over 2e4). (iii) 2000 random (R,v,p): max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12
-    (measured 0.0) and max|T(-Dt) X T(Dt) - lift_navstate(navstate_phi(N))| <= 1e-12 (measured 0.0).'
-  domain: Conjugation statement requires t(X) = 0.
+  test_hint: 'All parts go through src.gal3.navstate_phi (seed 20241012+40, Dt = 0.5). (i)
+    navstate_phi(I) == I exactly; 2000 random X: navstate_phi(X) has the R and v of X and position p +
+    v*Dt, compared with the definition evaluated on gtsam NavState accessors, to 1e-12 (measured 0.0),
+    so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max over draws 2.02
+    >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to a second: N_L =
+    Phi_Dt(X) X^-1 is exact at X by construction (not asserted -- it holds for any map) and its residual
+    goes continuously to 0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs,
+    products by gtsam NavState.compose: max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured
+    8.9e-16; verifier 1.8e-15 over 2e4). (iii) 2000 random (R,v,p): max|T(-Dt) X T(Dt) - (R, v, p +
+    v*Dt, 0)| <= 1e-12 (measured 0.0) and max|T(-Dt) X T(Dt) - lift_navstate(navstate_phi(N))| <= 1e-12
+    (measured 0.0). (iv) NEGATIVE Dt: 2000 draws, a fresh Dt uniform in (-3, -0.05) each (seed
+    20241012+4001): (i)''s definition check and (iii)''s conjugation and lift checks, all <= 1e-12
+    (measured 0.0, 0.0, 0.0). Mutation harness navstate_phi_abs_dt (pass-6 Q31).'
+  domain: 'Conjugation statement requires t(X) = 0. Dt is any real number (tested with Dt = 0.5 and Dt
+    in (-3, -0.05)).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics_pass2.md (rewritten statement confirmed)
 - id: M1-C41
@@ -557,17 +620,33 @@ claims:
     * Gamma2(omega*Dt) a, and the increment''s time block is Dt.'
   source: DERIVED (follows from M1-C19 and M1-C41)
   kind: DERIVED
-  test_hint: '500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured 4.4e-16).
-    Note dp has NO Gamma1*w term because the generator''s w slot is 0: position is driven entirely by the alpha*Gamma2*u
-    coupling. The batched Rodrigues the integrators use (_so3_exp_batch) vs scipy Rotation on 147 angles spanning
-    0, 1e-10..0.03, 0.045..0.055 (both sides of and exactly on THETA_SMALL = 0.05), 0.06..3.1, pi, 4, 7.5,
-    12: <= 1e-14 (measured 1.1e-15). Its Taylor branch carries sin(th)/th through th^6 and (1 - cos th)/th^2
-    through th^4, so the first omitted terms add th^9/9! = 5e-18 and th^8/8! = 1e-15 to the matrix at the switch
-    (with sin(th)/th stopped at th^4, as before, it was 1.53e-13). On a (4, 5, 3) batch: <= 1e-14 (measured
-    5.6e-16). Mutation harness so3_exp_batch_c_over_theta (4.94), so3_exp_batch_taylor_no_th4 (2.58e-9), so3_exp_batch_taylor_no_th6
-    (1.53e-13), so3_exp_batch_c_no_th4 (2.16e-11, pass-4 N18), so3_exp_batch_c_th4_over_700 (6.19e-13, pass-4
-    N19). Equivalent mutant (proof in the test): the batch switch lowered to 1e-3 (pass-4 N15; 5.6e-16).'
-  domain: (omega, a) constant on the interval.
+  test_hint: '500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured
+    4.4e-16). 500 more draws with Dt of either sign (|Dt| in (0.02, 0.5), 247 negative, seed
+    20241012+4200) against scipy expm(Dt A), A = (omega, a, 0, 1)^ written by hand: <= 1e-12 (measured
+    3.2e-15); mutation harness increment_blocks_dp_abs_dt (pass-6 Q35: 1.41). Note dp has NO Gamma1*w
+    term because the generator''s w slot is 0: position is driven entirely by the alpha*Gamma2*u
+    coupling. The batched Rodrigues the integrators use (_so3_exp_batch) vs scipy Rotation on 147 angles
+    spanning 0, 1e-10..0.03, 0.045..0.055 (both sides of and exactly on THETA_SMALL = 0.05), 0.06..3.1,
+    pi, 4, 7.5, 12: <= 1e-14 (measured 1.1e-15). Its Taylor branch carries sin(th)/th through th^6 and
+    (1 - cos th)/th^2 through th^4, so the first omitted terms add th^9/9! = 5e-18 and th^8/8! = 1e-15
+    to the matrix at the switch (with sin(th)/th stopped at th^4, as before, it was 1.53e-13). On a (4,
+    5, 3) batch: <= 1e-14 (measured 5.6e-16). Mutation harness so3_exp_batch_c_over_theta (4.94),
+    so3_exp_batch_taylor_no_th4 (2.58e-9), so3_exp_batch_taylor_no_th6 (1.53e-13),
+    so3_exp_batch_c_no_th4 (2.16e-11, pass-4 N18), so3_exp_batch_c_th4_over_700 (6.19e-13, pass-4 N19).
+    Equivalent mutant (proof in the test): the batch switch lowered to 1e-3 (pass-4 N15; 5.6e-16). dp is
+    checked against Dt^2 Gamma2(omega Dt) a with Gamma2 summed as its 40-term series in the test, for Dt
+    in {+-0.37, +-1.3}: <= 1e-15 (measured 1.1e-16); the former check re-evaluated src''s own
+    expression. dR = Exp_SO3 through the SCALAR gal3.so3_exp (used by increment_blocks and
+    imu_step_element) against scipy Rotation AND a 40-digit mpmath Rodrigues on 149 angles (0,
+    1e-10..0.03, 0.045..0.055, nextafter(0.05, 0), 0.05, 0.06..3.1, pi, 4, 7.5, 12): <= 1e-14 (measured
+    1.1e-15 / 1.0e-15), and increment_blocks'' dR for Dt = +-0.3 on the same angles <= 1e-14 (1.1e-15).
+    Mutation harness: so3_exp_taylor_no_th6 (1.49e-13, the M1-F15 regression), so3_exp_c_th4_over_700
+    (6.20e-13, pass-6 Q05). Batched Rodrigues on [0.025, 0.03) vs mpmath <= 2.5e-15 (measured 1.1e-16);
+    mutation harness so3_exp_batch_switch_0.03_no_th6 (4.33e-15, pass-6 Q41). Under the
+    tolerance-equivalence rule N15 and pass-6 Q40 (1.1e-15 change each) and Q03 (1.0e-15) sit at the
+    1e-15 threshold of the 1e-14 bounds; marked OPEN in the test.'
+  domain: '(omega, a) constant on the interval. Dt is any real number (tested for |Dt| in (0.02, 1.3),
+    both signs).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C43
@@ -575,10 +654,18 @@ claims:
     = v_i + g*Dt + R_i dv, p_j = p_i + v_i*Dt + 0.5*g*Dt^2 + R_i dp.
   source: DERIVED
   kind: DERIVED
-  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err <= 1e-9 (measured 1.5e-14).
-    Then assert the block decomposition of M1-C31''s left-hand side reproduces these three equations to
-    1e-12.'
-  domain: t_i = 0.
+  test_hint: 'Same time-varying stream and DOP853 truth as M1-C31: max abs err <= 1e-9 (measured
+    1.5e-14). Then assert the block decomposition of M1-C31''s left-hand side reproduces these three
+    equations to 1e-12. The same checks on two more DOP853 datasets (tests/conftest.py
+    endpoint_datasets_rand_g, 40 instances each, 4 random g of 10 instances each, random g = |g| *
+    (uniform random direction), |g| uniform in (2, 20)): Dt = +0.4 (4000 steps of dt = 1e-4, seed
+    20241012+3101) and Dt = -0.3 (3000 steps of dt = -1e-4, ODEs solved BACKWARD from t = 0, seed
+    20241012+3102): 1.7e-14 / 1.2e-14 vs ODE truth, block decomposition 1.8e-15, identity 6.9e-14 /
+    1.1e-13. Mutation harness: forster_endpoint_g_permuted (pass-6 Q51), forster_endpoint_abs_dt (Q30),
+    gravity_lift_ignores_g (Q49), gravity_lift_abs_dt (Q29), endpoint_abs_dt (Q28),
+    integrate_truth_g_permuted (Q52).'
+  domain: 't_i = 0. Arbitrary g and Dt of either sign (tested Dt = +0.5, +0.4, -0.3 on the DOP853
+    datasets, |Dt| in (0.05, 1) on the algebraic instances).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C44
@@ -600,19 +687,28 @@ claims:
   kind: DERIVED
   test_hint: 'Time-varying inputs over [t_i,t_j] and [t_j,t_k] (seed 20241012+45); D_ij, D_jk, D_ik from
     three SEPARATE DOP853 solves: max|D_ij D_jk - D_ik| <= 1e-10 (measured 8.4e-14); identity on the
-    discrete recursion integrate_increment measured 9.5e-15 (<= 1e-12). That recursion is checked against
-    DOP853 too: exact for omega = 0 with constant a (measured 5.2e-15, asserted <= 1e-12; a position
-    update using the NEW velocity misses by a*T*dt -- mutation harness:
-    integrate_increment_dp_uses_new_dv), and first order on the time-varying stream (5.8e-5 at dt = 5e-5,
-    ratio 2.000). imu_step_element(omega, a, dt) = exp(dt (0, a, 0, 1)) . (Exp(omega dt), 0, 0, 0) by
-    scipy expm/Rotation, 200 draws: <= 1e-12 (measured 1.0e-13), and integrate_increment equals the
-    ordered product of these elements (measured 1.7e-18). LARGE-STEP regime (dt = 0.2, 12 steps, 20
-    streams, omega ~ 3 N(0,I3) so every |omega| dt >= THETA_SMALL by input guard): integrate_increment vs
-    the ordered product of scipy expm/Rotation per-step elements <= 1e-12 (measured 3.6e-15), and
-    integrate_truth vs the stated recursion stepped with scipy Rotation <= 1e-12 (measured 7.1e-15);
-    mutation harness so3_exp_batch_c_over_theta (10.7). Plus 2000 purely algebraic random triples at <=
-    1e-14 (measured 0.0). A test that uses dv_jk * Dt_ij instead must FAIL (worst miss 4.23, asserted >=
-    1e-3).'
+    discrete recursion integrate_increment measured 9.5e-15 (<= 1e-12). That recursion is checked
+    against DOP853 too: exact for omega = 0 with constant a (measured 5.2e-15, asserted <= 1e-12; a
+    position update using the NEW velocity misses by a*T*dt -- mutation harness:
+    integrate_increment_dp_uses_new_dv), and first order on the time-varying stream (5.8e-5 at dt =
+    5e-5, ratio 2.000). imu_step_element(omega, a, dt) = exp(dt (0, a, 0, 1)) . (Exp(omega dt), 0, 0, 0)
+    by scipy expm/Rotation, 200 draws: <= 1e-12 (measured 6.7e-16 since so3_exp carries the th^6 term;
+    1.0e-13 before), and 200 more with dt in (-0.2, -1e-3) (seed 20241012+4500, measured 4.4e-16;
+    mutation harness imu_step_element_abs_dt, pass-6 Q36: 0.32), and integrate_increment equals the
+    ordered product of these elements (measured 1.7e-18) -- also NEAR THE SWITCH: per-step angles
+    uniform in [0.04, 0.0499], per-step random directions, 10 streams of 60 steps, 3 of 1000 steps (dt =
+    0.01) and 10 of 60 steps at dt = -0.01, <= 1e-12 (measured 1.7e-13); without the th^6 term in
+    so3_exp (the M1-F15 regression, mutation harness so3_exp_taylor_no_th6) 3.7e-12. LARGE-STEP regime
+    (dt = 0.2, 12 steps, 20 streams, omega ~ 3 N(0,I3) so every |omega| dt >= THETA_SMALL by input
+    guard): integrate_increment vs the ordered product of scipy expm/Rotation per-step elements <= 1e-12
+    (measured 3.6e-15), and integrate_truth vs the stated recursion stepped with scipy Rotation <= 1e-12
+    (measured 7.1e-15); run a second time at dt = -0.2 with a random g (seed 20241012+4502), maxima over
+    both runs 3.6e-15 and 7.1e-15; mutation harness so3_exp_batch_c_over_theta (10.7),
+    integrate_truth_g_permuted (pass-6 Q52). Plus 4000 purely algebraic random triples (the last 2000
+    with durations of either sign) against the hand-written component formulas at <= 1e-14 (measured
+    0.0). (The former check that the dv_jk * Dt_ij form misses by >= 1e-3 was deleted in pass 6: once
+    the 1e-14 check passes it is a property of the random data; a src chain using that form is killed by
+    the identity check, mutation harness chain_swapped_duration.)'
   domain: Total. Requires the increments to be adjacent and expressed in the same body frame convention.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -745,9 +841,10 @@ claims:
     round trip concat(cb.gyroscope(), cb.accelerometer()) recovers b exactly.'
   source: DERIVED
   kind: DERIVED
-  test_hint: '1000 random b ~ N(0,I6). All three residuals <= 1e-14 (measured 0.0). Additionally assert
-    the NAIVE conversion ConstantBias(b[0:3], b[3:6]) does NOT round-trip: max|concat(gyro, accel) - b|
-    >= 1e-3 for b with distinct halves.'
+  test_hint: '1000 random b ~ N(0,I6). All three residuals <= 1e-14 (measured 0.0). (A check that
+    gtsam''s ConstantBias(b[0:3], b[3:6]) does not round-trip was deleted in pass 6: it exercised gtsam
+    only. A naive src bias_to_gtsam fails the residuals above, 5.04 -- mutation harness
+    bias_to_gtsam_naive.)'
   domain: Total. Must live in exactly one place in src/.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
