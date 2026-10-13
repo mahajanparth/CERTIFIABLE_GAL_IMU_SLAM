@@ -1298,6 +1298,66 @@ def test_c13c_cayley_factor_residual_methods_are_wired_to_eq19_and_eq22b():
             f"truncation by {max(worst_on['trunc'], worst_off['trunc']):.3e}")
 
 
+#: ``|dRbar - reference|_inf`` bound in :func:`test_c13d` (measured 2.2e-14 / 2.2e-14)
+DRBAR_PIN_BOUND = 1e-12
+#: two-sided relative band on the factor's Eq. (19) residual at ground truth in
+#: :func:`test_c13d` (measured -1.9e-7 / -3.3e-7)
+GT_RESIDUAL_REL_BAND = 1e-4
+
+
+@pytest.mark.claim("M2-F13")
+def test_c13d_cayley_factor_frozen_rotation_is_the_cayley_increment():
+    """``CayleyFactor.dRbar`` -- the frozen rotation every Eq. (19)/(22b) residual uses.
+
+    c13c checks the residual methods *given* the factor's fields, and c13/c13b pin
+    ``J_R``, ``A_*`` and ``bbar``.  ``dRbar`` was pinned by nothing: ``from_edge`` storing
+    ``pim.dR.T`` kept the suite green while the factor's residual at the ground-truth
+    keyframes went from 2e-8 to 0.4 (verification pass 5, M2-F13; mutants R01, R02, R04,
+    R05, R10).  Two checks, per fixture edge:
+
+    (a) ``from_edge(edge, BIAS_TRUE).dRbar`` equals the retyped Cayley Eq. (9) product
+        :func:`_indep_cayley_increment` (no ``src``) to ``1e-12`` in the matrix
+        inf-norm.  Measured 2.209e-14 / 2.154e-14 (edge 0 / 1).  The nearest mutant,
+        R10 (``dRbar Cay(1e-6 e1)``), is 9.8e-7; R02/R05 (Exp integrator) 1.9e-8 / 4.0e-8.
+    (b) end-to-end: at the closed-form ground-truth keyframes (Rodrigues, retyped) and
+        ``b_g = bbar_g`` (so ``xi = 0``), the factor's Eq. (19) and Eq. (22b) residuals
+        are the Cayley deficit and nothing else.  With ``R_err = dRbar^T Exp(omega T)``,
+        ``|r|_F / sqrt(2) = |I - R_err|_F / sqrt(2) = 2 sin(theta/2)``, and theta is the
+        per-edge deficit ``||omega||^3 T dt^2 / 12`` (M2-C22).  Two-sided, relative
+        ``1e-4``; measured -1.88e-7 / -3.33e-7.  The value must be NONZERO: an Exp
+        integrator erases it (R02/R05: relative -1.0), a perturbed one inflates it
+        (R10: +41 / +18; R04 (``b_g = 0``): +4e5; R01 (transpose): +1e7).
+    """
+    def deficit_metric(r):
+        return float(np.linalg.norm(r)) / np.sqrt(2.0)        # Frobenius / sqrt(2)
+
+    # ground-truth keyframe rotations, retyped from the fixture literals
+    R_gt = [_indep_rot(T.ROT_VEC_0)]
+    for edge in T.edges():
+        R_gt.append(R_gt[-1] @ _indep_rot(edge.omega_body * edge.duration))
+
+    for edge in T.edges():
+        factor = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
+        ref = _indep_cayley_increment(edge.gyro_stream(), edge.accel_stream(), edge.dt,
+                                      T.BIAS_TRUE)[0]
+        pin = _max_abs(factor.dRbar, ref)
+        assert pin <= DRBAR_PIN_BOUND, (
+            f"edge {edge.index}: CayleyFactor.dRbar is not the Cayley increment at bbar "
+            f"({pin:.3e} > {DRBAR_PIN_BOUND:.0e})")
+
+        R_i, R_j = R_gt[edge.index], R_gt[edge.index + 1]
+        predicted = (float(np.linalg.norm(edge.omega_body))**3 * edge.duration
+                     * edge.dt**2 / 12.0)
+        assert predicted >= 1e-8, "the fixture's Cayley deficit must be resolvable"
+        for label, r in (("Eq. (19)", factor.rotation_residual(R_i, R_j, T.B_G)),
+                         ("Eq. (22b)", factor.rotation_residual_affine(R_i, R_j, T.B_G))):
+            rel = deficit_metric(r) / predicted - 1.0
+            assert abs(rel) <= GT_RESIDUAL_REL_BAND, (
+                f"edge {edge.index}: factor {label} residual at ground truth is "
+                f"{deficit_metric(r):.6e} (|r|_F/sqrt2), not the Cayley deficit "
+                f"{predicted:.6e} (relative {rel:+.3e})")
+
+
 # ======================================================================================
 # Baseline 3 -- GTSAM 4.3.0 Galilean
 # ======================================================================================

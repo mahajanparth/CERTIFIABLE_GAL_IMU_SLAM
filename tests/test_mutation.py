@@ -869,3 +869,110 @@ def test_pass4_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killer
     assert outcome.startswith("AssertionError") and message in outcome, (
         f"{mutant_id} kills {_test_function(killer)[0]}, but not on the intended "
         f"assertion: {outcome}")
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-5 sweep (docs/verification/stage-b_m2-baselines_pass5.md
+# Sec. 3, finding M2-F13): the factor's frozen rotation ``dRbar`` was pinned by no test.
+# Each is replayed as a ``from_edge`` that stores a wrong ``dRbar`` and nothing else.
+# ======================================================================================
+
+
+def _from_edge_with_dRbar(make_dRbar):
+    """A ``CayleyFactor.from_edge`` identical to src's except that ``dRbar`` is
+    ``make_dRbar(edge, bbar, pim)``."""
+    def from_edge(cls, edge, bbar, variant=B2.DEFAULT_VARIANT):
+        bbar = np.asarray(bbar, dtype=float)
+        pim = B1.integrate_edge(edge, bbar, cls=B2.CayleyPreintegration, variant=variant)
+        J_R, A_vg, A_va, A_pg, A_pa = B1.bias_jacobians_fd(
+            edge, bbar, cls=B2.CayleyPreintegration, variant=variant)
+        return cls(bbar=bbar, dRbar=make_dRbar(edge, bbar, pim), dvbar=pim.dv,
+                   dpbar=pim.dp, Dt=pim.dt_total, J_R=J_R, A_vg=A_vg, A_va=A_va,
+                   A_pg=A_pg, A_pa=A_pa, variant=variant)
+    return classmethod(from_edge)
+
+
+def _r01_dRbar_transposed(monkeypatch):
+    """``from_edge``: ``dRbar = pim.dR.T``."""
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: pim.dR.T))                                 # MUTANT
+
+
+def _r02_dRbar_from_exp_integrator(monkeypatch):
+    """``from_edge``: ``dRbar`` from the Forster (Exp) integrator."""
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: B1.integrate_edge(edge, bbar).dR))         # MUTANT
+
+
+def _r04_dRbar_at_zero_gyro_bias(monkeypatch):
+    """``from_edge``: ``dRbar`` integrated at ``b_g = 0``."""
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: B1.integrate_edge(
+            edge, np.concatenate([np.zeros(3), bbar[3:6]]),
+            cls=B2.CayleyPreintegration).dR))                              # MUTANT
+
+
+def _r05_dRbar_from_reparam_variant(monkeypatch):
+    """``from_edge``: ``dRbar`` from ``VARIANT_REPARAM`` (numerically Exp)."""
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: B1.integrate_edge(
+            edge, bbar, cls=B2.CayleyPreintegration,
+            variant=B2.VARIANT_REPARAM).dR))                               # MUTANT
+
+
+def _r10_dRbar_times_small_cay(monkeypatch):
+    """``from_edge``: ``dRbar Cay(1e-6 e1)``."""
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: pim.dR @ B2.cay(np.array([1e-6, 0.0, 0.0]))))  # MUTANT
+
+
+#: ``(id, mutation, killer, text the killing assertion's message must contain)``
+PASS5_SURVIVORS = [
+    ("R01", _r01_dRbar_transposed,           "c13d",
+     "CayleyFactor.dRbar is not the Cayley increment"),
+    ("R02", _r02_dRbar_from_exp_integrator,  "c13d",
+     "CayleyFactor.dRbar is not the Cayley increment"),
+    ("R04", _r04_dRbar_at_zero_gyro_bias,    "c13d",
+     "CayleyFactor.dRbar is not the Cayley increment"),
+    ("R05", _r05_dRbar_from_reparam_variant, "c13d",
+     "CayleyFactor.dRbar is not the Cayley increment"),
+    ("R10", _r10_dRbar_times_small_cay,      "c13d",
+     "CayleyFactor.dRbar is not the Cayley increment"),
+]
+
+
+@pytest.mark.claim("M2-F13")
+@pytest.mark.parametrize("mutant_id,apply_mutation,killer,message", PASS5_SURVIVORS,
+                         ids=[m[0] for m in PASS5_SURVIVORS])
+def test_pass5_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killer, message):
+    """Every pass-5 survivor must fail its killer, on the assertion written for it."""
+    assert _outcome(killer) is None, \
+        f"{_test_function(killer)[0]} fails BEFORE {mutant_id} is applied"
+    apply_mutation(monkeypatch)
+    outcome = _outcome(killer)
+    assert outcome is not None, \
+        f"{mutant_id} (survived pass 5) still SURVIVES {_test_function(killer)[0]}"
+    assert outcome.startswith("AssertionError") and message in outcome, (
+        f"{mutant_id} kills {_test_function(killer)[0]}, but not on the intended "
+        f"assertion: {outcome}")
+
+
+@pytest.mark.claim("M2-F13")
+@pytest.mark.parametrize("mutant_id,apply_mutation,killer,message", PASS5_SURVIVORS,
+                         ids=[m[0] for m in PASS5_SURVIVORS])
+def test_pass5_survivor_is_killed_end_to_end(monkeypatch, mutant_id, apply_mutation,
+                                             killer, message):
+    """With the direct ``dRbar`` pin disabled, c13d's end-to-end check -- the factor's
+    Eq. (19) residual at ground truth equals the Cayley deficit, two-sided -- must kill
+    every pass-5 survivor on its own."""
+    monkeypatch.setattr(suite, "DRBAR_PIN_BOUND", np.inf)
+    assert _outcome(killer) is None, \
+        f"{_test_function(killer)[0]} fails BEFORE {mutant_id} is applied"
+    apply_mutation(monkeypatch)
+    outcome = _outcome(killer)
+    assert outcome is not None, \
+        f"{mutant_id} SURVIVES {_test_function(killer)[0]} with the dRbar pin disabled"
+    assert outcome.startswith("AssertionError") and \
+        "Eq. (19) residual at ground truth" in outcome, (
+            f"{mutant_id} kills {_test_function(killer)[0]} end-to-end, but not on the "
+            f"Eq. (19) ground-truth assertion: {outcome}")
