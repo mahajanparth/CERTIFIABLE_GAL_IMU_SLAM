@@ -37,6 +37,7 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     G,
     _rotvec_to_matrix,
     rand_axis,
+    rand_gravity,
     rand_gal,
     rand_rot,
     rand_rot_angle,
@@ -1006,6 +1007,41 @@ def test_gravity_element_is_one_exponential():
     assert worst_exp <= 1e-10, worst_exp
     assert worst_other <= 1e-12, worst_other
 
+    # ARBITRARY g (random direction, |g| in (2, 20)) and Dt of EITHER sign ("total in
+    # Dt"), against independent references: the claim's own G(Dt) formula and scipy
+    # expm of zeta_g^ written by hand -- nothing from src.  Mutation harness:
+    # gravity_element_g_permuted (pass-6 Q50), gravity_generator_g_permuted (Q53),
+    # gravity_lift_ignores_g (Q49), gravity_lift_abs_dt (Q29).
+    r_g = rng(3200)   # own stream: the recorded draws above keep theirs
+    worst_def_rg = worst_fuse_rg = worst_expm_rg = worst_gen_rg = worst_other_rg = 0.0
+    n_neg = 0
+    for _ in range(400):
+        g = rand_gravity(r_g)
+        Dt = float(r_g.uniform(0.05, 1.0)) * (1.0 if r_g.uniform() < 0.5 else -1.0)
+        n_neg += Dt < 0.0
+        G_def = gal(I3, g * Dt, -0.5 * g * Dt ** 2, -Dt)
+        Z = np.zeros((5, 5))
+        Z[0:3, 3], Z[3, 4] = g, -1.0
+        E = sla.expm(Dt * Z)
+        G_Dt = gal3.gravity_element(Dt, g)
+        worst_def_rg = max(worst_def_rg, float(np.abs(G_Dt - G_def).max()))
+        fused = compose(gal3.time_shift(-Dt), gal3.gravity_lift(Dt, g))
+        worst_fuse_rg = max(worst_fuse_rg, float(np.abs(fused - G_def).max()))
+        worst_expm_rg = max(worst_expm_rg, float(np.abs(G_Dt - E).max()),
+                            float(np.abs(exp(Dt * gal3.gravity_generator(g)) - E).max()))
+        worst_gen_rg = max(worst_gen_rg, float(np.abs(
+            gal3.gravity_generator(g) - np.concatenate([np.zeros(3), g, np.zeros(3), [-1.0]])
+        ).max()))
+        other = compose(gal3.gravity_lift(Dt, g), gal3.time_shift(-Dt))
+        worst_other_rg = max(worst_other_rg, float(np.abs(
+            other - gal(I3, g * Dt, -1.5 * g * Dt ** 2, -Dt)).max()))
+    assert n_neg >= 150, n_neg   # INPUT GUARD: both signs of Dt are sampled
+    assert worst_gen_rg == 0.0, worst_gen_rg
+    assert worst_def_rg <= 1e-12, worst_def_rg
+    assert worst_fuse_rg <= 1e-12, worst_fuse_rg
+    assert worst_expm_rg <= 1e-10, worst_expm_rg
+    assert worst_other_rg <= 1e-12, worst_other_rg
+
 
 @pytest.mark.claim("M1-C33")
 def test_gravity_one_parameter_subgroup():
@@ -1017,6 +1053,24 @@ def test_gravity_one_parameter_subgroup():
         lhs = compose(gal3.gravity_element(s1, G), gal3.gravity_element(s2, G))
         worst = max(worst, float(np.abs(lhs - gal3.gravity_element(s1 + s2, G)).max()))
     assert worst <= 1e-10, worst
+
+    # ARBITRARY g (random direction, |g| in (2, 20)).  The product identity holds for
+    # ANY vector in place of g (a gravity_element that permutes g's components is still a
+    # one-parameter subgroup), so G(s) is also checked against the statement's own
+    # formula (I, g s, -0.5 g s^2, -s) written here (mutation harness:
+    # gravity_element_g_permuted, pass-6 Q50).
+    r_g = rng(3300)   # own stream: the recorded draws above keep theirs
+    worst_rg = worst_def_rg = 0.0
+    for _ in range(500):
+        g = rand_gravity(r_g)
+        s1, s2 = 2.0 * r_g.normal(), 2.0 * r_g.normal()
+        lhs = compose(gal3.gravity_element(s1, g), gal3.gravity_element(s2, g))
+        worst_rg = max(worst_rg, float(np.abs(lhs - gal3.gravity_element(s1 + s2, g)).max()))
+        for s_ in (s1, s2, s1 + s2):
+            worst_def_rg = max(worst_def_rg, float(np.abs(
+                gal3.gravity_element(s_, g) - gal(I3, g * s_, -0.5 * g * s_ ** 2, -s_)).max()))
+    assert worst_rg <= 1e-10, worst_rg
+    assert worst_def_rg <= 1e-10, worst_def_rg
 
 
 @pytest.mark.claim("M1-C34")
@@ -1059,6 +1113,21 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset, endpoint_datasets
         assert_stream_non_commuting(d)
 
 
+def _forster_by_hand(X_i, D, g):
+    """(R_j, v_j, p_j) from the component equations written here (not src)."""
+    R_i, v_i, p_i = X_i[0:3, 0:3], X_i[0:3, 3], X_i[0:3, 4]
+    dR, dv, dp, Dt = D[0:3, 0:3], D[0:3, 3], D[0:3, 4], float(D[3, 4])
+    return (R_i @ dR, v_i + g * Dt + R_i @ dv, p_i + v_i * Dt + 0.5 * g * Dt * Dt + R_i @ dp)
+
+
+def _random_instance(r):
+    """(X_i on the t = 0 slice, D_ij, Dt, g): random g and Dt of either sign."""
+    Dt = float(r.uniform(0.05, 1.0)) * (1.0 if r.uniform() < 0.5 else -1.0)
+    X_i = gal(rand_rot(r), 2.0 * r.normal(size=3), 5.0 * r.normal(size=3), 0.0)
+    D = gal(rand_rot(r, scale=0.4), r.normal(size=3), r.normal(size=3), Dt)
+    return X_i, D, Dt, rand_gravity(r)
+
+
 @pytest.mark.claim("M1-C35")
 def test_right_time_shift_corrupts_position(algebraic_instances):
     """H' X_i D_ij T(-Dt) clears time but shifts position by exactly -v_j Dt."""
@@ -1071,6 +1140,18 @@ def test_right_time_shift_corrupts_position(algebraic_instances):
         worst_t = max(worst_t, abs(float(rhs[3, 4])))
     assert worst_p <= 1e-10, worst_p
     assert worst_t <= 1e-12, worst_t
+
+    # random g and Dt of either sign, against the component equations written here
+    r = rng(3500)
+    worst_p_rg = worst_t_rg = 0.0
+    for _ in range(500):
+        X_i, D, Dt, g = _random_instance(r)
+        rhs = gal3.endpoint_right_time_shift(X_i, D, g)
+        _, v_j, p_j = _forster_by_hand(X_i, D, g)
+        worst_p_rg = max(worst_p_rg, float(np.abs(rhs[0:3, 4] - (p_j - v_j * Dt)).max()))
+        worst_t_rg = max(worst_t_rg, abs(float(rhs[3, 4])))
+    assert worst_p_rg <= 1e-10, worst_p_rg
+    assert worst_t_rg <= 1e-12, worst_t_rg
 
 
 @pytest.mark.claim("M1-C36")
@@ -1092,6 +1173,25 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
         assert float(np.abs(rhs[0:3, 3] - X_j[0:3, 3]).max()) <= 1e-12
     assert worst_p <= 1e-10, worst_p
     assert worst_t <= 1e-12, worst_t
+
+    # random g and Dt of either sign, against the component equations written here:
+    # position p_j + g Dt t_i, time t_i, R and v unaffected
+    r_g = rng(3600)
+    worst_p_rg = worst_t_rg = worst_rv_rg = 0.0
+    for _ in range(500):
+        X_i, D, Dt, g = _random_instance(r_g)
+        t_i = 2.0 * r_g.normal()
+        X_t = X_i.copy()
+        X_t[3, 4] = t_i
+        rhs = gal3.endpoint(X_t, D, g, check_time=False)
+        R_j, v_j, p_j = _forster_by_hand(X_i, D, g)
+        worst_p_rg = max(worst_p_rg, float(np.abs(rhs[0:3, 4] - (p_j + g * Dt * t_i)).max()))
+        worst_t_rg = max(worst_t_rg, abs(float(rhs[3, 4]) - t_i))
+        worst_rv_rg = max(worst_rv_rg, float(np.abs(rhs[0:3, 0:3] - R_j).max()),
+                          float(np.abs(rhs[0:3, 3] - v_j).max()))
+    assert worst_p_rg <= 1e-10, worst_p_rg
+    assert worst_t_rg <= 1e-12, worst_t_rg
+    assert worst_rv_rg <= 1e-12, worst_rv_rg
 
     # the implementation must refuse a keyframe with t_i != 0 rather than go quiet
     X_bad = algebraic_instances[0][0].copy()
@@ -1168,6 +1268,34 @@ def test_two_endpoint_forms_agree(algebraic_instances):
         assert abs(float(form_a[3, 4])) <= 1e-12
         assert abs(float(form_b[3, 4])) <= 1e-12
     assert worst_form <= 1e-9, worst_form
+
+    # random g and Dt of either sign: W_g against (I, g Dt, +0.5 g Dt^2, 0) and both
+    # forms against the component equations, all written here (mutation harness:
+    # gravity_lift_ignores_g, pass-6 Q49)
+    r_g = rng(3800)
+    worst_w_rg = worst_u_rg = worst_form_rg = worst_time_rg = 0.0
+    for _ in range(500):
+        X_i, D, Dt, g = _random_instance(r_g)
+        W_hand = gal(I3, g * Dt, 0.5 * g * Dt ** 2, 0.0)
+        W_g = gal3.lift_navstate(gal3.navstate(I3, 0.5 * g * Dt ** 2, g * Dt))
+        conj = compose(compose(gal3.time_shift(-Dt), gal3.gravity_lift(Dt, g)),
+                       gal3.time_shift(Dt))
+        worst_w_rg = max(worst_w_rg, float(np.abs(conj - W_hand).max()),
+                         float(np.abs(W_g - W_hand).max()))
+        dR, dv, dp, _ = unpack(D)
+        U_g = gal3.lift_navstate(gal3.navstate(dR, dp, dv))
+        worst_u_rg = max(worst_u_rg, float(np.abs(compose(gal3.time_shift(Dt), U_g) - D).max()))
+        form_a = gal3.endpoint(X_i, D, g)
+        phi_Xi = compose(compose(gal3.time_shift(-Dt), X_i), gal3.time_shift(Dt))
+        form_b = compose(compose(W_g, phi_Xi), U_g)
+        ref = gal(*_forster_by_hand(X_i, D, g), 0.0)
+        worst_form_rg = max(worst_form_rg, float(np.abs(form_a - ref).max()),
+                            float(np.abs(form_b - ref).max()))
+        worst_time_rg = max(worst_time_rg, abs(float(form_a[3, 4])), abs(float(form_b[3, 4])))
+    assert worst_w_rg <= 1e-12, worst_w_rg
+    assert worst_u_rg <= 1e-12, worst_u_rg
+    assert worst_form_rg <= 1e-9, worst_form_rg
+    assert worst_time_rg <= 1e-12, worst_time_rg
 
 
 @pytest.mark.claim("M1-C39")
@@ -1261,6 +1389,29 @@ def test_phi_dt_is_an_automorphism_not_a_translation():
         worst_lift = max(worst_lift, float(np.abs(conj - lifted).max()))
     assert worst_c <= 1e-12, worst_c
     assert worst_lift <= 1e-12, worst_lift
+
+    # (iv) NEGATIVE Dt (the statement fixes no sign), a fresh Dt in (-3, -0.05) per
+    #      draw: (i) and (iii) again, against the same independent references.  Kills
+    #      p + v |Dt| (mutation harness: navstate_phi_abs_dt, pass-6 Q31).
+    r_n = rng(4001)   # own stream: the recorded draws above keep theirs
+    worst_shift_neg = worst_c_neg = worst_lift_neg = 0.0
+    for _ in range(2000):
+        Dt_n = -float(r_n.uniform(0.05, 3.0))
+        R, p, v = rand_rot(r_n), r_n.normal(size=3), r_n.normal(size=3)
+        X = gtsam.NavState(gtsam.Rot3(R), p, v)
+        Y = gal3.navstate_phi(X.matrix(), Dt_n)
+        worst_shift_neg = max(worst_shift_neg,
+                              float(np.abs(Y[0:3, 0:3] - X.attitude().matrix()).max()),
+                              float(np.abs(Y[0:3, 4] - X.velocity()).max()),
+                              float(np.abs(Y[0:3, 3] - (X.position() + X.velocity() * Dt_n)).max()))
+        X_g = gal(R, v, p, 0.0)
+        conj = compose(compose(gal3.time_shift(-Dt_n), X_g), gal3.time_shift(Dt_n))
+        worst_c_neg = max(worst_c_neg, float(np.abs(conj - gal(R, v, p + v * Dt_n, 0.0)).max()))
+        lifted = gal3.lift_navstate(gal3.navstate_phi(gal3.navstate(R, p, v), Dt_n))
+        worst_lift_neg = max(worst_lift_neg, float(np.abs(conj - lifted).max()))
+    assert worst_shift_neg <= 1e-12, worst_shift_neg
+    assert worst_c_neg <= 1e-12, worst_c_neg
+    assert worst_lift_neg <= 1e-12, worst_lift_neg
 
 
 # ==========================================================================
