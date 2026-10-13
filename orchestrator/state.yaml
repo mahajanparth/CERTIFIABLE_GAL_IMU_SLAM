@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: m0-literature-matrix
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M0-S01
@@ -76,10 +76,18 @@ milestones:
   - role: verifier
     agent_id: verify-M0-003
     started: '2026-10-13T01:40:05+00:00'
+    finished: '2026-10-13T01:52:30+00:00'
+    outcome: completed
+    note: Caught planted M0-C17 (Gal3 inverse position is -R^T(r - t v); runtime and GTSAM Eq. (4)). 15/15
+      confirmed; F06, F07 fixed, F08 partial. Both changed table values ruled CORRECT with source quotes.
+      131 of 136 new corruptions killed.
+  - role: implementer
+    agent_id: impl-M0-005-remediation
+    started: '2026-10-13T01:52:30+00:00'
     finished: null
     outcome: running
-    note: Third pass with a fresh planted claim; rules on F06-F08 and arbitrates the two changed table
-      values.
+    note: Define error_handedness and decide every row by one rule (F11); make the isotropy conclusion
+      and delama.linearized completeness checkable (F10).
   blocking_findings:
   - id: M0-F01
     resolved: true
@@ -111,27 +119,52 @@ milestones:
       bar does not support. Substance is fine -- verifier proved the identity symbolically.
     resolution: Ruled FIXED by verify-M0-002 (docs/verification/m0-literature-matrix_pass2.md).
   - id: M0-F06
-    resolved: false
+    resolved: true
     summary: '18 of 190 table corruptions survive, in fields no claim names: rai.error_handedness -> ''left-invariant''
       (independently reproduced: 40/40 tests green) and rai.bias_correction_side -> ''right''; rai.eq.u_definitions
       -> ''26a'' (only the velocity half checked); equation refs inside rai/delama/barfoot exact/linearized
       prose; barfoot volume/year, rai date/author, delama title; gtsam.endpoint_rejected_form (prefix-only
       check); consequence text of O1/O2/O4/O6; last sentence of O7.reason.'
+    resolution: Ruled FIXED by verify-M0-003 (docs/verification/m0-literature-matrix_pass3.md).
   - id: M0-F07
-    resolved: false
+    resolved: true
     summary: 'Label provenance: barfoot.eq.cayley=''14a'' cannot be decided from cached sources -- ''14a'',''15a'',''16a''
       never appear in the cached Barfoot HTML; the test parser assigns sub-letters by row position and
       also invents ''30b'' (Barfoot) and ''25c'' (Rai) and files Rai rows under wrong labels (25a, 25b,
       block 37). The citation ''IJRR 44(3):366-387'' is not in the cached source. Rai fixture size recorded
       inconsistently (456,935 vs 462,407 bytes).'
+    resolution: Ruled FIXED by verify-M0-003 (docs/verification/m0-literature-matrix_pass3.md).
   - id: M0-F08
-    resolved: false
+    resolved: true
     summary: 'Remaining tests that cannot fail: C06 numeric check (forced by the preceding regex), C03
       draw loop (reads nothing from the table), C15 reversed-product check, C14/C15 self-consistency of
       YAML thresholds, the ''not in a numbered equation'' checks in C09/C12/sentinels and for continuous_time_ins,
       C14''s phi-is-NavState. O7 ''not a contradiction'' still a substring match. Tests leaning on the
       deriver: delama.group/manifold and rai.group checked only against the claim YAML; the C10 Barfoot
       verdict depends on the test author''s choice of residual equation.'
+    resolution: PARTIALLY fixed per verify-M0-003; the C06 isotropy line moves to M0-F10, the rest is
+      advisory M0-A01.
+  - id: M0-F10
+    resolved: false
+    summary: 'Isotropy is unchecked where it matters: inverting rai.isotropy_reason''s conclusion to ''a
+      tuning choice, not structurally forced'' survives, and C06''s `isotropy_required is (''isotropic
+      weight'' in ...)` line is always True. This is the clause M0-C06 asserts and the central Stage B
+      question. Also delama.linearized truncated to Eqs. (35)-(36) (drops (37)) survives.'
+  - id: M0-F11
+    resolved: false
+    summary: 'error_handedness has no written definition and the suite decides rai by a different rule
+      than the other rows. Orchestrator decision: the field means the invariance of the minimised error/cost
+      under group translation (the reading that justified barfoot = right-invariant and matches delama/gtsam).
+      Under it rai is left-invariant: r(S R_i, S R_j) = S r (4e-16), |r| 3.0717 unchanged under left translation,
+      2.8703 under right. Define the field in the table, decide every row by one rule, and verify rai
+      against the source.'
+  advisory_findings:
+  - id: M0-A01
+    summary: 'Low, non-blocking (pass 3): bare parent labels the source never prints are accepted by lookup
+      (rai 21, 22, 24-27; barfoot (14)); the table uses rai.eq.u_definitions=''26'' and ''Eqs. (14), (15)''
+      (M0-F09). Tests that cannot fail: C15 reversed-product (deliberate), sentinel constant patterns,
+      three O7 lines. Test-author choices: hand-written per-source regexes, _overlap heuristic, C01 scans
+      only when value is None.'
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
