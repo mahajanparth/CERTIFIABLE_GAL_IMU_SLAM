@@ -320,7 +320,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -420,10 +420,18 @@ milestones:
   - role: implementer
     agent_id: impl-M2-006-remediation
     started: '2026-10-13T01:51:17+00:00'
+    finished: '2026-10-13T01:55:38+00:00'
+    outcome: completed
+    note: '100/100. New test_c13c binds the three CayleyFactor residual methods to retyped Eq. (19)/(22b)
+      on a real and a synthetic non-symmetric factor; Q25/Q45/Q46 killed by 11-12 orders. I re-applied
+      the dRbar transpose: test_c13c fails.'
+  - role: verifier
+    agent_id: verify-M2-005
+    started: '2026-10-13T01:55:38+00:00'
     finished: null
     outcome: running
-    note: Bind the CayleyFactor residual methods to independent references and kill Q25/Q45/Q46 (F12);
-      fix the stale C25 hint.
+    note: Fifth pass with a fresh planted claim, focused on F12 and CayleyFactor wiring; regression replay
+      of earlier mutants.
   blocking_findings:
   - id: M2-F01
     resolved: true
