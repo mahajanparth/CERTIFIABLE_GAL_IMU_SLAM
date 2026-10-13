@@ -61,15 +61,40 @@ def so3_exp(w) -> np.ndarray:
     return np.eye(3) + (np.sin(th) / th) * K + ((1.0 - np.cos(th)) / th**2) * (K @ K)
 
 
+#: ``so3_log`` switches to its antipodal branch when ``cos(theta) < LOG_NEAR_PI_COS``
+#: (``theta > 2 pi / 3``).  Below it the ``theta / (2 sin theta)`` form loses at most
+#: ``~eps / sin(theta)`` <= 3e-16 relative; above it that loss grows without bound.
+LOG_NEAR_PI_COS = -0.5
+
+
 def so3_log(R) -> np.ndarray:
-    """``Log: SO(3) -> so(3)``, returning the rotation vector."""
+    """``Log: SO(3) -> so(3)``, returning the rotation vector (``theta in [0, pi]``).
+
+    Three branches.  Small angle: ``vee((R - R^T) / 2)``.  Generic: ``theta / (2 sin
+    theta) vee(R - R^T)``.  Near ``pi`` (M2-F24): that form divides a vanishing
+    antisymmetric part by a vanishing ``sin``, and ``arccos`` near ``-1`` amplifies
+    rounding by ``1 / sin(theta)`` (2.7e-3 error at ``pi - 1e-6``, garbage at ``pi``), so
+    there the angle is ``atan2(|vee(R - R^T)| / 2, (tr R - 1) / 2)`` and the axis is read
+    off the SYMMETRIC part ``(R + R^T) / 2 - cos(theta) I = (1 - cos theta) a a^T``, with
+    its sign taken from the antisymmetric part.  At exactly ``pi`` either sign is a
+    valid logarithm.
+    """
     R = np.asarray(R, dtype=float)
-    c = (np.trace(R) - 1.0) / 2.0
-    c = min(1.0, max(-1.0, c))
+    c_raw = (np.trace(R) - 1.0) / 2.0
+    c = min(1.0, max(-1.0, c_raw))
     th = float(np.arccos(c))
     if th < SMALL_ANGLE:
         return vee(0.5 * (R - R.T))
-    return (th / (2.0 * np.sin(th))) * vee(R - R.T)
+    if c >= LOG_NEAR_PI_COS:
+        return (th / (2.0 * np.sin(th))) * vee(R - R.T)
+    s_vec = 0.5 * vee(R - R.T)                       # sin(theta) a
+    th = float(np.arctan2(np.linalg.norm(s_vec), c_raw))
+    B = 0.5 * (R + R.T) - c_raw * np.eye(3)          # (1 - cos theta) a a^T
+    j = int(np.argmax(np.diag(B)))
+    a = B[:, j] / np.linalg.norm(B[:, j])
+    if float(a @ s_vec) < 0.0:
+        a = -a
+    return th * a
 
 
 def M1(w, T: float) -> np.ndarray:

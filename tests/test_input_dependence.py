@@ -615,7 +615,8 @@ def test_b1_single_step_reads_every_field():
     The covariance reference is the FD linearisation of the retyped step
     (:func:`_fd_step_jacobians`), ``A C0 A^T + Bg (sg^2/dt) Bg^T + Ba (sa^2/dt) Ba^T``,
     checked with the noise alone (``C0 = 0``, one source at a time, so a density error
-    cannot hide behind the other source or behind ``C0``) and with ``C0`` alone.
+    cannot hide behind the other source or behind ``C0``) and with ``C0`` alone at
+    EXACTLY zero densities (M2-F23).
     """
     rng = _rng(5)
     failures = []
@@ -629,8 +630,6 @@ def test_b1_single_step_reads_every_field():
             where = f"ForsterPreintegration(bias={half_bias}, dt={dt})"
             pim = B1.ForsterPreintegration(bias_hat=half_bias.copy(), dR=R0.copy(),
                                            dv=v0.copy(), dp=p0.copy(), dt_total=t0)
-            if pim.has_noise:
-                failures.append(f"{where}.has_noise is True with zero densities")
             _check(failures, f"{where}.b_g / b_a are not the bias halves",
                    max(mabs(pim.b_g, half_bias[0:3]), mabs(pim.b_a, half_bias[3:6])), 0.0)
             pim.integrate_measurement(omega, acc, dt)
@@ -642,6 +641,8 @@ def test_b1_single_step_reads_every_field():
                    1e-15)
             _check(failures, f"{where}.retract is not Exp", mabs(pim.retract(omega * dt),
                                                                  iexp(omega * dt)), TIER0)
+            if not np.array_equal(pim.cov, np.zeros((9, 9))):
+                failures.append(f"{where}: zero densities and zero cov give a nonzero cov")
 
         A, Bg, Ba = _fd_step_jacobians((R0, v0, p0), omega, acc, dt, bias)
         sgv = np.broadcast_to(np.asarray(sg, float), (3,))
@@ -658,12 +659,13 @@ def test_b1_single_step_reads_every_field():
                    f"dt={dt}, bias={bias})", rel(pim.cov, want), COV_FD_REL)
         L = rng.normal(size=(9, 9))
         C0 = 1e-4 * (L @ L.T)
+        # C0 alone, at EXACTLY zero densities (M2-F23: the old has_noise gate skipped
+        # Eq. (63) here and froze C0; this check used sigma = 1e-30 and could not see it)
         pim = B1.ForsterPreintegration(bias_hat=bias.copy(), dR=R0.copy(), dv=v0.copy(),
-                                       dp=p0.copy(), dt_total=t0, cov=C0.copy(),
-                                       sigma_g=1e-30, sigma_a=1e-30)
+                                       dp=p0.copy(), dt_total=t0, cov=C0.copy())
         pim.integrate_measurement(omega, acc, dt)
-        _check(failures, f"Eq. (63) one step does not propagate the initial cov (dt={dt})",
-               rel(pim.cov, A @ C0 @ A.T), COV_FD_REL)
+        _check(failures, f"Eq. (63) one step does not propagate the initial cov at zero "
+               f"densities (dt={dt})", rel(pim.cov, A @ C0 @ A.T), COV_FD_REL)
     _assert_no_failures(failures)
 
 
@@ -1001,6 +1003,15 @@ def test_b2_precision_and_weighted_square():
         _check(failures, "weighted_square(r)", abs(B2.weighted_square(r) - r @ r), 1e-14)
         _check(failures, "weighted_square(r, W)", abs(B2.weighted_square(r, S) - r @ S @ r),
                1e-13)
+    # M2-F21 (W46, U47): realistic and tiny traces.  The fixture's rotation-block trace is
+    # ~4e-8; nothing may clamp or regularise tr Sigma at any positive scale.
+    for scale in (4.3e-8, 1e-12, 1e-30, 1e-200):
+        L = rng.normal(size=(3, 3))
+        S = L @ L.T + 0.1 * np.eye(3)
+        S = S * (scale / np.trace(S))
+        want = 3.0 / (S[0, 0] + S[1, 1] + S[2, 2])
+        _check(failures, f"isotropic_precision at tr Sigma = {scale:.1e}",
+               abs(B2.isotropic_precision(S) - want) / want, 1e-14)
     _assert_no_failures(failures)
 
 
@@ -1126,6 +1137,8 @@ def test_b3_gal3_adapters():
         Xg = B3.gal3(R, p, v, t)
         _check(failures, f"gal3(R, p, v, t={t}) matrix", mabs(Xg.matrix(), igal3(R, p, v, t)),
                1e-15)
+        _check(failures, f"gal3(Rot3(R), p, v, t={t}) matrix (the Rot3 branch)",
+               mabs(B3.gal3(Rot3(R), p, v, t).matrix(), igal3(R, p, v, t)), 1e-15)
         comps = B3.gal3_components(Xg)
         _check(failures, f"gal3_components (t={t})",
                max(mabs(comps[0], R), mabs(comps[1], p), mabs(comps[2], v), abs(comps[3] - t)),
@@ -1428,6 +1441,15 @@ def test_b3_corrected_increment_gal3():
                abs(B3.corrected_increment_gal3(gal, np.zeros(6)).time() - Dt), 1e-13)
         _check(failures, f"{where}: clock with Dt = 1.37 given",
                abs(B3.corrected_increment_gal3(gal, np.zeros(6), Dt=1.37).time() - 1.37), 0.0)
+        # M2-F21 (W02): ``Dt`` overrides the CLOCK only.  The gravity terms that predict()
+        # adds are g * dt_total and g * dt_total^2 / 2 -- the PIM's own duration -- so R, v
+        # and p must be the increment whatever Dt is, under two non-zero gravities.
+        for g in (G_A, G_B):
+            gal_g = B3.integrate_edge(edge, b.copy(), g_W=g)
+            _check(failures, f"{where}, g = {g}, Dt = 1.37 given: (R, v, p) is not the "
+                   f"increment with clock 1.37",
+                   mabs(B3.corrected_increment_gal3(gal_g, np.zeros(6), Dt=1.37).matrix(),
+                        igal3(dR, dp, dv, 1.37)), 1e-11)
         for db_gtsam in (np.array([1e-4, -0.5e-4, 0.8e-4, 0, 0, 0]),
                          np.array([0, 0, 0, -0.7e-4, 1e-4, 0.3e-4])):
             bb = b + iswap(db_gtsam)
@@ -1536,6 +1558,12 @@ def test_b3_bias_jacobian_recursion():
 # ======================================================================================
 
 
+#: every array-valued field of ``CayleyFactor``, typed here (Rai Sec. IV-A's factor data:
+#: bbar, the three preintegrated increments and the five frozen Jacobians)
+CAYLEY_FACTOR_ARRAY_FIELDS = ("bbar", "dRbar", "dvbar", "dpbar", "J_R",
+                              "A_vg", "A_va", "A_pg", "A_pa")
+
+
 @pytest.mark.claim("M2-F18")
 def test_f18_constructors_do_not_alias():
     """Build every ``src`` object from caller arrays, then overwrite the caller's arrays in
@@ -1579,7 +1607,8 @@ def test_f18_constructors_do_not_alias():
     if not np.array_equal(f.xi(FIX_BG), xi_before):
         failures.append("CayleyFactor.xi moves when the caller's bbar is overwritten")
     f, fields = _random_factor(rng, 0.73, BIAS_BOTH)
-    names = B2.CayleyFactor._ARRAY_FIELDS
+    # M2-F22 (W07, W08): the field list is the TEST's, never src's ``_ARRAY_FIELDS``
+    names = CAYLEY_FACTOR_ARRAY_FIELDS
     snap = snapshot(f, names)
     for n in names:
         fields[n][...] = 3.0
@@ -1609,4 +1638,348 @@ def test_f18_constructors_do_not_alias():
     w[:] = 9.0
     fb[:] = 9.0
     compare("Edge", e, snap)
+    _assert_no_failures(failures)
+
+
+# ======================================================================================
+# Verification pass 8 (docs/verification/stage-b_m2-baselines_pass8.md): M2-F21 - M2-F25
+# ======================================================================================
+
+
+@pytest.mark.claim("M2-F23")
+def test_f23_initial_covariance_propagates_at_zero_density():
+    """``ForsterPreintegration(cov=C0)`` with sigma_g = sigma_a = 0 EXACTLY must carry C0
+    through every step: ``C_n = A_n ... A_1 C0 A_1^T ... A_n^T``, each ``A_k`` the FD
+    linearisation of the retyped Euler step (:func:`_fd_step_jacobians`) along the
+    retyped trajectory.  Pass 8 measured the shipped gate leaving ``cov`` bit-identical
+    to C0 after 200 steps, 92% from the propagated value."""
+    failures = []
+    C0 = np.diag(np.arange(1.0, 10.0)) * 1e-4
+    gyro_tv, accel_tv, _ = T.time_varying_stream(40, 4.7e-3)
+    cases = (("EDGE_A (200 steps, dt 1e-3)", EDGE_A.gyro_stream(), EDGE_A.accel_stream(),
+              EDGE_A.dt, BIAS_BOTH),
+             ("time-varying stream (40 steps, dt 4.7e-3)", gyro_tv, accel_tv, 4.7e-3,
+              BIAS_GYRO))
+    for label, gyro, accel, dt, bias in cases:
+        for cls in (B1.ForsterPreintegration, B2.CayleyPreintegration):
+            retract = iexp if cls is B1.ForsterPreintegration else icay
+            pim = cls(bias_hat=bias.copy(), cov=C0.copy())
+            state = (np.eye(3), np.zeros(3), np.zeros(3))
+            C = C0.copy()
+            for omega, acc in zip(gyro, accel):
+                pim.integrate_measurement(omega, acc, dt)
+                A, _, _ = _fd_step_jacobians(state, omega, acc, dt, bias, retract=retract)
+                C = A @ C @ A.T
+                state = ieuler([omega], [acc], dt, bias, retract, start=state)
+            moved = rel(C, C0)
+            assert moved >= 1e-2, f"{label}: the reference does not move C0 ({moved:.1e})"
+            _check(failures, f"{cls.__name__} at zero densities does not propagate the "
+                   f"initial cov over {label}", rel(pim.cov, C), COV_FD_REL)
+    _assert_no_failures(failures)
+
+
+@pytest.mark.claim("M2-F24")
+def test_f24_so3_log_near_pi():
+    """``so3_log`` approaching and AT ``pi``, 300 random axes per angle, against
+    ``scipy.spatial.transform.Rotation.as_rotvec`` of the same matrix (quaternion route,
+    no ``src``).  At ``theta = pi`` the sign of the axis is not unique, so there the check
+    is ``Exp(so3_log(R)) == R`` and ``|so3_log(R)| == pi``.  Pass 8 measured the shipped
+    function wrong by 2.7e-3 at ``pi - 1e-6``, 2.6e8 at ``pi - 1e-8`` and by a norm-15
+    vector at ``pi`` for 36% of axes.  No floating-point warning may be raised."""
+    import warnings
+    from scipy.spatial.transform import Rotation
+
+    rng = _rng(53)
+    failures = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for gap in (1e-1, 1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 0.0):
+            th = np.pi - gap
+            worst = 0.0
+            for _ in range(300):
+                a = _unit(rng.normal(size=3))
+                R = Rotation.from_rotvec(th * a).as_matrix()
+                try:
+                    got = np.asarray(T.so3_log(R), dtype=float)
+                except Warning as w:                         # pragma: no cover
+                    failures.append(f"so3_log at pi - {gap:.0e} raises {w!r}")
+                    break
+                if gap == 0.0:
+                    err = max(mabs(Rotation.from_rotvec(got).as_matrix(), R),
+                              abs(float(np.linalg.norm(got)) - np.pi))
+                else:
+                    err = mabs(got, Rotation.from_matrix(R).as_rotvec())
+                worst = max(worst, err if np.isfinite(err) else np.inf)
+            _check(failures, f"so3_log at theta = pi - {gap:.0e}", worst, 1e-13)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F25: the small-angle branches against high-precision (mpmath) references
+# --------------------------------------------------------------------------------------
+
+def _mp():
+    import mpmath
+    mpmath.mp.dps = 60
+    return mpmath
+
+
+def _mp_hat(mpmath, v):
+    return mpmath.matrix([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+
+
+def _mp_norm(mpmath, v):
+    return mpmath.sqrt(sum(x * x for x in v))
+
+
+def _mp_to_np(M):
+    return np.array([[float(M[i, j]) for j in range(M.cols)] for i in range(M.rows)])
+
+
+def _mp_exp(mpmath, phi):
+    th = _mp_norm(mpmath, phi)
+    K = _mp_hat(mpmath, phi)
+    return mpmath.eye(3) + (mpmath.sin(th) / th) * K + ((1 - mpmath.cos(th)) / th**2) * (K * K)
+
+
+def _mp_jr(mpmath, phi):
+    th = _mp_norm(mpmath, phi)
+    K = _mp_hat(mpmath, phi)
+    return (mpmath.eye(3) - ((1 - mpmath.cos(th)) / th**2) * K
+            + ((th - mpmath.sin(th)) / th**3) * (K * K))
+
+
+def _mp_M1_M2(mpmath, w, Tt):
+    """``int_0^T Exp(w s) ds`` and its integral, exact in ``mp`` (unit-axis form)."""
+    th = _mp_norm(mpmath, w)
+    K = _mp_hat(mpmath, [x / th for x in w])
+    I3 = mpmath.eye(3)
+    M1 = Tt * I3 + ((1 - mpmath.cos(th * Tt)) / th) * K + (Tt - mpmath.sin(th * Tt) / th) * (K * K)
+    M2 = (Tt**2 / 2 * I3 + ((Tt - mpmath.sin(th * Tt) / th) / th) * K
+          + (Tt**2 / 2 - (1 - mpmath.cos(th * Tt)) / th**2) * (K * K))
+    return M1, M2
+
+
+def _offdiag_rel(got, want):
+    """max over OFF-diagonal entries of |got - want| / |want|: the entries where a K^2
+    coefficient is a relative, not a sub-ulp, effect at small angles."""
+    m = ~np.eye(3, dtype=bool)
+    return float((np.abs(np.asarray(got) - want)[m] / np.abs(want)[m]).max())
+
+
+#: small-angle test vectors: all components comparable, so every off-diagonal entry is a
+#: ~|theta| quantity; norms inside the 1e-8 series branch, and (for so3_log / W19) between
+#: 1e-8 and 1e-6
+_SMALL_DIRS = (np.array([0.62, -0.48, 0.55]), np.array([-0.41, 0.70, 0.52]))
+
+
+@pytest.mark.claim("M2-F25")
+def test_f25_series_branches_against_mpmath():
+    """``so3_exp``, ``so3_right_jacobian``, ``M1``, ``M2`` (series branch, |theta| = 9e-9
+    and 4e-9) and ``cayley_vector`` (its ``1e-12`` branch boundary, |theta| = 9.9e-7 and
+    3e-7) against 60-digit ``mpmath`` closed forms, input rounded to double first.
+
+    Bounds and what each separates (pass-8 mutants):
+    * Exp, M1, M2 off-diagonal entries, RELATIVE 1e-12: a dropped ``K^2`` term is
+      ~|theta| relative (Q39 3.7e-9, W17 9.3e-10, W18 6.9e-10); the series' own
+      truncation is ~theta^2 ~ 1e-16;
+    * Jr, ABSOLUTE 1e-15: a flipped ``K`` sign is |theta| ~ 9e-9 (Q01);
+    * cayley_vector, RELATIVE 1e-14: ``2 tan(theta/2) / theta - 1 = theta^2 / 12`` is
+      8.2e-14 at 9.9e-7 (W15: threshold 1e-6); the double evaluation is a few ulp."""
+    mpmath = _mp()
+    failures = []
+    for d in _SMALL_DIRS:
+        for nrm in (9e-9, 4e-9):
+            phi = nrm * d / np.linalg.norm(d)
+            mphi = [mpmath.mpf(float(x)) for x in phi]
+            _check(failures, f"so3_exp series branch |phi| = {nrm:.0e} (off-diagonal, rel)",
+                   _offdiag_rel(T.so3_exp(phi), _mp_to_np(_mp_exp(mpmath, mphi))), 1e-12)
+            _check(failures, f"so3_right_jacobian series branch |phi| = {nrm:.0e} (abs)",
+                   mabs(B1.so3_right_jacobian(phi), _mp_to_np(_mp_jr(mpmath, mphi))), 1e-15)
+            for Tt in (0.37, 0.73):
+                M1w, M2w = _mp_M1_M2(mpmath, mphi, mpmath.mpf(Tt))
+                _check(failures, f"M1 series branch |w| = {nrm:.0e}, T = {Tt} (off-diag, rel)",
+                       _offdiag_rel(T.M1(phi, Tt), _mp_to_np(M1w)), 1e-12)
+                _check(failures, f"M2 series branch |w| = {nrm:.0e}, T = {Tt} (off-diag, rel)",
+                       _offdiag_rel(T.M2(phi, Tt), _mp_to_np(M2w)), 1e-12)
+        for nrm in (9.9e-7, 3e-7):
+            phi = nrm * d / np.linalg.norm(d)
+            mphi = [mpmath.mpf(float(x)) for x in phi]
+            th = _mp_norm(mpmath, mphi)
+            want = np.array([float(2 * mpmath.tan(th / 2) / th * x) for x in mphi])
+            _check(failures, f"cayley_vector |phi| = {nrm:.1e} (rel)",
+                   rel(B2.cayley_vector(phi), want), 1e-14)
+    _assert_no_failures(failures)
+
+
+@pytest.mark.claim("M2-F25")
+def test_f25_so3_log_small_angles_against_mpmath():
+    """``so3_log(R)`` for ``R`` = the 60-digit ``mpmath`` Exp of ``phi``, rounded to
+    double, against ``phi``:
+
+    * 1e-8 < |phi| < 1e-6 (9e-7, 3e-7), RELATIVE 1e-14.  This is the GENERIC branch,
+      whose ``theta / (2 sin theta)`` is insensitive to the rounding of ``arccos``; the
+      series value ``vee((R - R^T)/2)`` is low by ``theta^2/6`` = 1.35e-13 at 9e-7 (W19:
+      ``SMALL_ANGLE = 1e-6``);
+    * |phi| < 1e-8, 400 random vectors, per component within 0.75 ulp of the 60-digit
+      log of the double matrix.  The series branch rounds once (``R21 - R12``) and its
+      truncation ``theta^2/6 < 1.7e-17`` is 0.15 ulp, so it is inside 0.65 ulp; Q44
+      (``arccos`` clamped at ``1 - 1e-15``) forces the generic branch at a wrong angle,
+      a ``(1 + 3.3e-16)`` factor that lands 1-2 ulp off."""
+    mpmath = _mp()
+    failures = []
+    for d in _SMALL_DIRS:
+        for nrm in (9e-7, 3e-7):
+            phi = nrm * d / np.linalg.norm(d)
+            mphi = [mpmath.mpf(float(x)) for x in phi]
+            R = _mp_to_np(_mp_exp(mpmath, mphi))
+            _check(failures, f"so3_log at |phi| = {nrm:.0e} (generic branch, rel)",
+                   rel(T.so3_log(R), phi), 1e-14)
+    rng = _rng(59)
+    worst = 0.0
+    for _ in range(400):
+        phi = rng.uniform(1e-10, 9.9e-9) * _unit(rng.normal(size=3))
+        R = _mp_to_np(_mp_exp(mpmath, [mpmath.mpf(float(x)) for x in phi]))
+        Rm = mpmath.matrix(R.tolist())
+        s = [(Rm[2, 1] - Rm[1, 2]) / 2, (Rm[0, 2] - Rm[2, 0]) / 2, (Rm[1, 0] - Rm[0, 1]) / 2]
+        sn = _mp_norm(mpmath, s)
+        want = [x * mpmath.asin(sn) / sn for x in s]
+        got = T.so3_log(R)
+        for i in range(3):
+            ulps = abs(mpmath.mpf(float(got[i])) - want[i]) / np.spacing(abs(float(want[i])))
+            worst = max(worst, float(ulps))
+    _check(failures, "so3_log series branch, |phi| < 1e-8 (ulp of the 60-digit log)",
+           worst, 0.75)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F21: ``**kwargs`` of single_step / bias_jacobian_recursion reach GTSAM
+# --------------------------------------------------------------------------------------
+
+#: a sensor-to-body pose that is not the identity: rotation Rz(0.3)-ish about a tilted
+#: axis and a lever arm
+BPS_R = iexp([0.05, -0.08, 0.30])
+BPS_ARM = np.array([0.10, 0.20, -0.04])
+
+
+def _bps_params(g):
+    """A ``gtsam.PreintegrationParams`` built WITHOUT ``src`` (raw GTSAM)."""
+    params = gtsam.PreintegrationParams(np.asarray(g, dtype=float))
+    params.setBodyPSensor(gtsam.Pose3(Rot3(BPS_R), np.array(BPS_ARM)))
+    return params
+
+
+def _bps_correct(omega, acc, bias):
+    """The sensor->body measurement correction, retyped: unbias in the sensor frame,
+    rotate by ``bRs``, remove the lever-arm centripetal term ``w x (w x arm)``."""
+    w = BPS_R @ (np.asarray(omega) - bias[0:3])
+    a = BPS_R @ (np.asarray(acc) - bias[3:6]) - np.cross(w, np.cross(w, BPS_ARM))
+    return w, a
+
+
+def _bps_stream(gyro, accel, dt, bias, n):
+    U = np.eye(5)
+    for k in range(n):
+        w, a = _bps_correct(gyro[k], accel[k], bias)
+        dR, dv, dp = izoh(w, a, dt)
+        U = U @ igal3(dR, dp, dv, dt)
+    return U
+
+
+@pytest.mark.claim("M2-F21")
+def test_f21_kwargs_reach_gtsam_body_p_sensor():
+    """``single_step(..., params=P)`` and ``bias_jacobian_recursion(..., params=P)`` with
+    ``P.body_P_sensor`` non-identity, against the retyped sensor->body correction and a 5x5
+    ``expm`` increment (no ``src``).  Pass 8: dropping the kwargs moves ``single_step``
+    by 1.7e-4 (W14) and the recursion's ``J`` by 30% relative (W13); the inventory's old
+    "equivalent" note covered gravity only."""
+    failures = []
+    for n, dt, b, g, n_steps in ((12, 1.7e-3, BIAS_BOTH, G_A, 9),
+                                 (10, 4.1e-3, BIAS_ACCEL + BIAS_GYRO, G_B, 7)):
+        gyro, accel, _ = T.time_varying_stream(n, dt)
+        for k in (0, n - 1):
+            w, a = _bps_correct(gyro[k], accel[k], b)
+            dR, dv, dp = izoh(w, a, dt)
+            _check(failures, f"single_step(dt={dt}, bias={b}, params with body_P_sensor) "
+                   f"at k={k}", mabs(B3.single_step(gyro[k], accel[k], dt, b.copy(),
+                                                    params=_bps_params(g)).matrix(),
+                                     igal3(dR, dp, dv, dt)), 1e-14)
+        Js = B3.bias_jacobian_recursion(gyro, accel, dt, b.copy(), n_steps,
+                                        params=_bps_params(g))
+        h = 1e-6
+        for k in (0, n_steps - 1):
+            U0inv = np.linalg.inv(_bps_stream(gyro, accel, dt, b, k + 1))
+            J = np.zeros((10, 6))
+            for m in range(6):
+                e = np.zeros(6)
+                e[m] = h
+                J[:, m] = (igal3_log(U0inv @ _bps_stream(gyro, accel, dt, b + iswap(e), k + 1))
+                           - igal3_log(U0inv @ _bps_stream(gyro, accel, dt, b - iswap(e), k + 1))
+                           ) / (2 * h)
+            _check(failures, f"bias_jacobian_recursion(bias {b}, dt {dt}, params with "
+                   f"body_P_sensor) J_{k + 1}", rel(Js[k], J), 1e-6)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F22: outward aliasing and the Baseline 3 bias
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.claim("M2-F22")
+def test_f22_no_outward_aliasing():
+    """Arrays HANDED OUT by ``src`` must not be views of its state:
+
+    * ``ForsterPreintegration.increment()`` (and the Cayley subclass): writing into the
+      returned ``dR`` / ``dv`` / ``dp`` must not move the PIM or its ``predict`` (W09);
+    * ``.b_g`` / ``.b_a``: writing into them must not move ``bias_hat`` or the next step;
+    * ``GalileanPreintegration.bias_hat`` is read-only, and is GTSAM's own ``biasHat``:
+      an in-place edit must raise, and must never leave ``predict`` at a bias GTSAM is not
+      integrating at (S39: pass 8 measured 4.2e-2)."""
+    failures = []
+    rng = _rng(61)
+    state = T.NavTriple(*STATE_A)
+    for cls in (B1.ForsterPreintegration, B2.CayleyPreintegration):
+        pim = B1.integrate_edge(EDGE_A, BIAS_BOTH.copy(), cls=cls)
+        before = [x.copy() for x in (pim.dR, pim.dv, pim.dp)]
+        pred = pim.predict(state, G_A).as_tuple()
+        for x in pim.increment():
+            x[...] = 4.0
+        if max(mabs(x, y) for x, y in zip((pim.dR, pim.dv, pim.dp), before)) != 0.0:
+            failures.append(f"{cls.__name__}.increment() returns views of the PIM's state")
+        if max(mabs(x, y) for x, y in zip(pim.predict(state, G_A).as_tuple(), pred)) != 0.0:
+            failures.append(f"{cls.__name__}.predict moves after the caller writes into "
+                            f"increment()")
+        b0 = pim.bias_hat.copy()
+        pim.b_g[...] = 0.5
+        pim.b_a[...] = 0.5
+        if not np.array_equal(pim.bias_hat, b0):
+            failures.append(f"{cls.__name__}.b_g / .b_a are views into bias_hat")
+    omega, acc = rng.normal(size=3), rng.normal(size=3)
+    ref = ieuler([omega], [acc], 1e-3, BIAS_BOTH)
+    pim = B1.ForsterPreintegration(bias_hat=BIAS_BOTH.copy())
+    pim.b_g[...] = 0.0
+    pim.integrate_measurement(omega, acc, 1e-3)
+    if max(mabs(x, y) for x, y in zip(pim.increment(), ref)) > EULER_PIN:
+        failures.append("a write into ForsterPreintegration.b_g moves the next step")
+
+    for b, g in ((BIAS_BOTH, G_A), (BIAS_GYRO, G_B)):
+        gal = B3.integrate_edge(EDGE_B, b.copy(), g_W=g)
+        before = gal.predict(state).as_tuple()
+        try:
+            gal.bias_hat[:] = FIX_BIAS
+            failures.append("GalileanPreintegration.bias_hat accepts an in-place write")
+        except ValueError:
+            pass
+        if not np.array_equal(np.asarray(gal.bias_hat), b):
+            failures.append("GalileanPreintegration.bias_hat is no longer its input after "
+                            "an attempted in-place edit")
+        if not np.array_equal(iswap(np.asarray(gal.pim.biasHat().vector())), np.asarray(
+                gal.bias_hat)):
+            failures.append("GalileanPreintegration.bias_hat desynchronises from GTSAM's "
+                            "biasHat")
+        after = gal.predict(state).as_tuple()
+        if max(mabs(x, y) for x, y in zip(before, after)) != 0.0:
+            failures.append("Baseline 3 predict moves after an in-place edit of bias_hat")
     _assert_no_failures(failures)

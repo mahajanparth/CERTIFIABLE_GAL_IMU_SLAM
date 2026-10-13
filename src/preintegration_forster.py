@@ -78,11 +78,13 @@ class ForsterPreintegration:
 
     @property
     def b_g(self) -> np.ndarray:
-        return np.asarray(self.bias_hat, dtype=float)[0:3]
+        """A COPY of ``bias_hat[0:3]`` (M2-F22: never a view a caller could write through)."""
+        return np.array(self.bias_hat[0:3], dtype=float, copy=True)
 
     @property
     def b_a(self) -> np.ndarray:
-        return np.asarray(self.bias_hat, dtype=float)[3:6]
+        """A COPY of ``bias_hat[3:6]`` (M2-F22)."""
+        return np.array(self.bias_hat[3:6], dtype=float, copy=True)
 
     # -- Eq. (35)-(37) -----------------------------------------------------------------
     def integrate_measurement(self, omega_meas, acc_meas, dt: float) -> None:
@@ -95,7 +97,10 @@ class ForsterPreintegration:
         w = np.asarray(omega_meas, dtype=float) - self.b_g
         a = np.asarray(acc_meas, dtype=float) - self.b_a
 
-        if self.has_noise:
+        # M2-F23: the gate is "is there anything to propagate", not "is there noise".  A
+        # nonzero initial ``cov`` must be carried through ``A cov A^T`` even at zero
+        # densities.  Skipping is exact only when both are zero (then Eq. (63) gives 0).
+        if self.has_noise or np.any(self.cov != 0.0):
             self._propagate_covariance(w, a, dt)
 
         dR_ik = self.dR

@@ -137,13 +137,27 @@ class GalileanPreintegration:
 
     def __init__(self, bias_hat, params=None, g_W=G_W,
                  sigma_g: float = 0.0, sigma_a: float = 0.0, combined: bool = False):
-        self.bias_hat = np.array(bias_hat, dtype=float, copy=True)   # M2-F18: no aliasing
+        bias_hat = np.array(bias_hat, dtype=float, copy=True)   # M2-F18: no aliasing
         self.combined = combined
         self.params = params if params is not None else make_params(
             g_W, sigma_g, sigma_a, combined=combined)
         pim_cls = (gtsam.PreintegratedCombinedMeasurementsG if combined
                    else gtsam.PreintegratedImuMeasurementsG)
-        self.pim = pim_cls(self.params, to_gtsam_bias(self.bias_hat))
+        self.pim = pim_cls(self.params, to_gtsam_bias(bias_hat))
+
+    @property
+    def bias_hat(self) -> np.ndarray:
+        """The integration bias, project order ``[b_g; b_a]``, READ-ONLY.
+
+        M2-F22 (pass 8, S39): this used to be a second, writable copy of GTSAM's
+        ``biasHat``; an in-place edit moved ``predict`` by 4.2e-2 while GTSAM kept
+        integrating at the old value.  It is now read off GTSAM's own ``biasHat`` -- one
+        source of truth -- and returned non-writeable, so ``gal.bias_hat[:] = x`` raises
+        instead of silently desynchronising (or silently doing nothing).
+        """
+        b = from_gtsam_bias(self.pim.biasHat())
+        b.setflags(write=False)
+        return b
 
     def integrate_measurement(self, omega_meas, acc_meas, dt: float) -> None:
         """NB GTSAM's argument order is ``(measuredAcc, measuredOmega, dt)``."""
