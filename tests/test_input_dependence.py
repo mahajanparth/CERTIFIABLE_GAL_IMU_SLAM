@@ -1424,6 +1424,8 @@ def test_b3_corrected_increment_gal3():
         _check(failures, f"{where}, db = 0, is not the increment at bias_hat",
                mabs(B3.corrected_increment_gal3(gal, np.zeros(6)).matrix(),
                     igal3(dR, dp, dv, Dt)), 1e-11)
+        _check(failures, f"{where}: clock with Dt = None is not the literal edge duration",
+               abs(B3.corrected_increment_gal3(gal, np.zeros(6)).time() - Dt), 1e-13)
         _check(failures, f"{where}: clock with Dt = 1.37 given",
                abs(B3.corrected_increment_gal3(gal, np.zeros(6), Dt=1.37).time() - 1.37), 0.0)
         for db_gtsam in (np.array([1e-4, -0.5e-4, 0.8e-4, 0, 0, 0]),

@@ -1019,9 +1019,11 @@ def test_pass5_survivor_is_killed_end_to_end(monkeypatch, mutant_id, apply_mutat
 
 
 def _run_in_copy(root, nodeids, src_file=None, edit=None):
-    """Copy ``src``, ``tests/test_baselines.py``, ``conftest.py`` and ``pyproject.toml``
-    into ``root``, optionally apply ``edit`` (``[(old, new), ...]``, each anchor unique) to
-    ``src/<src_file>``, and run ``nodeids`` of ``test_baselines.py`` there."""
+    """Copy ``src``, the two claim-test modules (``tests/test_baselines.py``,
+    ``tests/test_input_dependence.py``), ``conftest.py`` and ``pyproject.toml`` into
+    ``root``, optionally apply ``edit`` (``[(old, new), ...]``, each anchor unique) to
+    ``src/<src_file>``, and run ``nodeids`` there.  A node id without ``::`` names a test
+    in ``test_baselines.py``; otherwise it is a full ``tests/<file>::<test>`` id."""
     import shutil
     import subprocess
     import sys
@@ -1031,7 +1033,8 @@ def _run_in_copy(root, nodeids, src_file=None, edit=None):
     shutil.copytree(repo / "src", root / "src",
                     ignore=shutil.ignore_patterns("__pycache__"))
     (root / "tests").mkdir(parents=True)
-    shutil.copy(repo / "tests" / "test_baselines.py", root / "tests")
+    for name in ("test_baselines.py", "test_input_dependence.py"):
+        shutil.copy(repo / "tests" / name, root / "tests")
     shutil.copy(repo / "conftest.py", root)
     shutil.copy(repo / "pyproject.toml", root)
     if edit:
@@ -1043,9 +1046,17 @@ def _run_in_copy(root, nodeids, src_file=None, edit=None):
         path.write_text(text)
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-        + [f"tests/test_baselines.py::{n}" for n in nodeids],
+        + [n if "::" in n else f"tests/test_baselines.py::{n}" for n in nodeids],
         cwd=str(root), capture_output=True, text=True)
     return proc.returncode, proc.stdout
+
+
+def _failure_lines(out):
+    """Only pytest's ``E `` lines: the exception message and the repr of the failing
+    expression.  pytest also ECHOES the failing test's source, so a message typed as a
+    literal in the test is "present" in the raw output whichever assertion failed
+    (verification pass 7, item 15 / M2-F19); matching only ``E `` lines removes that."""
+    return "\n".join(line for line in out.splitlines() if line.startswith("E "))
 
 
 _C25B = "test_c25b_baseline3_noise_model_is_built_from_the_stated_densities"
@@ -1119,10 +1130,11 @@ def pass6_control(tmp_path_factory):
 def _assert_file_level_kill(root, mutant_id, src_file, edit, killer, message):
     code, out = _run_in_copy(root, [killer], src_file, edit)
     assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killer}"
+    failed_on = _failure_lines(out)
     for text in ((message,) if isinstance(message, str) else message):
-        assert text in out, (
+        assert text in failed_on, (
             f"{mutant_id} kills {killer}, but not on the intended assertion "
-            f"({text!r}):\n{out[-3000:]}")
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
 
 
 @pytest.mark.claim("M2-F15")
