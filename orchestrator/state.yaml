@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -360,9 +360,19 @@ milestones:
   - role: implementer
     agent_id: impl-M1-008-remediation
     started: '2026-10-13T22:36:15+00:00'
+    finished: '2026-10-13T22:51:17+00:00'
+    outcome: completed
+    note: '145 passed; harness 70/70 killed. R01/R32 pinned against 40-digit mpmath; C22 small-angle check
+      relative; all four Taylor coefficients pinned for accuracy; gravity-diversity and negative-Dt input
+      guards; six data-implied assertions deleted or relabelled as guards. No src change. I changed the
+      c2 coefficient (30240 -> 30200): C24''s Taylor test fails. Open: R07''s edit is unrecorded.'
+  - role: verifier
+    agent_id: verify-M1-009
+    started: '2026-10-13T22:51:17+00:00'
     finished: null
     outcome: running
-    note: Kill R01, R32, R03, R05, F1, F2; bind or delete the six implied assertions (F17).
+    note: Eighth pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
+      floor.
   blocking_findings:
   - id: M1-F01
     resolved: true
