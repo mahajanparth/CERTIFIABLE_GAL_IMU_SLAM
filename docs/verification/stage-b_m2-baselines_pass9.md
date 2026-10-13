@@ -267,7 +267,7 @@ Two choices of τ need stating:
 
 | mutant | quantity Q | tightest claim τ | τ/10 | measured E (broad sample; claim inputs) | ruling |
 |---|---|---|---|---|---|
-| **R36** J_R ×(1+5e-9) | B2 factor J_R | C21 1e-6 rel | 1e-7 rel | 5.0e-9 rel (all edges incl. high-rate); \|δJ db\| at 5e-2 = 1.8e-10. Claim quantities: C10 (db = 0) 0.0, C13a bitwise unchanged, C13b min 3.1e-5 unchanged | **equivalent** |
+| **R36** J_R ×(1+5e-9) | B2 factor J_R | C21 1e-6 rel | 1e-7 rel | 5.0e-9 rel (an exact scale, the same on every edge); \|δJ db\| at 5e-2 = 1.8e-10. Claim quantities: C10 (db = 0) 0.0, C13a bitwise unchanged, C13b min 3.1e-5 unchanged | **equivalent** |
 | **R37** A_va ×(1+5e-8) | B2 factor A_va | C21 1e-6 rel | 1e-7 | 5.0e-8 rel; C10 0.0 | **equivalent** (2x margin) |
 | **S16** A_pg ×(1+5e-8) | B2 factor A_pg | C21 1e-6 rel | 1e-7 | 5.0e-8 rel; C10 0.0 | **equivalent** (2x) |
 | **S02** dR̄·Cay(3e-13 e₃) | B2 preintegrated rotation dR̄ | C22 per-edge gap 1e-3 rel × 2.3257e-8 = 2.3e-11 | 2.3e-12 | 3.0e-13 rad | **equivalent** (would not be under C07's 1e-13 matrix tolerance, which concerns Cay vs Exp, not dR̄) |
@@ -300,7 +300,28 @@ Two choices of τ need stating:
 
 ### 5.4 Complete survivor list (non-equivalent)
 
-**FULL-SUITE RESULTS PENDING** (guard-only status is filled in below once the full runs finish)
+**Full-suite status.** All nine are run on the full suite (232 tests):
+* X15, X21, X22, X24, X31, X41, W12 and P23 pass **232/232**, so not even a change detector fires.
+* S21 dies only on `test_pass5_replay_is_faithful`, which is a change detector: it compares `src` with a copy of `src`. The same run also logged 37 fixture errors in the `test_mutation` copy-runner fixtures. They happened under a load average of 172-185, and no reference test failed.
+* For information, among the equivalent replays: R36, R37 and S16 also die only on `test_pass5_replay_is_faithful`; R36's run had the same 37 load-induced fixture errors. S02 dies only on that test and on the `pass6` S48 anchor. All of these are change detectors.
+
+**Owner clarification received during this pass (rounding floor).** The 1/10-of-tolerance threshold never goes below 8 ulp of the quantity, which is about 2e-15 at unit scale. A mutant whose effect is at rounding level, and which is no worse than the clean code, is equivalent. I re-applied this to every ruling:
+* **It changes none of the nine survivors.** Their effects are 3.55e-15 to 1.19e-13 on unit-scale M1, which is worse than the clean code (3.3e-15 vs quad at \|w\| = 5); 2.2e-13 on unit-scale states; and relative changes of 4e-9 to 100% (covariances) or 1.9e-7 to 3.1e-6 (Jacobians). All of these are far above rounding level.
+* **Among the equivalents**, it additionally covers X01 under the stricter 1e-13 matrix reading: 1.78e-14 is still above 8 ulp of π (3.6e-15), so the C22 mapping remains the operative one. It also covers X13 (6.7e-16), X10 (3.6e-15 ≈ 8 ulp of π), X34 (3.6e-15 at det ≈ 1 to 7) and X51 (2.8e-14 on \|p\| ≈ 300, i.e. < 1 ulp).
+
+**Input-domain sensitivity, for the owner.** I measured the effects over a broad sample of valid inputs, not only over the claims' own inputs (fixture edges, the C21 stream, default eps). If equivalence is instead judged on the claims' own inputs only, six of the nine become equivalent:
+
+| mutant | effect on claim inputs | threshold |
+|---|---|---|
+| X15 | fixture edges 3.9e-16 / 5.6e-16 | < 1e-15 |
+| P23 | 4.8e-8 | < 1e-7 |
+| S21 | 4.4e-8 | < 1e-7 |
+| W12 | 1.5e-8 | < 1e-7 |
+| X41 | ≤ 1.1e-14 on orthonormal states | < 1e-13 |
+| X21, X22 | no claim input uses per-axis zero or 1e-21 densities | — |
+
+X24 and X31 stay non-equivalent on the fixture itself: 9.5e-9 and 4.0e-9 relative, against 2.7e-10.
+
 
 | mutant | change | distinguishing input and effect | governing τ/10 |
 |---|---|---|---|
@@ -369,4 +390,10 @@ All numbers are mine. `src` was called only as the system under test.
 
 ## 8. Final state
 
-PENDING
+This commit contains the report only.
+
+Full suite on the clean tree (`7467b0c`, i.e. `8f99912` plus this report): **232 passed** in 364.4 s. At the start of the pass it was 232 passed in 64.5 s; the machine's load average later rose to 60-185.
+
+`git status` of the worktree was clean before and after every sweep, and every mutant lived in a scratchpad copy.
+
+**Gate: NOT passed.** 9 non-equivalent survivors remain, all low: X15, X21, X22, X24, X31, X41, W12, P23 and S21.
