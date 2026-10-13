@@ -51,6 +51,7 @@ C24 = G3 + "test_gamma1_invertibility_and_taylor_branch"
 C21 = G3 + "test_log_and_gamma1_inverse"
 C41 = IMU + "test_increment_left_invariant_ode"
 C45 = IMU + "test_preintegration_chaining_is_the_group_product"
+C30 = G3 + "test_cayley_constraints_degree_two"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -185,6 +186,19 @@ MUTATIONS = {
         "    c2 = (1.0 - theta * s / (2.0 * omc)) / t2\n",
         "    c2 = 1.0 / t2 - (1.0 + np.cos(theta)) / (2.0 * theta * s)\n",
         [C21], {C21: "assert ours_worst <= 1e-13"},
+    ),
+    # ---- third-pass SURVIVORS (M1-F11), killed on the intended assertion -------
+    "cayley_symbolic_E3_no_alpha_u": (                            # verifier V22
+        "src/gal3.py",
+        "    E3 = S * pe - (wv + alpha / 2 * uv)\n",
+        "    E3 = S * pe - wv\n",
+        [C30], {C30: "assert worst_sym_cay <= 1e-12"},
+    ),
+    "cayley_symbolic_S_plus": (                                   # verifier V23
+        "src/gal3.py",
+        "    S = sp.eye(3) - P / 2\n",
+        "    S = sp.eye(3) + P / 2\n",
+        [C30], {C30: "assert worst_sym_cay <= 1e-12"},
     ),
 }
 

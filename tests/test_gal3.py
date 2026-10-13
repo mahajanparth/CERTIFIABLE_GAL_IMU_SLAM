@@ -763,6 +763,77 @@ def test_cayley_constraints_degree_two():
     degrees = [sp.Poly(e, *syms).total_degree() for e in exprs]
     assert max(degrees) == 2, degrees
 
+    # CONTENT of the 15 symbolic expressions (count and degree alone are blind to a
+    # dropped (alpha/2) u term or a sign flip in S; mutation harness:
+    # cayley_symbolic_E3_no_alpha_u, cayley_symbolic_S_plus).  The expressions are
+    # lambdified and fed values BY SYMBOL NAME, so the reference does not depend on
+    # src's symbol ordering.  The reference Cayley point is the 5x5 solve
+    # (I5 - A/2)^-1 (I5 + A/2) with A = xi^ written by hand here -- nothing from src.
+    f = sp.lambdify(syms, exprs, "numpy")
+    names = [str(x) for x in syms]
+
+    def evaluate(phi, u, w, al, Re, ve, pe):
+        val = {"alpha": al}
+        for i in range(3):
+            val[f"phi{i}"], val[f"u{i}"], val[f"w{i}"] = phi[i], u[i], w[i]
+            val[f"ve{i}"], val[f"pe{i}"] = ve[i], pe[i]
+            for j in range(3):
+                val[f"Re{i}{j}"] = Re[i, j]
+        return np.array(f(*[val[n] for n in names]), dtype=float)
+
+    def sk(a):
+        return np.array([[0.0, -a[2], a[1]], [a[2], 0.0, -a[0]], [-a[1], a[0], 0.0]])
+
+    def cay_by_hand(phi, u, w, al):
+        A = np.zeros((5, 5))
+        A[0:3, 0:3], A[0:3, 3], A[0:3, 4], A[3, 4] = sk(phi), u, w, al
+        C = np.linalg.solve(I5 - 0.5 * A, I5 + 0.5 * A)
+        return C[0:3, 0:3], C[0:3, 3], C[0:3, 4]
+
+    def residual_by_hand(phi, u, w, al, Re, ve, pe):
+        # row-major E1 (9), then E2 (3), then E3 (3)
+        S = I3 - 0.5 * sk(phi)
+        return np.concatenate([(S @ Re - (I3 + 0.5 * sk(phi))).ravel(), S @ ve - u,
+                               S @ pe - (w + 0.5 * al * u)])
+
+    # (i) at true Cayley points all 15 expressions vanish
+    worst_sym_cay = 0.0
+    for _ in range(300):
+        xi = rand_xi_bounded_phi(r, 0.05, 2.9)
+        xi[9] = r.normal() + np.sign(r.normal()) * 0.5     # alpha != 0
+        phi, u, w, al = xi[0:3], xi[3:6], xi[6:9], xi[9]
+        Re, ve, pe = cay_by_hand(phi, u, w, al)
+        worst_sym_cay = max(worst_sym_cay,
+                            float(np.abs(evaluate(phi, u, w, al, Re, ve, pe)).max()))
+    assert worst_sym_cay <= 1e-12, worst_sym_cay
+
+    # (ii) at perturbed / arbitrary points the residuals take the right VALUES (both
+    # the symbolic and the numeric src forms), and those values are not small
+    worst_sym_val = worst_num_val = 0.0
+    smallest_pert = np.inf
+    for k in range(300):
+        phi, u, w = r.normal(size=3), r.normal(size=3), r.normal(size=3)
+        al = r.normal() + np.sign(r.normal()) * 0.5
+        Re, ve, pe = cay_by_hand(phi, u, w, al)
+        if k % 2:   # arbitrary point, unrelated to phi
+            Re, ve, pe = r.normal(size=(3, 3)), r.normal(size=3), r.normal(size=3)
+        else:       # a true Cayley point, perturbed
+            Re = Re + 0.1 * r.normal(size=(3, 3))
+            ve = ve + 0.1 * r.normal(size=3)
+            pe = pe + 0.1 * r.normal(size=3)
+        ref = residual_by_hand(phi, u, w, al, Re, ve, pe)
+        sym = evaluate(phi, u, w, al, Re, ve, pe)
+        num = np.concatenate([np.ravel(x) for x in
+                              gal3.cayley_constraint_residuals(phi, u, w, al, Re, ve, pe)])
+        scale = max(1.0, float(np.abs(ref).max()))
+        worst_sym_val = max(worst_sym_val, float(np.abs(sym - ref).max()) / scale)
+        worst_num_val = max(worst_num_val, float(np.abs(num - ref).max()) / scale)
+        smallest_pert = min(smallest_pert, float(np.abs(ref).max()))
+    assert worst_sym_val <= 1e-12, worst_sym_val
+    assert worst_num_val <= 1e-12, worst_num_val
+    # INPUT GUARD: the perturbed points are genuinely off the constraint surface
+    assert smallest_pert >= 1e-2, smallest_pert
+
 
 # ==========================================================================
 # the endpoint relation
