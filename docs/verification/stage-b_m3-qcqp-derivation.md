@@ -297,3 +297,6 @@ cn-RH-drop-VP-cols (C14).
 
 Baseline on the clean tree (d2371af): `pytest tests/` gives 108 passed in 3582 s. The post-commit run is
 recorded below.
+
+Final run on the clean tree at 65cbd1e (src/ and tests/ identical to d2371af): `pytest -q -p no:cacheprovider tests/` gives
+**108 passed in 86 s** (the machine was less loaded than during the baseline run).
