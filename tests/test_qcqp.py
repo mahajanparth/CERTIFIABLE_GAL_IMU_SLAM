@@ -1232,3 +1232,97 @@ def test_c35_autotight_cross_check():
         tol = max(1e-10, np.finfo(float).eps * sv[0] / sv[rank - 1])
         proj = Cf - (Cf @ N) @ N.T
         assert (np.linalg.norm(proj, axis=1) / np.linalg.norm(Cf, axis=1)).max() <= tol, names
+
+
+# ======================================================================================
+# C36 - C38: OPEN-HYPOTHESIS -- the Shor relaxation (the measurement the claims describe)
+# ======================================================================================
+#
+# These claims say "settle in M4".  The measurement is implemented here exactly as the
+# claims describe it (Clarabel, numerical rank with the 1e-6 relative floor, sigma_1/sigma_2,
+# Rai's eta) and the tests assert only what the claims assert.  A failure is a finding.
+
+from src.qcqp import sdp as SDP  # noqa: E402
+
+
+@functools.lru_cache(maxsize=None)
+def _shor(which, aniso=False, extra_key=None):
+    layout = LF.ANISO if aniso else LF.BASE
+    T = terms(which, "aniso" if aniso else "iso")
+    cs = CN.flat(fams(which, aniso))
+    if extra_key is not None:
+        cs = cs + list(_discovered(which))
+    res = SDP.solve_shor(CO.assemble_Q(T), cs, solver="CLARABEL")
+    eta, f = SDP.relative_gap(res, inst(which), layout, T)
+    return res, eta, f
+
+
+def _edge_sub(e):
+    """Edge-e sub-vector: R_i, v_i, p_i, R_j, v_j, p_j, b_i, the 30 liftings, s (67 entries)."""
+    return np.r_[np.arange(15 * e, 15 * e + 30), np.arange(45 + 6 * e, 51 + 6 * e),
+                 np.arange(63 + 30 * e, 93 + 30 * e), [S_IDX]]
+
+
+@functools.lru_cache(maxsize=None)
+def _discovered(which):
+    """Null-space directions per edge not spanned by the hand families, as Constraints."""
+    r = ref(which)
+    rng = np.random.default_rng(36)
+    out = []
+    for e in range(2):
+        sub = _edge_sub(e)
+        iu = np.triu_indices(67)
+        Phi = np.array([np.outer(zs, zs)[iu] for zs in
+                        (z_ref(random_state(rng), r)[sub] for _ in range(6000))])
+        _, sv, Vt = np.linalg.svd(Phi, full_matrices=True)
+        rank = int((sv > 1e-10 * sv[0]).sum())
+        N = Vt[rank:].T
+        keep = np.zeros(124, bool)
+        keep[sub] = True
+        H = []
+        for c in CN.flat(fams(which)):
+            rows, cols = c.A.nonzero()
+            if c.b == 0 and keep[rows].all() and keep[cols].all():
+                A = c.A.toarray()[np.ix_(sub, sub)]
+                C = 2 * A
+                C[np.diag_indices(67)] = np.diag(A)
+                H.append(C[iu])
+        Hn = np.array(H) @ N
+        _, s2, V2 = np.linalg.svd(Hn, full_matrices=True)
+        k = int((s2 > 1e-10 * s2[0]).sum())
+        for u in V2[k:]:
+            d = N @ u
+            Cm = np.zeros((67, 67))
+            Cm[iu] = d
+            Asub = 0.5 * (Cm + Cm.T)                  # off-diagonal coefficient 2 A_ab -> A_ab
+            Asub[np.diag_indices(67)] = np.diag(Cm)
+            A = np.zeros((124, 124))
+            A[np.ix_(sub, sub)] = Asub
+            out.append(CN.Constraint("AT", f"e{e} autotight", sp.csr_matrix(A), 0.0))
+    return tuple(out)
+
+
+@pytest.mark.claim("M3-C36")
+@pytest.mark.slow
+def test_c36_discovered_directions_tighten():
+    disc = _discovered("true")
+    assert len(disc) == 2 * 27, len(disc)
+    base, eta0, _ = _shor("true")
+    more, eta1, _ = _shor("true", extra_key="autotight")
+    assert more.rank < base.rank or eta1 < eta0, (base.rank, eta0, more.rank, eta1)
+
+
+@pytest.mark.claim("M3-C37")
+@pytest.mark.slow
+def test_c37_shor_tight_noise_free():
+    res, eta, f = _shor("true")
+    assert res.sv_ratio >= 1e5 and eta <= 1e-4, (res.status, res.primal, res.dual, res.sv_ratio,
+                                                 res.rank, eta, f)
+
+
+@pytest.mark.claim("M3-C38")
+@pytest.mark.slow
+def test_c38_aniso_keeps_tightness():
+    res, eta, f = _shor("true", aniso=True)
+    assert res.sv_ratio >= 1e5 and eta <= 1e-4, (res.status, res.primal, res.dual, res.sv_ratio,
+                                                 res.rank, eta, f)
