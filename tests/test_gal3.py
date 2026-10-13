@@ -85,6 +85,23 @@ def test_closure():
         worst = max(worst, gal3.structural_residual(P))
     assert worst <= 1e-12, worst
 
+    # The diagnostic must actually see each structural defect -- in particular the
+    # det = +1 part, which an orthogonal reflection block (R^T R = I, det = -1)
+    # violates alone.  Without this, dropping the det term from structural_residual
+    # makes the det check above vacuous (mutation harness: structural_residual_no_det).
+    X0 = gal(I3, r.normal(size=3), r.normal(size=3), r.normal())
+    defects = {}
+    X = X0.copy(); X[0:3, 0:3] = np.diag([1.0, 1.0, -1.0]); defects["det"] = X
+    X = X0.copy(); X[0:3, 0:3] *= 1.1; defects["orth"] = X
+    X = X0.copy(); X[3, 1] = 0.5; defects["row3"] = X
+    X = X0.copy(); X[4, 3] = 0.5; defects["row4"] = X
+    X = X0.copy(); X[3, 3] = 1.5; defects["diag3"] = X
+    X = X0.copy(); X[4, 4] = 1.5; defects["diag4"] = X
+    flagged = {k: gal3.structural_residual(X) for k, X in defects.items()}
+    missed = {k: v for k, v in flagged.items() if v < 0.2}
+    assert not missed, missed
+    assert gal3.structural_residual(X0) <= 1e-15
+
 
 @pytest.mark.claim("M1-C03")
 def test_associativity():

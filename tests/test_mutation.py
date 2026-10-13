@@ -54,6 +54,7 @@ C45 = IMU + "test_preintegration_chaining_is_the_group_product"
 C30 = G3 + "test_cayley_constraints_degree_two"
 C36 = G3 + "test_endpoint_only_valid_on_zero_time_slice"
 C42 = IMU + "test_increment_closed_form_blocks"
+C02 = G3 + "test_closure"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -220,6 +221,12 @@ MUTATIONS = {
         "s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0,",
         "s = np.where(small, 1.0 - t2 / 6.0,",
         [C42], {C42: "assert worst_batch <= 1e-12, worst_batch"},
+    ),
+    "structural_residual_no_det": (                               # verifier V06 (low)
+        "src/gal3.py",
+        "        abs(float(np.linalg.det(R)) - 1.0),\n",
+        "",
+        [C02], {C02: "assert not missed, missed"},
     ),
 }
 

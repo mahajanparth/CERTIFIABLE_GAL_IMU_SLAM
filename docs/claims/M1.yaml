@@ -29,7 +29,10 @@ claims:
     in SO(3) (P_R^T P_R = I, det = +1), P[3,0:3] = 0, P[4,0:4] = 0, P[3,3] = 1, P[4,4] = 1.'
   source: DERIVED
   kind: DERIVED
-  test_hint: 2000 random pairs as in M1-C01. max over all structural residuals <= 1e-12 (measured 1.6e-15).
+  test_hint: 2000 random pairs as in M1-C01. max over all structural residuals <= 1e-12 (measured 2.2e-15
+    at the test seed). The residual is shown to see each defect alone (reflection block with det = -1, a
+    non-orthogonal block, nonzero row-3 / row-4 entries, non-unit diagonal entries), each flagged >= 0.2
+    (mutation harness structural_residual_no_det).
   domain: Total.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
