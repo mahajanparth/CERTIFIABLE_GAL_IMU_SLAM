@@ -61,6 +61,8 @@ ForsterPreintegration(...)   bias_hat (b_g, b_a    test_b1_single_step_reads_eve
 .b_g / .b_a                  bias_hat halves       test_b1_single_step_reads_every_field
 .integrate_measurement       omega, acc, dt        test_b1_single_step_reads_every_field
 .has_noise                   sigma_g, sigma_a      test_b1_single_step_reads_every_field
+                             (+ the cov gate,      test_f23_initial_covariance_propagates_
+                             M2-F23)                 at_zero_density
 .noise_covariances(dt)       dt, sigma_g, sigma_a  test_b1_noise_covariances
 .retract(phi)                phi                   test_b1_single_step_reads_every_field
 ._propagate_covariance       (via integrate_*)     test_b1_single_step_reads_every_field,
@@ -175,10 +177,23 @@ Notes.
 * The module constants ``SMALL_ANGLE``, ``FD_EPS``, ``J_FD_EPS``, ``C_FD_EPS``,
   ``GAL3_BLOCK_FOR_NAVSTATE`` and the fixture literals are DEFINITIONS (C01 pins the
   literals); the defaults that read them are covered by passing other values explicitly.
-* ``bias_jacobian_recursion``'s ``eps`` and its ``**kwargs`` (params / gravity) do not
-  change the result measurably: one step's increment is linear in the bias to ~1e-12 at
-  any ``eps <= 0.1``, and gravity does not enter an increment.  Hard-coding either is an
-  EQUIVALENT mutant; the test runs at two values and checks the reference regardless.
+* ``bias_jacobian_recursion``'s ``eps`` does not change the result measurably: one
+  step's increment is linear in the bias to ~1e-12 at any ``eps <= 0.1`` (W12 in pass 8:
+  4.5e-8 relative at eps 5e-2 -- a sub-tolerance FD-step choice, not pinned here).
+* The ``**kwargs`` of ``single_step`` / ``bias_jacobian_recursion`` are NOT inert, and
+  the note that used to stand here ("gravity does not enter an increment", so dropping
+  them is equivalent) was false: ``params`` can carry ``body_P_sensor``, which moves
+  ``single_step`` by ~1e-3 and the recursion's ``J`` by 30% (pass 8, M2-F21: W13, W14).
+  ``test_f21_kwargs_reach_gtsam_body_p_sensor`` checks both against the retyped
+  sensor->body correction.
+* Pass 8 (M2-F21 - M2-F25) added: ``corrected_increment_gal3(Dt=...)`` checked in R, v
+  and p under gravity (``Dt`` overrides the clock ONLY); ``isotropic_precision`` at
+  tr Sigma = 4.3e-8 ... 1e-200; ``gal3``'s ``Rot3`` branch; the ``so3_log`` near-pi
+  branch (``test_f24_so3_log_near_pi``); the series branches of ``so3_exp``, ``Jr``,
+  ``M1``, ``M2``, ``cayley_vector`` and ``so3_log`` against 60-digit ``mpmath``
+  (``test_f25_*``); zero-density propagation of an initial ``cov``
+  (``test_f23_initial_covariance_propagates_at_zero_density``); and outward aliasing
+  (``test_f22_no_outward_aliasing``).
 
 Every test collects its failures and reports all of them, each prefixed by the name of
 the function and the input it was varied in.
@@ -1848,7 +1863,8 @@ def test_f25_so3_log_small_angles_against_mpmath():
         for i in range(3):
             ulps = abs(mpmath.mpf(float(got[i])) - want[i]) / np.spacing(abs(float(want[i])))
             worst = max(worst, float(ulps))
-    _check(failures, "so3_log series branch, |phi| < 1e-8 (ulp of the 60-digit log)",
+    _check(failures, "so3_log series branch, |phi| < 1e-8 (ulp of the 60-digit log; bound "
+           "0.75 ulp)",
            worst, 0.75)
     _assert_no_failures(failures)
 

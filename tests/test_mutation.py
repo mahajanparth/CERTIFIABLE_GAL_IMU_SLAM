@@ -66,6 +66,15 @@ test source (item 15).  ``PASS7_MUTANTS`` replays its survivors, and the same ed
 every other input ``tests/test_input_dependence.py`` varies, as file edits; every
 file-level kill is now matched on pytest's ``E `` lines only (M2-F19).
 
+Verification pass 8 (``docs/verification/stage-b_m2-baselines_pass8.md``) found the
+self-referential F18 field list (W07, W08), unpinned outward aliasing (W09, S39), inputs
+still unvaried (W02, W13, W14, W46, U47, W10), small-angle branches no reference could
+resolve (Q01, Q39, W15, W17-W20, Q44), and two latent ``src`` defects: a Forster
+covariance frozen at zero densities (M2-F23) and ``so3_log`` near ``pi`` (M2-F24).
+``PASS8_MUTANTS`` replays all of them -- and both defects -- as file edits, each killed
+by a check against an INDEPENDENT reference on its intended ``E `` line; none relies on
+a change detector (``test_pass5_replay_is_faithful`` or a pass-6/7 edit anchor).
+
 Mutations before pass 6 are applied with ``monkeypatch`` against the imported modules
 rather than by editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
@@ -484,7 +493,7 @@ def _integrate_measurement_variant(rotation_on_left=False, dp_uses_next_rotation
     def integrate_measurement(self, omega_meas, acc_meas, dt):
         w = np.asarray(omega_meas, dtype=float) - self.b_g
         a = np.asarray(acc_meas, dtype=float) - self.b_a
-        if self.has_noise:
+        if self.has_noise or np.any(self.cov != 0.0):
             self._propagate_covariance(w, a, dt)
         dR_ik = self.dR
         step = self.retract(w * dt)
@@ -1119,8 +1128,8 @@ PASS6_F14_SURVIVORS = [
        f"pim = cls(bias_hat={_FIXTURE_BIAS},")],
      _C05C, "Baseline 1 dR is not the Exp increment at the input bias"),
     ("F14-B3", "preintegration_galilean.py",
-     [("self.bias_hat = np.array(bias_hat, dtype=float, copy=True)",
-       f"self.bias_hat = {_FIXTURE_BIAS}")],
+     [("        bias_hat = np.array(bias_hat, dtype=float, copy=True)",
+       f"        bias_hat = {_FIXTURE_BIAS}")],
      _C05C, "Baseline 3 dR is not the exact ZOH increment at the input bias"),
 ]
 
@@ -1356,9 +1365,14 @@ PASS7_MUTANTS = [
      (_ID + "test_f18_constructors_do_not_alias",),
      ("CayleyFactor.from_edge(edge, b).bbar aliases b",
       "CayleyFactor.xi moves when the caller's bbar is overwritten")),
+    # since pass 8 Baseline 3 keeps no numpy copy of the bias (``bias_hat`` is read off
+    # GTSAM's ``biasHat``), so the aliasing defect is replayed as its pre-pass-8 form: a
+    # stored ``np.asarray`` of the caller's array, read back by ``bias_hat``
     ("F18-B3", "preintegration_galilean.py",
-     [("self.bias_hat = np.array(bias_hat, dtype=float, copy=True)",
-       "self.bias_hat = np.asarray(bias_hat, dtype=float)")],
+     [("        bias_hat = np.array(bias_hat, dtype=float, copy=True)",
+       "        bias_hat = np.asarray(bias_hat, dtype=float)\n        self._alias = bias_hat"),
+      ("        b = from_gtsam_bias(self.pim.biasHat())\n        b.setflags(write=False)\n"
+       "        return b", "        return self._alias")],
      (_ID + "test_f18_constructors_do_not_alias",),
      ("GalileanPreintegration.bias_hat aliases the caller's array",
       "Baseline 3 predict moves when the caller's bias is overwritten")),
@@ -1424,3 +1438,174 @@ def test_f19_matcher_ignores_the_echoed_source(tmp_path):
     assert s36_message not in _failure_lines(out), \
         "the matcher accepts a message that only appears in the echoed source"
     assert s35[4] in _failure_lines(out)
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-8 sweep (docs/verification/stage-b_m2-baselines_pass8.md
+# Sec. 5.4, findings M2-F21 - M2-F25) and the two latent src defects it found (M2-F23,
+# M2-F24), replayed as REAL FILE EDITS.  Every killer is a check against an INDEPENDENT
+# reference (retyped equations, 5x5 ``expm``, 60-digit ``mpmath``, ``scipy`` Rotation,
+# raw GTSAM params) -- never a change detector (no copy-of-src comparison, no edit anchor)
+# -- and every kill must land on the intended assertion's ``E `` line.
+# ======================================================================================
+
+_P8_SINGLE = _ID + "test_b1_single_step_reads_every_field"
+_P8_F23 = _ID + "test_f23_initial_covariance_propagates_at_zero_density"
+_P8_F24 = _ID + "test_f24_so3_log_near_pi"
+_P8_SERIES = _ID + "test_f25_series_branches_against_mpmath"
+_P8_LOG = _ID + "test_f25_so3_log_small_angles_against_mpmath"
+_P8_BPS = _ID + "test_f21_kwargs_reach_gtsam_body_p_sensor"
+_P8_ALIAS_OUT = _ID + "test_f22_no_outward_aliasing"
+_P8_F18 = _ID + "test_f18_constructors_do_not_alias"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS8_MUTANTS = [
+    # ---- the two latent defects, re-introduced ----------------------------------------
+    ("F23", "preintegration_forster.py",
+     [("if self.has_noise or np.any(self.cov != 0.0):", "if self.has_noise:")],
+     (_P8_F23, _P8_SINGLE),
+     ("at zero densities does not propagate the initial cov over",
+      "does not propagate the initial cov at zero densities")),
+    ("F24", "trajectory.py",
+     [("    if c >= LOG_NEAR_PI_COS:\n", "    if True:\n")],
+     (_P8_F24,), ("so3_log at theta = pi - 1e-06", "so3_log at theta = pi - 1e-08")),
+    # ---- M2-F21 (medium + low) ---------------------------------------------------------
+    ("W02", "preintegration_galilean.py",
+     [("    Dt_ij = pim.dt_total\n", "    Dt_ij = pim.dt_total if Dt is None else Dt\n")],
+     (_ID + "test_b3_corrected_increment_gal3",),
+     ("Dt = 1.37 given: (R, v, p) is not the increment with clock 1.37",)),
+    ("W13", "preintegration_galilean.py",
+     [("Vhat = single_step(gyro[k], accel[k], dt, bias_hat, **kwargs)",
+       "Vhat = single_step(gyro[k], accel[k], dt, bias_hat)")],
+     (_P8_BPS,), ("params with body_P_sensor) J_",)),
+    ("W14", "preintegration_galilean.py",
+     [("    pim = GalileanPreintegration(bias_hat, **kwargs)\n"
+       "    pim.integrate_measurement(omega, acc, dt)\n",
+       "    pim = GalileanPreintegration(bias_hat)\n"
+       "    pim.integrate_measurement(omega, acc, dt)\n")],
+     (_P8_BPS,), ("params with body_P_sensor) at k=", "params with body_P_sensor) J_")),
+    ("W46", "preintegration_cayley.py",
+     [("return 3.0 / float(np.trace(Sigma))", "return 3.0 / max(float(np.trace(Sigma)), 1e-6)")],
+     (_ID + "test_b2_precision_and_weighted_square",),
+     ("isotropic_precision at tr Sigma = 4.3e-08",)),
+    ("U47", "preintegration_cayley.py",
+     [("return 3.0 / float(np.trace(Sigma))", "return 3.0 / (float(np.trace(Sigma)) + 1e-30)")],
+     (_ID + "test_b2_precision_and_weighted_square",),
+     ("isotropic_precision at tr Sigma = 1.0e-30",)),
+    ("W10", "preintegration_galilean.py",
+     [("R = R.matrix() if isinstance(R, Rot3)", "R = R.matrix().T if isinstance(R, Rot3)")],
+     (_ID + "test_b3_gal3_adapters",), ("(the Rot3 branch)",)),
+    # ---- M2-F22 ------------------------------------------------------------------------
+    ("W07", "preintegration_cayley.py",
+     [('"J_R", "A_vg", "A_va", "A_pg", "A_pa")', '"J_R", "A_vg", "A_va", "A_pg")')],
+     (_P8_F18,), ("CayleyFactor.A_pa aliases the caller's array",)),
+    ("W08", "preintegration_cayley.py",
+     [('_ARRAY_FIELDS = ("bbar", "dRbar", "dvbar", "dpbar", "J_R", "A_vg", "A_va", "A_pg", "A_pa")',
+       '_ARRAY_FIELDS = ("bbar",)')],
+     (_P8_F18,), ("CayleyFactor.dRbar aliases the caller's array",
+                  "CayleyFactor.A_pa aliases the caller's array")),
+    ("W09", "preintegration_forster.py",
+     [("return self.dR.copy(), self.dv.copy(), self.dp.copy()",
+       "return self.dR, self.dv, self.dp")],
+     (_P8_ALIAS_OUT,), ("ForsterPreintegration.increment() returns views",
+                        "CayleyPreintegration.increment() returns views")),
+    ("F22-bg", "preintegration_forster.py",
+     [("return np.array(self.bias_hat[0:3], dtype=float, copy=True)",
+       "return self.bias_hat[0:3]")],
+     (_P8_ALIAS_OUT,), (".b_g / .b_a are views into bias_hat",
+                        "a write into ForsterPreintegration.b_g moves the next step")),
+    ("F22-ba", "preintegration_forster.py",
+     [("return np.array(self.bias_hat[3:6], dtype=float, copy=True)",
+       "return self.bias_hat[3:6]")],
+     (_P8_ALIAS_OUT,), (".b_g / .b_a are views into bias_hat",)),
+    # S39's own edit (``predict`` reads ``pim.biasHat()``) is EQUIVALENT since pass 8:
+    # ``bias_hat`` IS ``from_gtsam_bias(pim.biasHat())``.  The defect S39 exposed -- a
+    # writable second copy that can drift from GTSAM's -- is replayed here instead.
+    ("S39-desync", "preintegration_galilean.py",
+     [("        self.pim = pim_cls(self.params, to_gtsam_bias(bias_hat))\n",
+       "        self.pim = pim_cls(self.params, to_gtsam_bias(bias_hat))\n"
+       "        self._store = bias_hat\n"),
+      ("        b = from_gtsam_bias(self.pim.biasHat())\n        b.setflags(write=False)\n"
+       "        return b", "        return self._store")],
+     (_P8_ALIAS_OUT,), ("GalileanPreintegration.bias_hat accepts an in-place write",
+                        "desynchronises from GTSAM's biasHat",
+                        "Baseline 3 predict moves after an in-place edit of bias_hat")),
+    # ---- M2-F25: small-angle branches against mpmath -----------------------------------
+    ("Q01", "preintegration_forster.py",
+     [("return np.eye(3) - 0.5 * K + (1.0 / 6.0) * (K @ K)",
+       "return np.eye(3) + 0.5 * K + (1.0 / 6.0) * (K @ K)")],
+     (_P8_SERIES,), ("so3_right_jacobian series branch",)),
+    ("Q39", "trajectory.py",
+     [("return np.eye(3) + K + 0.5 * (K @ K)", "return np.eye(3) + K")],
+     (_P8_SERIES,), ("so3_exp series branch",)),
+    ("W17", "trajectory.py",
+     [("return T * np.eye(3) + 0.5 * T**2 * K + (T**3 / 6.0) * (K @ K)",
+       "return T * np.eye(3) + 0.5 * T**2 * K")],
+     (_P8_SERIES,), ("M1 series branch",)),
+    ("W18", "trajectory.py",
+     [("return 0.5 * T**2 * np.eye(3) + (T**3 / 6.0) * K + (T**4 / 24.0) * (K @ K)",
+       "return 0.5 * T**2 * np.eye(3) + (T**3 / 6.0) * K")],
+     (_P8_SERIES,), ("M2 series branch",)),
+    ("W15", "preintegration_cayley.py",
+     [("    if th < 1e-12:\n", "    if th < 1e-6:\n")],
+     (_P8_SERIES,), ("cayley_vector |phi| = 9.9e-07",)),
+    ("W19", "trajectory.py",
+     [("SMALL_ANGLE = 1e-8\n", "SMALL_ANGLE = 1e-6\n")],
+     (_P8_LOG,), ("so3_log at |phi| = 9e-07 (generic branch, rel)",)),
+    ("W20", "trajectory.py",
+     [("    c = min(1.0, max(-1.0, c_raw))\n", "    c = min(1.0, c_raw)\n")],
+     (_P8_F24,), ("so3_log at pi - 0e+00 raises",)),
+    ("Q44", "trajectory.py",
+     [("    c = min(1.0, max(-1.0, c_raw))\n", "    c = min(1.0 - 1e-15, max(-1.0, c_raw))\n")],
+     (_P8_LOG,), ("so3_log series branch, |phi| < 1e-8",)),
+]
+
+#: the pass-8 survivors this file must kill on a reference check, plus the two defects
+PASS8_REQUIRED = {"F23", "F24", "W02", "W07", "W08", "W09", "W10", "W13", "W14", "W46",
+                  "U47", "Q01", "Q39", "W15", "W17", "W18", "W19", "W20", "Q44"}
+
+
+@pytest.fixture(scope="module")
+def pass8_runs(tmp_path_factory):
+    """The unmutated control and every PASS8 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS8_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass8_control"), killers)
+    assert code == 0, f"control copy fails a pass-8 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass8_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS8_MUTANTS))
+
+
+@pytest.mark.claim("M2-F25")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS8_MUTANTS,
+                         ids=[m[0] for m in PASS8_MUTANTS])
+def test_pass8_mutant_is_killed_as_a_file_edit(pass8_runs, mutant_id, src_file, edit,
+                                               killers, messages):
+    """Each pass-8 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass8_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F25")
+def test_pass8_killers_are_reference_checks():
+    """No pass-8 killer is a change detector: every one lives in the claim-test modules
+    (never this file, whose pass5/pass6/pass7 guards compare src to copies or anchors)."""
+    for m in PASS8_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS8_REQUIRED <= {m[0] for m in PASS8_MUTANTS}
