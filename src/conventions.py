@@ -23,6 +23,17 @@ Conventions used for the structured (non-string) fields:
   different letters for the same slot sequence (``delama`` vs ``gtsam``); comparing
   ``tangent_slots`` is meaningful, comparing ``tangent_order`` is not.
 * ``None`` means "this source has no such object", not "unknown".
+* ``error_handedness`` -- the invariance of the minimised error / cost under group
+  translation.  ``"left-invariant"`` if the cost is unchanged when every group-valued state
+  argument (the state AND its estimate / measurement of the same state) is left-multiplied
+  by the same group element; ``"right-invariant"`` for right multiplication; ``"none"`` only
+  if neither holds.  It is evaluated on the source's printed cost / residual WITH the weight
+  the source prints (a general weight W_m / covariance unless a scalar is printed).  Relative
+  measurements and inputs (pre-integrated increments, bias terms) are not states and do not
+  translate.  Under this rule ``X Xh^-1`` is right-invariant (delama Eq. 34, barfoot Eqs.
+  25/28), ``Xh^-1 X`` left-invariant (gtsam Eq. 21), and rai's tau ||r^R||_F^2 of Eq. (20)
+  left-invariant.  The tests decide every row by this one rule
+  (``tests/test_conventions.py::error_invariance``).
 """
 from __future__ import annotations
 
@@ -51,10 +62,12 @@ CONVENTIONS: dict[str, dict] = {
         # v_i and p_i never leave R^3 (Eqs. 21b, 21c, 36) -- this is what "SO(3) only" means.
         "velocity_space": "R^3",
         "position_space": "R^3",
-        # Eq. (19) is a matrix DIFFERENCE in R^{3x3} (zero at the noise-free point), not a group
-        # error (identity at the noise-free point); no group composition of a state with an
-        # inverse appears in it.
-        "error_handedness": "none",
+        # Eq. (19) composes no inverse, but the cost it enters, tau_{R,ij} ||r^R_ij||_F^2 in
+        # Eq. (20), is LEFT-invariant: r(S R_i, S R_j) = S r(R_i, R_j), and the Frobenius norm
+        # with the scalar weight tau_{R,ij} is unchanged; under R -> R S it changes.  (Was
+        # recorded as "none" until 2026-10-12, under an unwritten "printed group error" reading
+        # that contradicted the definition of the field above, M0-F11.)
+        "error_handedness": "left-invariant",
         "action_handedness": "none",
         "bias_order": ("b_g", "b_a"),   # gyro first
         "bias_dim": 6,
@@ -162,6 +175,7 @@ CONVENTIONS: dict[str, dict] = {
             "lifting_definitions_Gamma": "22a",
             "lifted_rotation_residual": "22b",
             "lifting_definitions_Y": "22c",
+            "inertial_factor": "20",              # F^Cay_ij, the cost Eq. (19) enters
             "isotropic_weighting": "23",
             "u_definitions": "26",
             "lifted_vector": "28",

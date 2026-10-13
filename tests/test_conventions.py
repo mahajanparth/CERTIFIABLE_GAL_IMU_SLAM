@@ -1098,13 +1098,33 @@ def test_rai_isotropic_weighting_is_structurally_forced():
                   reason)
     assert m, f"isotropy_reason no longer records the identity it is cited for: {reason!r}"
     prose = source_prose("rai")
-    disp = re.search(r"we use \$([^$]*\\tau[^$]*)\$ (This equality requires an isotropic weight)",
-                     prose)
-    assert disp, "rai Sec. IV-B no longer prints the norm identity and its isotropy sentence"
+    disp = re.search(r"we use \$([^$]*\\tau[^$]*)\$ This equality ([^.]*?) weight\. (\w+) (\w+) "
+                     r"([^.]*?)\.", prose)
+    assert disp, "rai Sec. IV-B no longer prints the norm identity and its weight sentence"
     printed = canon(disp.group(1))
     assert printed.startswith(canon_table(f"{m.group(1)}=={m.group(2)}")), (reason, printed)
     assert printed.rstrip(".,").endswith(f"{m.group(3)}in{m.group(4)}"), printed
-    assert rai["isotropy_required"] is ("isotropic weight" in disp.group(2))
+
+    # M0-F10: the CONCLUSION is decided from the source's own clause, by its polarity, not by
+    # substring presence.  The paper's weight clause is a NECESSITY ("requires an isotropic
+    # weight" -- not "holds for any weight", not "does not require") and the next sentence
+    # draws the scalar precisions as its CONSEQUENCE ("We therefore approximate ... by scalar
+    # precisions") -- not as a free choice ("we choose", "for simplicity").  Both together are
+    # what makes the scalar weight structurally forced.
+    clause = disp.group(2).strip()
+    necessity = {"requires an isotropic": True, "holds only for an isotropic": True,
+                 "does not require an isotropic": False, "holds for any": False}
+    assert clause in necessity, f"rai's weight clause {clause!r} has an undecided polarity"
+    consequence = (disp.group(3), disp.group(4)) == ("We", "therefore") and \
+        "scalar precisions" in disp.group(5)
+    forced = necessity[clause] and consequence
+    concl = re.search(r"that equality holds (only for an isotropic|for any) weight -- so the scalar "
+                      r"precision is (structurally forced, not a tuning choice|a tuning choice, not "
+                      r"structurally forced)$", reason)
+    assert concl, f"isotropy_reason states no decidable conclusion: {reason!r}"
+    assert (concl.group(1) == "only for an isotropic") is necessity[clause], (concl.group(1), clause)
+    assert concl.group(2).startswith("structurally forced") is forced, (concl.group(2), disp.groups())
+    assert rai["isotropy_required"] is forced, (rai["isotropy_required"], disp.groups())
     # ... and the products the reason says the device removes are the ones the paper names.
     named = re.search(r"removes the (R_i\^T \w_j) and (R_i\^T \w_j) products", reason)
     printed_products = re.search(r"contain products such as \$([^$]+)\$ and \$([^$]+)\$ \. Rather than "
@@ -1113,7 +1133,7 @@ def test_rai_isotropic_weighting_is_structurally_forced():
     assert [canon_table(x) for x in named.groups()] == [canon(x) for x in printed_products.groups()], (
         named.groups(), printed_products.groups())
     # It is the display immediately preceding Eq. (23), which defines the scalar precisions.
-    after = prose[disp.end():disp.end() + 400]
+    after = prose[disp.start(5):disp.start(5) + 400]
     eq23 = canon(equation_latex("rai", rai["eq"]["isotropic_weighting"]))
     assert eq23[:20] in canon(after)
     # Eq. (23) makes every weight a SCALAR: tau^-1 = (1/3) tr Sigma, one per residual family,
@@ -1510,42 +1530,85 @@ def _rand_element(key, rng):
     return _rand_gal(rng)
 
 
-def decide_error_handedness(key: str) -> str:
-    """The handedness of a row's group error, decided from the source equation(s) alone.
+#: The minimised cost each row's error / residual enters, and the weight it is printed with.
+#: Only rai prints its cost term with a SCALAR weight (Eq. (20): tau_{R,ij} ||r^R_ij||_F^2);
+#: barfoot prints a general W_m inside Eqs. (25)/(28), and delama (34) / gtsam (21) print the
+#: error alone, i.e. any quadratic form of it.  A general weight is drawn as a random SPD.
+_COST_WEIGHT = {
+    "rai": ("inertial_factor",
+            r"\\tau_\{R,ij\}\\left\\\|\\mathbf\{r\}\^\{R\}_\{ij\}\\right\\\|_\{F\}\^\{2\}"),
+    "barfoot": (None, r"\\mathbf\{W\}_\{m\}"),
+}
 
-    A composition ``X Xh^-1`` / ``Xh^-1 X`` printed in the error equation is EXECUTED on
-    random group elements and its invariance under left and right translation measured.  If
-    the equation composes no group elements (rai's Eq. (19) is a matrix difference), the
-    residual is EVALUATED from the source LaTeX and must be invariant under neither
-    translation: then, and only then, the answer is "none".
+
+def error_invariance(key: str, seed: int = 2101) -> dict[str, float]:
+    """Relative change of each row's minimised cost under left and right group translation.
+
+    THE definition of ``error_handedness`` (``src/conventions.py``): a cost is left- (right-)
+    invariant if it is unchanged when every group-valued state argument is left- (right-)
+    multiplied by the same group element.  The cost is evaluated from the source's printed
+    error / residual:
+
+    * a printed composition ``X Xh^-1`` / ``Xh^-1 X`` (delama, barfoot, gtsam) is EXECUTED on
+      random group elements and enters ``vec(E - I)^T W vec(E - I)`` with the weight the
+      source prints (general SPD unless a scalar is printed); X and its estimate /
+      measurement Xh are both states and both translate;
+    * rai's Eq. (19) composes no inverse; the residual is EVALUATED from its LaTeX and enters
+      the scalar-weighted Frobenius term of Eq. (20).  Its state arguments are R_i, R_j; the
+      pre-integrated increment dRbar_ij and xi_ij are relative measurements, not states, and
+      do not translate.
     """
     row = CONVENTIONS[key]
-    rng = np.random.default_rng(2101)
-    kinds = set()
+    rng = np.random.default_rng(seed)
+    out = {"left": 0.0, "right": 0.0}
     for name in _ERROR_EQ[key]:
         latex = equation_latex(key, row["eq"][name])
         forms = [f for f, pats in _ERROR_FORMS.items() if any(re.search(p, latex) for p in pats)]
         assert len(forms) <= 1, (key, name, forms)
+        cost_name, weight_pat = _COST_WEIGHT.get(key, (None, None))
+        cost_latex = equation_latex(key, row["eq"][cost_name]) if cost_name else latex
+        scalar = False
+        if weight_pat:
+            assert re.search(weight_pat, cost_latex), (key, cost_name, cost_latex[:200])
+            scalar = weight_pat.startswith(r"\\tau")
         if forms:
             err = _ERROR_FN[forms[0]]
             X, Xh, S = (_rand_element(key, rng) for _ in range(3))
-            moved = {"left": err(S @ X, S @ Xh), "right": err(X @ S, Xh @ S)}
-            inv = [side for side, val in moved.items() if np.abs(val - err(X, Xh)).max() < 1e-9]
-            assert len(inv) == 1, (key, name, forms[0], inv)
-            kinds.add(f"{inv[0]}-invariant")
-            continue
-        # no group composition: evaluate the printed residual and translate the states
-        assert key == "rai", f"{key} Eq. ({row['eq'][name]}) composes no group elements"
-        text = canon(latex).rstrip(".,").split("=", 1)[1]
-        Ri, Rj, dRbar, S = (Rotation.random(1, rng=rng).as_matrix()[0] for _ in range(4))
-        env = {"dRbar": dRbar, "xi": rng.standard_normal((3, 1)), "I_3": np.eye(3)}
-        base = _rai_eval(text, {**env, "R_i": Ri, "R_j": Rj})
-        moved = {"left": _rai_eval(text, {**env, "R_i": S @ Ri, "R_j": S @ Rj}),
-                 "right": _rai_eval(text, {**env, "R_i": Ri @ S, "R_j": Rj @ S})}
-        assert all(np.abs(v - base).max() > 1e-3 for v in moved.values()), (key, name)
-        kinds.add("none")
-    assert len(kinds) == 1, (key, kinds)
-    return kinds.pop()
+            n = X.size
+            def resid(A, B):
+                return err(A, B) - np.eye(len(A))
+            args = {"base": (X, Xh), "left": (S @ X, S @ Xh), "right": (X @ S, Xh @ S)}
+        else:
+            # no group composition: evaluate the printed residual on the state rotations
+            assert key == "rai", f"{key} Eq. ({row['eq'][name]}) composes no group elements"
+            lhs, text = canon(latex).rstrip(".,").split("=", 1)
+            assert lhs.startswith("r^R_ij"), lhs     # the residual Eq. (20) weights
+            Ri, Rj, dRbar, S = (Rotation.random(1, rng=rng).as_matrix()[0] for _ in range(4))
+            env = {"dRbar": dRbar, "xi": rng.standard_normal((3, 1)), "I_3": np.eye(3)}
+            n = 9
+            def resid(A, B):
+                return _rai_eval(text, {**env, "R_i": A, "R_j": B})
+            args = {"base": (Ri, Rj), "left": (S @ Ri, S @ Rj), "right": (Ri @ S, Rj @ S)}
+        if scalar:
+            W = rng.uniform(0.5, 2.0) * np.eye(n)
+        else:
+            L = rng.standard_normal((n, n))
+            W = L @ L.T + 0.1 * np.eye(n)
+        cost = {k: float(resid(*a).reshape(-1) @ W @ resid(*a).reshape(-1)) for k, a in args.items()}
+        for side in ("left", "right"):
+            out[side] = max(out[side], abs(cost[side] - cost["base"]) / cost["base"])
+    return out
+
+
+def decide_error_handedness(key: str) -> str:
+    """``error_handedness`` decided by its ONE definition (cost invariance under group
+    translation, :func:`error_invariance`) for every row alike."""
+    rel = error_invariance(key)
+    inv = [side for side, d in rel.items() if d < 1e-9]
+    assert len(inv) < 2, (key, rel)          # bi-invariance is not a value of the field
+    for side, d in rel.items():
+        assert d < 1e-9 or d > 1e-3, (key, side, d)    # no borderline verdicts
+    return f"{inv[0]}-invariant" if inv else "none"
 
 
 #: The bias perturbation each row's correction map is applied to (source symbols).
@@ -2430,6 +2493,8 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("rai", "eq", "lifted_rotation_residual"): ((r"\\breve\{\\mathbf\{R\}\}_\{ij\}-",), ()),
     ("rai", "eq", "lifting_definitions_Y"): ((r"\\mathbf\{Y\}\^\{\\prime\}_\{ij\}\\triangleq",), ()),
     ("rai", "eq", "isotropic_weighting"): ((r"^\\tau_\{R,ij\}\^\{-1\}=",), ()),
+    ("rai", "eq", "inertial_factor"): (
+        (r"^F\^\{\\mathrm\{Cay\}\}_\{ij\}=\\tau_\{R,ij\}\\left\\\|\\mathbf\{r\}\^\{R\}_\{ij\}",), ()),
     # BOTH halves (M0-F06: "26a", the velocity half alone, used to pass).
     ("rai", "eq", "u_definitions"): (
         (r"\\mathbf\{W\}\^\{v\}_\{ij\} \\displaystyle\\triangleq",
@@ -2655,6 +2720,36 @@ def _cited_labels(run: str, recorded: dict[str, str]) -> list[str]:
     return labels
 
 
+#: M0-F10: where a source PRESENTS a first-order relation as one block, the ``linearized``
+#: item naming it must list every equation of the block.  ``item words -> the source's own
+#: introducing sentence``; the block runs from that sentence to the next section heading, and
+#: its equations are the tags printed in it.  Delama: "The linearized error dynamics about
+#: eps_k = 0 is then derived as follows" introduces (35) eps_{k+1} ~ A_hat eps + B_hat eta and
+#: the two matrices it is written in, (36) A_hat and (37) B_hat; IV-E follows.
+_LINEARIZED_PRESENTATION = {
+    "delama": {"error dynamics": r"The linearized error dynamics about"},
+}
+_SECTION_HEADING = re.compile(r" [IVX]+-[A-Z] [A-Z][a-z]")
+_PRINTED_TAG = re.compile(r"\$ \((\d+[a-z]?)\)")
+
+
+def check_linearized_blocks(key: str) -> None:
+    row = CONVENTIONS[key]
+    recorded = {n: v for n, v in row["eq"].items() if v != COULD_NOT_EXTRACT}
+    prose = source_prose(key) if key != "gtsam" else ""
+    for words, intro in _LINEARIZED_PRESENTATION.get(key, {}).items():
+        at = re.search(intro, prose)
+        assert at, f"{key} no longer introduces its {words} block with {intro!r}"
+        end = _SECTION_HEADING.search(prose, at.end())
+        block = _PRINTED_TAG.findall(prose[at.end():end.start() if end else None])
+        assert block, (key, words)
+        items = [x for x in row["linearized"] if x.startswith(words)]
+        assert len(items) == 1, (key, words, row["linearized"])
+        cited = [lb for run in _PROSE_REF.findall(items[0]) for lb in _cited_labels(run, recorded)]
+        assert sorted(cited) == sorted(block), (
+            f"{key} linearized item {items[0]!r} cites {cited}; the source presents {block}")
+
+
 def check_prose_equation_refs(key: str) -> None:
     """Every "Eq. (n)" inside an ``exact`` / ``linearized`` / ``relaxation`` item must cite an
     equation the row records under a key the item's own words name -- and no uncited key may
@@ -2787,8 +2882,10 @@ def _check_source_row(key: str) -> None:
             for run in _PROSE_REF.findall(item):
                 for label in re.findall(r"\d+[a-z]?", run):
                     equation_latex(key, label)
-    # ... and in the exact / linearized / relaxation items it must be the RIGHT one.
+    # ... and in the exact / linearized / relaxation items it must be the RIGHT one,
+    # with no equation of a presented first-order block left out (M0-F10).
     check_prose_equation_refs(key)
+    check_linearized_blocks(key)
     # Error handedness and bias-correction side, decided from the source for EVERY row
     # (M0-F06: rai's two were checked only against the enum).
     assert row["error_handedness"] == decide_error_handedness(key), (key, row["error_handedness"])

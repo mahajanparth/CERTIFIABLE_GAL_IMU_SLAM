@@ -6,6 +6,12 @@ Pass 2 (``docs/verification/m0-literature-matrix_pass2.md``, M0-F06) found 18 mo
 corruptions that survived.  This file re-runs both experiments against
 ``tests/test_conventions.py`` and requires every mutant to be killed.
 
+Pass 3 (``docs/verification/m0-literature-matrix_pass3.md``, M0-F10/M0-F11) found an inverted
+isotropy conclusion and a truncated ``delama.linearized`` that survived, and fixed the
+definition of ``error_handedness`` (invariance of the minimised cost under group
+translation); under it rai's value is "left-invariant", so the pass-2 mutant
+``rai.error_handedness -> "left-invariant"`` is the truth and the old "none" is now a mutant.
+
 One pass-2 "corruption" turned out to be the true value: ``rai.bias_correction_side ->
 "right"``.  Rai Eqs. (14)-(16) apply the bias correction Exp(xi_ij) / Cay(xi_ij) on the RIGHT
 of the pre-integrated rotation, so the table's former "none" was the error; the table now
@@ -95,7 +101,10 @@ MUTANTS: list[tuple[tuple, object, str]] = [
 
 #: Pass 2 (M0-F06): the 18 corruptions that survived the d8257e5 suite, in the report's order.
 PASS2_SURVIVORS: list[tuple[tuple, object, str]] = [
-    (("rai", "error_handedness"), "left-invariant", "rai has no group error"),
+    # the report's mutant "left-invariant" IS the value under the field's written definition
+    # (pass 3, M0-F11: the cost of Eq. (20) is left-invariant); its two alternatives instead
+    (("rai", "error_handedness"), "none", "the table's pre-2026-10-12 value"),
+    (("rai", "error_handedness"), "right-invariant", "the other side"),
     # the report's mutant "right" IS the source's value (see module docstring); its two
     # alternatives are mutated instead
     (("rai", "bias_correction_side"), "none", "the table's pre-2026-10-12 value"),
@@ -185,7 +194,37 @@ NEW_FIELDS: list[tuple[tuple, object, str]] = [
     (("barfoot", "relaxation"), "Shor Eq. (20); tightness == rank(X) == 2", "rank 2"),
 ]
 
-ALL_MUTANTS = MUTANTS + PASS2_SURVIVORS + NEW_FIELDS
+_ISO = ("tau*||r||^2 == tau*||R_i r||^2 for R_i in SO(3): premultiplying the velocity/position "
+        "residuals by R_i is what removes the R_i^T v_j and R_i^T p_j products, and that equality ")
+
+#: Pass 3 (M0-F10, M0-F11): the surviving corruptions, plus the alternatives of every value
+#: the one-rule ``error_handedness`` now decides.
+PASS3_SURVIVORS: list[tuple[tuple, object, str]] = [
+    (("rai", "isotropy_reason"), _ISO + "holds only for an isotropic weight -- so the scalar "
+                                        "precision is a tuning choice, not structurally forced",
+     "conclusion inverted (pass-3 survivor)"),
+    (("rai", "isotropy_reason"), _ISO + "holds for any weight -- so the scalar precision is a "
+                                        "tuning choice, not structurally forced",
+     "necessity and conclusion both inverted"),
+    (("rai", "isotropy_reason"), _ISO + "holds for any weight -- so the scalar precision is "
+                                        "structurally forced, not a tuning choice",
+     "necessity inverted, conclusion kept"),
+    (("rai", "isotropy_required"), False, "isotropy not required"),
+    (("delama", "linearized"), ("error dynamics Eqs. (35)-(36) about epsilon_k = 0",
+                                "bias update Eq. (39), first order in Delta b_hat"),
+     "B_hat Eq. (37) dropped (pass-3 survivor)"),
+    (("delama", "linearized"), ("error dynamics Eqs. (35)-(38) about epsilon_k = 0",
+                                "bias update Eq. (39), first order in Delta b_hat"),
+     "Phi_b Eq. (38), a different block, pulled in"),
+    (("delama", "error_handedness"), "left-invariant", "the other side"),
+    (("delama", "error_handedness"), "none", "no invariance"),
+    (("gtsam", "error_handedness"), "right-invariant", "delama's side"),
+    (("gtsam", "error_handedness"), "none", "no invariance"),
+    (("rai", "eq", "inertial_factor"), "19", "the residual, not the cost it enters"),
+    (("rai", "eq", "inertial_factor"), "13", "the Exp-form factor F^Exp"),
+]
+
+ALL_MUTANTS = MUTANTS + PASS2_SURVIVORS + NEW_FIELDS + PASS3_SURVIVORS
 
 
 def _root(path):
@@ -263,7 +302,7 @@ def test_harness_gross_corruption_is_killed():
 def test_mutant_lists_are_complete_and_distinct():
     from src.conventions import UNVERIFIED_COMMENTARY
     assert len({m[0] for m in MUTANTS}) == len(MUTANTS) == 41
-    assert len(PASS2_SURVIVORS) == 18 + 1          # bias_correction_side contributes two
+    assert len(PASS2_SURVIVORS) == 18 + 2          # bias_correction_side, error_handedness: two each
     pairs = [(m[0], repr(m[1])) for m in ALL_MUTANTS]
     assert len(pairs) == len(set(pairs))
     for path, value, _ in ALL_MUTANTS:

@@ -94,7 +94,11 @@ claims:
     as the SCALAR tau^-1 = (1/3) tr Sigma in the same symbol tau. (Edited 2026-10-12, M0-F08: the earlier
     hint asked for a numeric check that r^T W r == (R r)^T W (R r) fails for anisotropic W and holds for
     W = tau*I. That is a theorem about SO(3); it reads no table value and cannot fail, so it decides nothing
-    about the table and was removed from the test.)'
+    about the table and was removed from the test.) (Edited 2026-10-12, M0-F10: the conclusion clause of
+    isotropy_reason -- necessity "holds only for an isotropic weight" and "structurally forced, not a tuning
+    choice" -- and isotropy_required are decided from the POLARITY of the source clause ("requires", not "holds
+    for any" / "does not require") and of the next sentence ("We therefore approximate ... by scalar precisions"),
+    not from substring presence.)'
   domain: Applies to the velocity and position residuals premultiplied by R_i (Eqs. 25a, 25b); drops cross-correlations
     of Sigma^f_ij.
   verdict: CONFIRMED
