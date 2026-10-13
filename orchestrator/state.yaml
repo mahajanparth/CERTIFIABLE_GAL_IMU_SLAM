@@ -92,9 +92,19 @@ milestones:
   - role: verifier
     agent_id: verify-M0-004
     started: '2026-10-13T02:02:04+00:00'
+    finished: '2026-10-13T08:34:53+00:00'
+    outcome: completed
+    note: 'Caught planted M0-C18 at runtime (NavState tangent is rot, pos, vel). 15/15 confirmed; F10
+      fixed. F11 partial: the written error_handedness definition contradicted the decisions it justified
+      (F12) -- the code''s rule was consistent, the wording was not. Report committed just before the
+      session limit.'
+  - role: verifier
+    agent_id: verify-M0-005
+    started: '2026-10-13T08:34:53+00:00'
     finished: null
     outcome: running
-    note: Fourth pass with a fresh planted claim; arbitrates the error_handedness rule across all rows.
+    note: 'Narrow fifth pass with a fresh planted claim: rule on the restated error_handedness definition
+      (F12).'
   blocking_findings:
   - id: M0-F01
     resolved: true
@@ -152,19 +162,28 @@ milestones:
     resolution: PARTIALLY fixed per verify-M0-003; the C06 isotropy line moves to M0-F10, the rest is
       advisory M0-A01.
   - id: M0-F10
-    resolved: false
+    resolved: true
     summary: 'Isotropy is unchecked where it matters: inverting rai.isotropy_reason''s conclusion to ''a
       tuning choice, not structurally forced'' survives, and C06''s `isotropy_required is (''isotropic
       weight'' in ...)` line is always True. This is the clause M0-C06 asserts and the central Stage B
       question. Also delama.linearized truncated to Eqs. (35)-(36) (drops (37)) survives.'
+    resolution: Ruled FIXED by verify-M0-004 (docs/verification/m0-literature-matrix_pass4.md).
   - id: M0-F11
-    resolved: false
+    resolved: true
     summary: 'error_handedness has no written definition and the suite decides rai by a different rule
       than the other rows. Orchestrator decision: the field means the invariance of the minimised error/cost
       under group translation (the reading that justified barfoot = right-invariant and matches delama/gtsam).
       Under it rai is left-invariant: r(S R_i, S R_j) = S r (4e-16), |r| 3.0717 unchanged under left translation,
       2.8703 under right. Define the field in the table, decide every row by one rule, and verify rai
       against the source.'
+    resolution: PARTIALLY fixed per verify-M0-004; the definition wording is M0-F12.
+  - id: M0-F12
+    resolved: false
+    summary: 'The written error_handedness definition did not match what decides the rows: it said pre-integrated
+      increments do not translate (they are delama''s and GTSAM''s states) and named the whole minimised
+      cost (rai''s Eq. 20 and delama''s full Eq. 34 are not invariant). Orchestrator restated it in d939780
+      as the invariance of the group-valued error component with non-group quantities held fixed; no table
+      value changed. Needs a verifier ruling.'
   advisory_findings:
   - id: M0-A01
     summary: 'Low, non-blocking (pass 3): bare parent labels the source never prints are accepted by lookup
@@ -172,6 +191,11 @@ milestones:
       (M0-F09). Tests that cannot fail: C15 reversed-product (deliberate), sentinel constant patterns,
       three O7 lines. Test-author choices: hand-written per-source regexes, _overlap heuristic, C01 scans
       only when value is None.'
+  - id: M0-A02
+    summary: 'Pass-4 low (M0-F13): four plausible prose corruptions survive -- delama.linearized second
+      item ''exact in Delta b_hat'', linearisation point ''epsilon_k = 1'', a left-prefixed negation inside
+      rai.isotropy_reason''s necessity clause, appended text in gtsam.retraction. Also the commit message''s
+      ''94/94'' mutants is 93/93.'
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
@@ -257,9 +281,15 @@ milestones:
   - role: verifier
     agent_id: verify-M1-003
     started: '2026-10-13T02:02:04+00:00'
+    finished: '2026-10-13T08:34:53+00:00'
+    outcome: failed
+    note: Stopped by the session limit before writing a report.
+  - role: verifier
+    agent_id: verify-M1-004
+    started: '2026-10-13T08:34:53+00:00'
     finished: null
     outcome: running
-    note: Third pass with a fresh planted claim; rules on F07-F10 and checks the new C41 rule.
+    note: Restart of the third verification pass, same planted claim (never committed).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -451,10 +481,15 @@ milestones:
   - role: implementer
     agent_id: impl-M2-007-remediation
     started: '2026-10-13T02:08:27+00:00'
+    finished: '2026-10-13T08:34:53+00:00'
+    outcome: failed
+    note: Stopped by the session limit; partial test edits committed as WIP 3ce49be.
+  - role: implementer
+    agent_id: impl-M2-008-remediation
+    started: '2026-10-13T08:34:53+00:00'
     finished: null
     outcome: running
-    note: Pin CayleyFactor.dRbar against an independent Cayley integrator and kill R01/R02/R04/R05/R10
-      (F13); name C22's rotation metric.
+    note: 'Finish F13 from the WIP commit: pin dRbar, kill R01/R02/R04/R05/R10, name C22''s metric.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -577,11 +612,16 @@ milestones:
   - role: deriver
     agent_id: deriver-M3-001
     started: '2026-10-13T02:02:04+00:00'
+    finished: '2026-10-13T08:34:53+00:00'
+    outcome: failed
+    note: Stopped by the session limit; seven scratch scripts committed as WIP 83d1a36, no derivation
+      doc or claims yet.
+  - role: deriver
+    agent_id: deriver-M3-002
+    started: '2026-10-13T08:34:53+00:00'
     finished: null
     outcome: running
-    note: 'Derive the QCQP for the 3-KF / 2-edge GNSS-anchored instance: lifted z, constraints incl. redundant
-      B2 analogues, cost, the isotropy question, spurious points. Runs alongside M0-M2 verification; merges
-      only after M1/M2 gates.'
+    note: Restart of the M3 derivation from the WIP scratch scripts.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
