@@ -58,8 +58,8 @@ Exact sympy checks on `src.gal3.cayley_constraints_symbolic()`:
   det d(exprs)/d(Re, ve, pe) = (|phi|^2 + 4)^5 / 1024 > 0. For every real (phi, u, w, alpha) the
   only solution is Cay(xi), so the variety is exactly the graph of Cay. Re in SO(3) is implied
   (M1-C27). The time output is not a lifted variable: te = alpha is substituted.
-- Total degree is exactly 2 in every expression. The only foreign symbols in the clean src are
-  none (the set is empty).
+- Total degree is exactly 2 in every expression, and the clean src's expressions contain no
+  symbol outside `syms`.
 
 ### Attacks on the new C30 test
 
