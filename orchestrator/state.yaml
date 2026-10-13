@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -302,10 +302,18 @@ milestones:
   - role: implementer
     agent_id: impl-M1-005-remediation
     started: '2026-10-13T09:00:54+00:00'
+    finished: '2026-10-13T09:10:03+00:00'
+    outcome: completed
+    note: '101 passed, 26/26 mutants killed. C30 now evaluates the 15 symbolic constraints at true and
+      perturbed Cayley points; batch exp checked against scipy over 147 angles to 12 rad; large-step integrate
+      test; keyframe guard at +/-1e-11; C41 bound to src. I re-applied V22: C30 fails.'
+  - role: verifier
+    agent_id: verify-M1-005
+    started: '2026-10-13T09:10:03+00:00'
     finished: null
     outcome: running
-    note: Check the symbolic Cayley constraints' content, large-angle batch exp, the keyframe-time guard
-      and label the expm-identity check (M1-F11).
+    note: 'Fourth pass with a fresh planted claim: rule on F11, focused on the symbolic Cayley constraints
+      M3 consumes.'
   blocking_findings:
   - id: M1-F01
     resolved: true
