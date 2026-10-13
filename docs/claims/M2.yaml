@@ -391,8 +391,11 @@ claims:
     NOT the bias block: 42% of the nullspace energy (2.537 of 6) lies in pose/velocity coordinates and
     the principal cosines between the nullspace and the bias-coordinate subspace are [0.978, 0.978, 0.839,
     0.816, 0.300, 0.299] -- two of them at arccos(0.30) ~ 72.5 degrees. They are mixed bias/pose/velocity
-    gauge directions, and a 6-dim bias prior on one keyframe closes the gap only because no null direction
-    happens to be orthogonal to the bias block, which is strictly weaker.'
+    gauge directions. A 6-dim bias prior on one keyframe closes the gap because no null direction can
+    be orthogonal to the bias block: the bias random-walk factors force every null vector into the form
+    (M delta; delta, delta, delta) with delta != 0. That is a structural fact, and a strictly weaker statement
+    than observability without a prior. The principal cosines are in GTSAM''s tangent coordinates and change
+    if the bias coordinates are rescaled.'
   source: DERIVED (re-measured on this fixture; reproduces the pre-flight F9 pattern on new data)
   kind: DERIVED
   test_hint: 'Build the graph in GTSAM, linearize at ground truth, take jacobian() and matrix_rank with
