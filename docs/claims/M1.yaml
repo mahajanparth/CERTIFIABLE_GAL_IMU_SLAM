@@ -483,8 +483,8 @@ claims:
     1.8e-15 over 2e4). (iii) 2000 random (R,v,p): max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12
     (measured 0.0) and max|T(-Dt) X T(Dt) - lift_navstate(navstate_phi(N))| <= 1e-12 (measured 0.0).'
   domain: Conjugation statement requires t(X) = 0.
-  verdict: REFUTED
-  attack: see docs/verification/m1-gal3-mechanics.md
+  verdict: CONFIRMED
+  attack: see docs/verification/m1-gal3-mechanics_pass2.md (rewritten statement confirmed)
 - id: M1-C41
   statement: The gravity-free increment satisfies the left-invariant ODE Ddot = D . xi^ with xi = (omega,
     a, 0, 1) and D(0) = I5; hence for constant (omega, a) over [0, Dt], D(Dt) = exp(Dt * (omega, a, 0,
