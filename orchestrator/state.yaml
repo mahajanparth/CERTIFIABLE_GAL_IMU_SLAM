@@ -775,7 +775,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: deriving
+  status: implementing
   claims: []
   seed:
     id: null
@@ -812,10 +812,18 @@ milestones:
   - role: deriver
     agent_id: deriver-M3-003
     started: '2026-10-13T14:46:15+00:00'
+    finished: '2026-10-13T14:51:19+00:00'
+    outcome: completed
+    note: 'Claims revised (ad89dc4): noise model fixed in every domain; C04 proved; C18 start distribution
+      and solver stated; C27 restated per component (rotation quadratic, v/p linear); C34 on a synthetic
+      weight; new C39 instance fingerprint; C36-C38 withdrawn to a ''Hypotheses handed to M4'' section
+      with solve-validity preconditions. 36 claims, all DERIVED.'
+  - role: implementer
+    agent_id: impl-M3-002
+    started: '2026-10-13T14:51:19+00:00'
     finished: null
     outcome: running
-    note: 'Revise the claim list for the implementer''s ambiguities: specify the noise model, fix C27/C34,
-      move or restate C36-C38.'
+    note: Update src/qcqp and tests to the revised claims and noise model; drop the withdrawn SDP claims.
   blocking_findings:
   - id: M3-F01
     resolved: false
@@ -824,12 +832,14 @@ milestones:
       and C34 part 2 (world-frame W_vp off only 2.6e-6, claimed >= 1e-3; 5.5e-2 with anisotropic accel
       noise). Random-walk precision convention, chordal prior weight and C35/C32 sampling distribution
       also unstated. C18 asserts 200/200 converge; implementer could only assert >= 150/200.'
+    note: Claims revised in ad89dc4; resolution needs the implementer's update and a verifier ruling.
   - id: M3-F02
     resolved: false
     summary: 'C36-C38 (OPEN-HYPOTHESIS tightness) cannot be evaluated by M3: Clarabel ''optimal'' solves
       violate weak duality (dual 630.6 vs a feasible point of cost 8.7e-23), and C37''s eta denominator
       is ~1e-22 on a noise-free instance. Either move these to M4 with solver-validity preconditions (weak
       duality, residuals) and a noisy instance, or restate them.'
+    note: Claims revised in ad89dc4; resolution needs the implementer's update and a verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
