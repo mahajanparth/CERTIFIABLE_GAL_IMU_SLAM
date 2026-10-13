@@ -197,6 +197,12 @@ def test_increment_left_invariant_ode():
                         float(np.abs(deriv - rhs).max()) / max(1.0, float(np.abs(rhs).max())))
     assert worst_gen == 0.0, worst_gen
     assert worst_ode <= 1e-8, worst_ode
+    # Initial condition, without which the ODE check above admits D(s) = C exp(sA) for
+    # any constant left factor C (pass 4, N20).
+    worst_init = max(float(np.abs(imu.preintegrate_constant(0.7 * r.normal(size=3),
+                                                            2.0 * r.normal(size=3), 0.0)
+                                  - np.eye(5)).max()) for _ in range(20))
+    assert worst_init <= 1e-15, worst_init
 
 
 @pytest.mark.claim("M1-C42")

@@ -203,6 +203,12 @@ MUTATIONS = {
         "    S = sp.eye(3) + P / 2\n",
         [C30], {C30: "assert worst_sym_cay <= 1e-12"},
     ),
+    "cayley_symbolic_alpha_fresh_symbol": (                       # pass-4 verifier N01
+        "src/gal3.py",
+        "    return exprs, syms\n",
+        "    syms = [sp.Symbol('alpha', real=True) if str(x) == 'alpha' else x for x in syms]\n    syms[9] = sp.Symbol('alpha', positive=True)\n    return exprs, syms\n",
+        [C30], {C30: "assert not stray, stray"},
+    ),
     "keyframe_time_tol_1e-3": (                                   # verifier V26
         "src/gal3.py",
         "KEYFRAME_TIME_TOL = 1e-12",

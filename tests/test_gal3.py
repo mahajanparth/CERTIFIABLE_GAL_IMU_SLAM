@@ -777,6 +777,19 @@ def test_cayley_constraints_degree_two():
 
     exprs, syms = gal3.cayley_constraints_symbolic()
     assert len(exprs) == 15
+    # Symbol IDENTITY and ORDER (pass 4, N01/N06): the content check below matches values
+    # to symbols by name, so a second sympy symbol sharing a name (e.g. a fresh "alpha")
+    # would pass it while a QCQP builder differentiating w.r.t. ``syms`` silently drops
+    # the (alpha/2) u coupling.  Pin: 25 distinct symbols, every expression's free symbols
+    # among them, and the documented order (phi, u, w, alpha, Re row-major, ve, pe).
+    expected_names = ([f"phi{i}" for i in range(3)] + [f"u{i}" for i in range(3)]
+                      + [f"w{i}" for i in range(3)] + ["alpha"]
+                      + [f"Re{i}{j}" for i in range(3) for j in range(3)]
+                      + [f"ve{i}" for i in range(3)] + [f"pe{i}" for i in range(3)])
+    assert [str(x) for x in syms] == expected_names, [str(x) for x in syms]
+    assert len(set(syms)) == 25
+    stray = set().union(*(e.free_symbols for e in exprs)) - set(syms)
+    assert not stray, stray
     degrees = [sp.Poly(e, *syms).total_degree() for e in exprs]
     assert max(degrees) == 2, degrees
 
