@@ -743,7 +743,10 @@ def test_c06c_forster_covariance_with_a_single_noise_source():
                 f"{label}, edge {edge.index}: tr(Sigma) = {np.trace(pim.cov):.3e} against "
                 f"{np.trace(ref):.3e} -- the has_noise gate skipped Eq. (63)")
             if label == "accel-only":
-                assert not np.any(ref[0:3, :]) and not np.any(ref[:, 0:3])
+                # src's covariance, not the reference's, carries the claim: the reference
+                # zeroes these rows by construction, so asserting it here would only test
+                # the reference.  The relative comparison below skips the rotation blocks
+                # because they are asserted to be exactly zero on src here.
                 assert not np.any(pim.cov[0:3, :]) and not np.any(pim.cov[:, 0:3]), \
                     f"accel-only, edge {edge.index}: accel noise leaked into the rotation"
                 a, b = _blocks(pim.cov), _blocks(ref)
@@ -1175,6 +1178,124 @@ def test_c13b_cayley_factor_jacobians_are_the_cayley_integrators():
         gap = float(np.abs(forster_J_R - ref["J_R"]).max() / np.abs(ref["J_R"]).max())
         assert gap >= 1e-7, \
             f"edge {edge.index}: Exp and Cay bias Jacobians agree to {gap:.3e}"
+
+
+def _indep_eq19(R_i, R_j, dRbar, xi):
+    """Rai Eq. (19), retyped: ``(R_j - R_i dRbar) - 1/2 (R_j + R_i dRbar) hat(xi)``."""
+    A = R_i @ dRbar
+    return (R_j - A) - 0.5 * (R_j + A) @ _indep_hat(xi)
+
+
+def _indep_eq22b(R_i, R_j, dRbar, J_R, b_g, bbar_g):
+    """Rai Eq. (22b), retyped: ``R_j (I + G/2) - R_i dRbar (I - G/2) - 1/2 (Y + Y')`` with
+    ``G = hat(J_R bbar_g)``, ``Y = R_i dRbar hat(J_R b_g)``, ``Y' = R_j hat(J_R b_g)``."""
+    G = _indep_hat(J_R @ bbar_g)
+    X = _indep_hat(J_R @ b_g)
+    I3 = np.eye(3)
+    return (R_j @ (I3 + 0.5 * G) - R_i @ dRbar @ (I3 - 0.5 * G)
+            - 0.5 * (R_i @ dRbar @ X + R_j @ X))
+
+
+def _indep_truncated(R_i, R_j, dRbar, xi):
+    """The first-order contrast ``R_j - R_i dRbar (I + hat(xi))``, retyped."""
+    return R_j - R_i @ dRbar @ (np.eye(3) + _indep_hat(xi))
+
+
+def _indep_rot(axis_angle):
+    """Rodrigues, retyped (no ``src``): ``I + sin(t) K + (1 - cos(t)) K^2``."""
+    t = float(np.linalg.norm(axis_angle))
+    K = _indep_hat(np.asarray(axis_angle) / t)
+    return np.eye(3) + np.sin(t) * K + (1.0 - np.cos(t)) * (K @ K)
+
+
+@pytest.mark.claim("M2-F12")
+def test_c13c_cayley_factor_residual_methods_are_wired_to_eq19_and_eq22b():
+    """The FACTOR-LEVEL residuals -- what the QCQP/SDP lifting will consume.
+
+    Every Eq. (19)/(22b) check elsewhere calls the module-level functions, so a wiring slip
+    inside ``CayleyFactor.rotation_residual`` / ``rotation_residual_affine`` /
+    ``rotation_residual_truncated`` passed the whole suite (verification pass 4, M2-F12:
+    Q25 accel offset in the affine lift, Q45 ``-xi``, Q46 ``dRbar^T``).  Each method is
+    checked here against Eq. (19) / (22b) retyped from the paper, with ``xi`` formed in the
+    test from the factor's frozen fields, on
+      (a) self-consistent states ``R_j = R_i dRbar Cay(xi)`` -- Eq. (19) and (22b) vanish;
+      (b) perturbed states with a nonzero bias offset -- the nonzero value must match.
+    All rotations are non-identity and non-symmetric, so a transpose is visible, and the
+    nominal gyro and accel biases differ, so an exchanged offset is visible.
+
+    Measured worst (edge-1 / synthetic factor), against the 1e-13 bound: Eq. (19) method
+    1.7e-16 / 1.7e-16 on-manifold, 1.4e-17 / 1.4e-17 perturbed; Eq. (22b) method
+    3.1e-16 / 3.7e-16 and 2.2e-16 / 3.3e-16; truncated method <= 1.1e-16.  Smallest
+    perturbed Eq. (19) residual 2.4e-2 / 2.1e-2.  Q25 / Q45 / Q46 give 4.7e-2 / 6.6e-2 /
+    5.2e-1 on-manifold.
+    """
+    rng = np.random.default_rng(20250219)
+    edge_factor = B2.CayleyFactor.from_edge(T.edges()[1], T.BIAS_TRUE)
+    synthetic = B2.CayleyFactor(
+        bbar=np.array([0.012, -0.007, 0.004, 0.31, -0.22, 0.17]),
+        dRbar=_indep_rot(np.array([0.4, -0.3, 0.25])),
+        dvbar=np.zeros(3), dpbar=np.zeros(3), Dt=1.0,
+        J_R=np.array([[-0.9, 0.2, 0.1], [0.05, -1.1, 0.3], [-0.2, 0.15, -0.8]]),
+        A_vg=np.zeros((3, 3)), A_va=np.zeros((3, 3)),
+        A_pg=np.zeros((3, 3)), A_pa=np.zeros((3, 3)))
+
+    for name, f in (("edge-1 factor", edge_factor), ("synthetic factor", synthetic)):
+        dRbar, J_R = np.asarray(f.dRbar), np.asarray(f.J_R)
+        bbar_g, bbar_a = np.asarray(f.bbar[0:3]), np.asarray(f.bbar[3:6])
+        assert np.abs(dRbar - dRbar.T).max() >= 1e-2, f"{name}: dRbar is ~symmetric"
+        assert np.linalg.norm(J_R @ (bbar_a - bbar_g)) >= 1e-3, \
+            f"{name}: an exchanged bias offset would be invisible"
+        worst_on = {"eq19": 0.0, "eq22b": 0.0, "trunc": 0.0}
+        worst_off = {"eq19": 0.0, "eq22b": 0.0, "trunc": 0.0}
+        smallest_off = np.inf
+        for _ in range(50):
+            R_i = _indep_rot(rng.uniform(-1.2, 1.2, 3))
+            assert np.abs(R_i - R_i.T).max() >= 1e-3
+            db_g = rng.uniform(-0.05, 0.05, 3)
+            assert np.linalg.norm(db_g) >= 1e-3
+            b_g = bbar_g + db_g
+            xi = J_R @ db_g                      # Rai: xi = J_R (b_g - bbar_g), frozen J_R
+
+            # (a) self-consistent: R_j = R_i dRbar Cay(xi), Cay in closed polynomial form
+            R_j = R_i @ dRbar @ _indep_cay(xi)
+            assert np.abs(_indep_eq19(R_i, R_j, dRbar, xi)).max() <= 1e-13
+            worst_on["eq19"] = max(worst_on["eq19"], float(np.abs(
+                f.rotation_residual(R_i, R_j, b_g)).max()))
+            worst_on["eq22b"] = max(worst_on["eq22b"], float(np.abs(
+                f.rotation_residual_affine(R_i, R_j, b_g)).max()))
+            worst_on["trunc"] = max(worst_on["trunc"], _max_abs(
+                f.rotation_residual_truncated(R_i, R_j, b_g),
+                _indep_truncated(R_i, R_j, dRbar, xi)))
+
+            # (b) perturbed: R_j off Eq. (16), the expected nonzero residual retyped
+            R_j_bad = R_j @ _indep_rot(rng.uniform(-0.1, 0.1, 3))
+            ref19 = _indep_eq19(R_i, R_j_bad, dRbar, xi)
+            ref22 = _indep_eq22b(R_i, R_j_bad, dRbar, J_R, b_g, bbar_g)
+            smallest_off = min(smallest_off, float(np.abs(ref19).max()))
+            worst_off["eq19"] = max(worst_off["eq19"], _max_abs(
+                f.rotation_residual(R_i, R_j_bad, b_g), ref19))
+            worst_off["eq22b"] = max(worst_off["eq22b"], _max_abs(
+                f.rotation_residual_affine(R_i, R_j_bad, b_g), ref22))
+            worst_off["trunc"] = max(worst_off["trunc"], _max_abs(
+                f.rotation_residual_truncated(R_i, R_j_bad, b_g),
+                _indep_truncated(R_i, R_j_bad, dRbar, xi)))
+
+        assert smallest_off >= 1e-3, f"{name}: perturbation too small ({smallest_off:.3e})"
+        assert worst_on["eq19"] <= 1e-13, (
+            f"{name}: CayleyFactor.rotation_residual is {worst_on['eq19']:.3e} on a "
+            f"self-consistent state -- it is not Eq. (19) at xi = J_R (b_g - bbar_g)")
+        assert worst_off["eq19"] <= 1e-13, (
+            f"{name}: CayleyFactor.rotation_residual differs from the retyped Eq. (19) by "
+            f"{worst_off['eq19']:.3e} at a perturbed state")
+        assert worst_on["eq22b"] <= 1e-13, (
+            f"{name}: CayleyFactor.rotation_residual_affine is {worst_on['eq22b']:.3e} on a "
+            f"self-consistent state -- it is not Eq. (22b) with offset bbar_g")
+        assert worst_off["eq22b"] <= 1e-13, (
+            f"{name}: CayleyFactor.rotation_residual_affine differs from the retyped "
+            f"Eq. (22b) by {worst_off['eq22b']:.3e} at a perturbed state")
+        assert worst_on["trunc"] <= 1e-13 and worst_off["trunc"] <= 1e-13, (
+            f"{name}: CayleyFactor.rotation_residual_truncated differs from the retyped "
+            f"truncation by {max(worst_on['trunc'], worst_off['trunc']):.3e}")
 
 
 # ======================================================================================

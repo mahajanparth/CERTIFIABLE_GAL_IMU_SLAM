@@ -408,8 +408,8 @@ claims:
     residual <= 1e-12 (measured 2.2e-14). Read the cosines as facts about GTSAM''s TANGENT COORDINATES:
     a change of bias units moves them (verification pass 2, F04); the coordinate-free content is that every null vector has a nonzero pose/velocity part. That a B0 prior
     closes the gap is STRUCTURAL, not luck: the random-walk factors force every null vector into the form
-    (M delta; delta, delta, delta) with delta != 0, so none can be orthogonal to the bias block (the
-    statement''s "happens to be orthogonal" wording undersells this; see the test comment).'
+    (M delta; delta, delta, delta) with delta != 0, so none can be orthogonal to the bias block, exactly
+    as the statement says; see the test comment.'
   domain: 'Rank is invariant to positive reweighting, so this does not depend on the noise model. The
     CONDITION number does and is NOT claimed: measured 7.5e7 with tight covariances and 7.6e6 with realistic
     MEMS densities.'

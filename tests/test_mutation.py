@@ -42,6 +42,10 @@ M2-F11) left P17, P35 and P22 gating, plus P33 and P29.  ``PASS3_SURVIVORS`` rep
 (and P22b, a dp-correction error the old c05 metric hid) and
 ``test_pass3_survivor_is_killed`` checks that each dies on the assertion written for it.
 
+Verification pass 4 (``docs/verification/stage-b_m2-baselines_pass4.md``, finding M2-F12)
+found that no test called ``CayleyFactor``'s own rotation-residual methods.
+``PASS4_SURVIVORS`` replays Q25, Q45 and Q46 against ``test_c13c``.
+
 Mutations are applied with ``monkeypatch`` against the imported modules rather than by
 editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
@@ -804,6 +808,64 @@ def test_pass3_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killer
     outcome = _outcome(killer)
     assert outcome is not None, \
         f"{mutant_id} (survived pass 3) still SURVIVES {_test_function(killer)[0]}"
+    assert outcome.startswith("AssertionError") and message in outcome, (
+        f"{mutant_id} kills {_test_function(killer)[0]}, but not on the intended "
+        f"assertion: {outcome}")
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-4 sweep (docs/verification/stage-b_m2-baselines_pass4.md
+# Sec. 4, finding M2-F12): the factor-level rotation residuals were called by no test.
+# Same rule as pass 3 -- the kill must land on the assertion written for it.
+# ======================================================================================
+
+
+def _q25_affine_residual_takes_accel_offset(monkeypatch):
+    """``CayleyFactor.rotation_residual_affine`` passes ``bbar_a`` as ``bbar_g``."""
+    def rotation_residual_affine(self, R_i, R_j, b_g):
+        return B2.rotation_residual_eq22b(R_i, R_j, self.dRbar, self.J_R,
+                                          b_g, self.bbar[3:6])            # MUTANT
+    monkeypatch.setattr(B2.CayleyFactor, "rotation_residual_affine",
+                        rotation_residual_affine)
+
+
+def _q45_rotation_residual_negated_xi(monkeypatch):
+    """``CayleyFactor.rotation_residual`` evaluates Eq. (19) at ``-xi``."""
+    def rotation_residual(self, R_i, R_j, b_g):
+        return B2.rotation_residual_eq19(R_i, R_j, self.dRbar, -self.xi(b_g))  # MUTANT
+    monkeypatch.setattr(B2.CayleyFactor, "rotation_residual", rotation_residual)
+
+
+def _q46_rotation_residual_transposed_dRbar(monkeypatch):
+    """``CayleyFactor.rotation_residual`` uses ``dRbar^T``."""
+    def rotation_residual(self, R_i, R_j, b_g):
+        return B2.rotation_residual_eq19(R_i, R_j, np.asarray(self.dRbar).T,
+                                         self.xi(b_g))                     # MUTANT
+    monkeypatch.setattr(B2.CayleyFactor, "rotation_residual", rotation_residual)
+
+
+#: ``(id, mutation, killer, text the killing assertion's message must contain)``
+PASS4_SURVIVORS = [
+    ("Q25", _q25_affine_residual_takes_accel_offset,  "c13c",
+     "rotation_residual_affine is"),
+    ("Q45", _q45_rotation_residual_negated_xi,        "c13c",
+     "CayleyFactor.rotation_residual is"),
+    ("Q46", _q46_rotation_residual_transposed_dRbar,  "c13c",
+     "CayleyFactor.rotation_residual is"),
+]
+
+
+@pytest.mark.claim("M2-F12")
+@pytest.mark.parametrize("mutant_id,apply_mutation,killer,message", PASS4_SURVIVORS,
+                         ids=[m[0] for m in PASS4_SURVIVORS])
+def test_pass4_survivor_is_killed(monkeypatch, mutant_id, apply_mutation, killer, message):
+    """Every pass-4 survivor must fail its killer, on the assertion written for it."""
+    assert _outcome(killer) is None, \
+        f"{_test_function(killer)[0]} fails BEFORE {mutant_id} is applied"
+    apply_mutation(monkeypatch)
+    outcome = _outcome(killer)
+    assert outcome is not None, \
+        f"{mutant_id} (survived pass 4) still SURVIVES {_test_function(killer)[0]}"
     assert outcome.startswith("AssertionError") and message in outcome, (
         f"{mutant_id} kills {_test_function(killer)[0]}, but not on the intended "
         f"assertion: {outcome}")
