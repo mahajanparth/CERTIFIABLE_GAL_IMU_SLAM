@@ -2160,3 +2160,87 @@ def test_c25_fixture_is_bias_observable_without_a_bias_prior():
     assert A_full.shape == (45, 45), f"full Jacobian is {A_full.shape}, expected square"
 
     assert full.error(values) <= 1e-18, f"graph error {full.error(values):.3e}"
+
+
+#: Baseline 3's stated noise densities for :func:`test_c25b`.  Gyro and accel values are
+#: deliberately DIFFERENT (by 10x in sigma, 100x in variance) so that an exchange of the
+#: two -- in either the white-noise or the random-walk pair -- is visible.
+F15_SIGMA_BG = 1e-5        # gyro bias random walk, rad/s^2/sqrt(Hz)
+F15_SIGMA_BA = 1e-4        # accel bias random walk, m/s^3/sqrt(Hz)
+F15_SIGMA_INT = 1e-3       # integration (position) noise density, m/s/sqrt(Hz)
+#: relative bound on every block of :func:`test_c25b` (measured: bias blocks 3.3e-16 / 2.3e-15,
+#: integration-only covariance 1.5e-14; S36 gives 0.99 / 99, S35 gives 999)
+NOISE_MODEL_REL_BOUND = 1e-9
+
+
+@pytest.mark.claim("M2-F15")
+def test_c25b_baseline3_noise_model_is_built_from_the_stated_densities():
+    """``make_params``' ``sigma_int`` / ``sigma_bg`` / ``sigma_ba`` plumbing.
+
+    c25's rank and nullspace assertions are invariant to positive reweighting, so before
+    this test no assertion could fail on any value of those three densities (verification
+    pass 6, M2-F15; mutants S35 ``setIntegrationCovariance(sigma_int)`` not squared and S36
+    gyro <-> accel random-walk covariances exchanged both survived).  The expected values
+    below are derived from the continuous-time densities, not read off GTSAM:
+
+    (a) Bias random walk.  ``b(t)`` is a Wiener process with intensity ``sigma^2``, so over
+        an edge of length ``Dt`` its covariance grows by ``sigma^2 Dt`` -- independent of
+        the measurements and of every other density.  The covariance of the
+        ``GalileanCombinedImuFactor``'s own noise model is 15x15 in the order
+        NavState (rot, pos, vel) then ``ConstantBias`` (ACCEL, GYRO), so its bias blocks
+        must be ``sigma_ba^2 Dt I`` at ``[9:12]`` and ``sigma_bg^2 Dt I`` at ``[12:15]``,
+        with no accel/gyro cross term.  At the settings here those are 5e-9 and 5e-11;
+        S36 exchanges them (100x off, both blocks).
+    (b) Integration noise alone (every other density zero).  A white position perturbation
+        of intensity ``sigma_int^2`` enters each step as ``sigma_int^2 dt I`` and is carried
+        by the right-chart transition as ``R^T rho`` -- a rotation, under which an isotropic
+        covariance is invariant -- and no other state sees it.  So the propagated
+        covariance is EXACTLY ``sigma_int^2 Dt I`` in the position block and zero
+        elsewhere, for the combined (15x15) and the plain (9x9) PIM alike.  S35 stores
+        ``sigma_int`` instead of ``sigma_int^2``: 1000x off at ``sigma_int = 1e-3``.
+    """
+    edge = T.edges()[0]
+    Dt = edge.n_steps * edge.dt
+    I3 = np.eye(3)
+
+    def run(params, combined):
+        pim = (gtsam.PreintegratedCombinedMeasurementsG if combined
+               else gtsam.PreintegratedImuMeasurementsG)(params, B3.to_gtsam_bias(T.BIAS_TRUE))
+        for omega, acc in zip(edge.gyro_stream(), edge.accel_stream()):
+            pim.integrateMeasurement(acc, omega, edge.dt)
+        return pim
+
+    def rel(got, want):
+        return float(np.abs(got - want).max() / np.abs(want).max())
+
+    # (a) bias blocks of the combined factor's noise model, all densities on
+    params = B3.make_params(T.G_W, sigma_g=1.7e-4, sigma_a=1e-2, sigma_int=1e-6,
+                            combined=True, sigma_bg=F15_SIGMA_BG, sigma_ba=F15_SIGMA_BA)
+    pim = run(params, combined=True)
+    factor = gtsam.GalileanCombinedImuFactor(X(0), V(0), X(1), V(1), B(0), B(1), pim)
+    cov = np.asarray(factor.noiseModel().covariance())
+    assert cov.shape == (15, 15), f"combined noise model is {cov.shape}"
+    want_ba = F15_SIGMA_BA**2 * Dt * I3
+    want_bg = F15_SIGMA_BG**2 * Dt * I3
+    err_ba, err_bg = rel(cov[9:12, 9:12], want_ba), rel(cov[12:15, 12:15], want_bg)
+    assert err_ba <= NOISE_MODEL_REL_BOUND and err_bg <= NOISE_MODEL_REL_BOUND, (
+        f"Baseline 3 bias random-walk covariance is not diag(sigma_ba^2, sigma_bg^2) Dt: "
+        f"accel block {np.diag(cov[9:12, 9:12])} (want {want_ba[0, 0]:.3e}), gyro block "
+        f"{np.diag(cov[12:15, 12:15])} (want {want_bg[0, 0]:.3e}); relative "
+        f"{err_ba:.3e} / {err_bg:.3e}")
+    cross = float(np.abs(cov[9:12, 12:15]).max())
+    assert cross <= NOISE_MODEL_REL_BOUND * want_bg[0, 0], \
+        f"Baseline 3 bias random walk has an accel/gyro cross term {cross:.3e}"
+
+    # (b) integration noise alone, combined and plain PIM
+    for combined in (True, False):
+        kwargs = dict(combined=True, sigma_bg=0.0, sigma_ba=0.0) if combined else {}
+        params = B3.make_params(T.G_W, sigma_int=F15_SIGMA_INT, **kwargs)
+        cov = np.asarray(run(params, combined).preintMeasCov())
+        want = np.zeros_like(cov)
+        want[3:6, 3:6] = F15_SIGMA_INT**2 * Dt * I3
+        err = rel(cov, want)
+        assert err <= NOISE_MODEL_REL_BOUND, (
+            f"Baseline 3 ({'combined' if combined else 'plain'}) integration covariance is "
+            f"not sigma_int^2 Dt I on the position block: position diagonal "
+            f"{np.diag(cov[3:6, 3:6])} (want {want[3, 3]:.3e}); relative {err:.3e}")

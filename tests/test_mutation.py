@@ -1000,3 +1000,89 @@ def test_pass5_survivor_is_killed_end_to_end(monkeypatch, mutant_id, apply_mutat
         "Eq. (19) residual at ground truth" in outcome, (
             f"{mutant_id} kills {_test_function(killer)[0]} end-to-end, but not on the "
             f"Eq. (19) ground-truth assertion: {outcome}")
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-6 sweep (docs/verification/stage-b_m2-baselines_pass6.md
+# Sec. 4, findings M2-F14 and M2-F15), replayed as REAL FILE EDITS: each mutant is a
+# string edit of a ``src`` file in a scratch copy of the tree, and the killer tests run in
+# a subprocess that imports the edited file.  Each kill is checked against the assertion
+# written for it (the failure output must contain the given text).
+# ======================================================================================
+
+
+def _run_in_copy(root, nodeids, src_file=None, edit=None):
+    """Copy ``src``, ``tests/test_baselines.py``, ``conftest.py`` and ``pyproject.toml``
+    into ``root``, optionally apply ``edit`` (``[(old, new), ...]``, each anchor unique) to
+    ``src/<src_file>``, and run ``nodeids`` of ``test_baselines.py`` there."""
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    shutil.copytree(repo / "src", root / "src",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "tests").mkdir(parents=True)
+    shutil.copy(repo / "tests" / "test_baselines.py", root / "tests")
+    shutil.copy(repo / "conftest.py", root)
+    shutil.copy(repo / "pyproject.toml", root)
+    if edit:
+        path = root / "src" / src_file
+        text = path.read_text()
+        for old, new in edit:
+            assert text.count(old) == 1, f"edit anchor {old!r} not unique in {src_file}"
+            text = text.replace(old, new)
+        path.write_text(text)
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+        + [f"tests/test_baselines.py::{n}" for n in nodeids],
+        cwd=str(root), capture_output=True, text=True)
+    return proc.returncode, proc.stdout
+
+
+_C25B = "test_c25b_baseline3_noise_model_is_built_from_the_stated_densities"
+
+#: ``(id, src file, edit, killer test, text the killing assertion's message must contain)``
+PASS6_F15_SURVIVORS = [
+    ("S35", "preintegration_galilean.py",
+     [("params.setIntegrationCovariance(sigma_int**2 * np.eye(3))",
+       "params.setIntegrationCovariance(sigma_int * np.eye(3))")],
+     _C25B, "integration covariance is not sigma_int^2 Dt I"),
+    ("S36", "preintegration_galilean.py",
+     [("params.setBiasOmegaCovariance(sigma_bg**2 * np.eye(3))",
+       "params.setBiasOmegaCovariance(sigma_ba**2 * np.eye(3))"),
+      ("params.setBiasAccCovariance(sigma_ba**2 * np.eye(3))",
+       "params.setBiasAccCovariance(sigma_bg**2 * np.eye(3))")],
+     _C25B, "bias random-walk covariance is not diag(sigma_ba^2, sigma_bg^2) Dt"),
+]
+
+
+#: filled by the M2-F14 remediation below
+PASS6_F14_SURVIVORS = []
+
+
+@pytest.fixture(scope="module")
+def pass6_control(tmp_path_factory):
+    """The unmutated copy must pass every pass-6 killer, or no kill below means anything."""
+    killers = sorted({m[3] for m in PASS6_F15_SURVIVORS + PASS6_F14_SURVIVORS})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass6_control"), killers)
+    assert code == 0, f"control copy fails a pass-6 killer:\n{out[-3000:]}"
+    return killers
+
+
+def _assert_file_level_kill(root, mutant_id, src_file, edit, killer, message):
+    code, out = _run_in_copy(root, [killer], src_file, edit)
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killer}"
+    assert message in out, (
+        f"{mutant_id} kills {killer}, but not on the intended assertion "
+        f"({message!r}):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F15")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killer,message", PASS6_F15_SURVIVORS,
+                         ids=[m[0] for m in PASS6_F15_SURVIVORS])
+def test_pass6_f15_survivor_is_killed_as_a_file_edit(tmp_path, pass6_control, mutant_id,
+                                                     src_file, edit, killer, message):
+    """S35 / S36: Baseline 3's noise-model plumbing, edited on disk."""
+    _assert_file_level_kill(tmp_path, mutant_id, src_file, edit, killer, message)
