@@ -399,7 +399,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -531,9 +531,18 @@ milestones:
   - role: verifier
     agent_id: verify-M2-006
     started: '2026-10-13T08:40:25+00:00'
+    finished: '2026-10-13T09:03:00+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C29 (J_Cay^T J_Cay != I; singular values 1/sqrt(1+s), 1/(1+s)). 25/25 confirmed
+      incl. the edited C22. F13 partial: dRbar is pinned only at BIAS_TRUE (F14). New F15: Baseline 3
+      noise parameters unchecked. 20 earlier mutants replayed, none regressed.'
+  - role: implementer
+    agent_id: impl-M2-009-remediation
+    started: '2026-10-13T09:03:00+00:00'
     finished: null
     outcome: running
-    note: 'Sixth pass with a fresh planted claim: rule on F13 and the C22 metric clarification.'
+    note: Exercise from_edge at biases other than BIAS_TRUE and pin every field as a function of bbar
+      (F14); check Baseline 3's noise parameters against an independent covariance (F15).
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -622,13 +631,28 @@ milestones:
       only.'
     resolution: PARTIALLY fixed per verify-M2-005 (methods pinned); the remaining field gap is M2-F13.
   - id: M2-F13
-    resolved: false
+    resolved: true
     summary: 'CayleyFactor.from_edge''s dRbar is pinned by no test: c13c builds its edge-factor reference
       from the factor''s own fields. Storing pim.dR.T keeps the suite at 100/100 (independently reproduced)
       while the factor''s Eq. (19)/(22b) residual at ground truth goes from 2e-8 to 0.39/0.44. Medium
       survivors: R01 transpose, R02/R05 dRbar from the Exp integrator, R04 dRbar at b_g=0, R10 dRbar*Cay(1e-6
       e1). Also hygiene: C22''s ''3.0e-8 +/-10%'' depends on the rotation metric (matrix inf-norm 2.996e-8,
       |Log|inf 2.81e-8, |Log|2 3.51e-8 outside the band) and the record does not name it.'
+    resolution: PARTIALLY fixed per verify-M2-006 (dRbar pinned at one bias); remainder is M2-F14.
+  - id: M2-F14
+    resolved: false
+    summary: Every from_edge call in tests passes BIAS_TRUE, so no field check can tell 'use the bbar
+      input' from 'use the fixture constant'. S47 from_edge ignoring bbar passes all 112 tests (independently
+      reproduced); S46/S48 integrating at the hard-coded fixture bias likewise. At bbar = 0 dRbar is off
+      7.9e-3, dvbar 4.4e-2, dpbar 1.1e-2 -- and such a factor LEAKS the true bias, looking better than
+      a correct one in noise-free comparisons. bbar[3:6] is read by no src method; zeroing/negating it
+      dies only on the copy-of-src replay guard.
+  - id: M2-F15
+    resolved: false
+    summary: 'Baseline 3 noise model unchecked: sigma_int, sigma_bg, sigma_ba are used only by c25, which
+      is weight-invariant. S35 integration covariance not squared (position covariance block moves 12%)
+      and S36 gyro/accel bias random-walk covariances swapped (both bias blocks mis-weighted 100x) pass
+      all 112 tests.'
   advisory_findings:
   - id: M2-A01
     summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
@@ -642,6 +666,11 @@ milestones:
     summary: 'Pass-5 low/equivalent survivors (non-blocking): R13, R18, R22, R31, R33 algebraic equivalents;
       R36/R37 below c13b bounds; R38 unread variant field. Note for M3: R21 (affine method returning Eq.
       (19)) is equal in value but drops the Y/Y'' lifting -- M3 must consume the lifted form explicitly.'
+  - id: M2-A04
+    summary: 'Pass-6 low (non-blocking): S02, S03, S11, S16, S20, S21 caught only by the copy-of-src replay
+      guard (a change detector, not a reference); S22, S26, S31, S39, S43, S45 survive outright. c13d
+      ''predicted >= 1e-8'' depends only on fixture constants. Minor record drift: C06 FD 7.3e-9 vs quoted
+      2.7e-9, C07 left-convention gap 0.384 vs hint 2.1.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
