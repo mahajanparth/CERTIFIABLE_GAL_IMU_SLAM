@@ -1361,6 +1361,242 @@ def test_c13d_cayley_factor_frozen_rotation_is_the_cayley_increment():
                 f"{predicted:.6e} (relative {rel:+.3e})")
 
 
+#: Nominal biases at which :func:`test_c13e` / :func:`test_c05c` build factors.  None is
+#: the fixture's true bias, so "uses its ``bbar`` input" and "uses the fixture constant"
+#: cannot coincide (verification pass 6, M2-F14).  Retyped literals, not ``src`` constants:
+#: zero; a generic offset with ``bbar_a != bbar_g``; and one offset per half, so a
+#: gyro-only or accel-only mix-up is visible on its own.
+F14_TRUE_BIAS = np.array([0.0100, -0.0150, 0.0080, 0.0600, -0.0400, 0.0900])
+F14_BIASES = {
+    "zero":       np.zeros(6),
+    "generic":    np.array([0.0300, -0.0250, 0.0230, 0.1600, -0.1400, 0.1400]),
+    "gyro-half":  np.array([0.0300, -0.0250, 0.0230, 0.0600, -0.0400, 0.0900]),
+    "accel-half": np.array([0.0100, -0.0150, 0.0080, 0.1600, -0.1400, 0.1400]),
+}
+F14_GRAVITY = np.array([0.0, 0.0, -9.81])
+#: elementwise max-abs bound on dvbar / dpbar / Dt against the retyped integrator
+#: (measured <= 6.1e-14)
+INCREMENT_PIN_BOUND = 1e-12
+#: absolute bound on the factor's Eq. (21b)/(21c) residual against the retyped residual
+#: (measured 8.7e-10; the floor is the factor's own 1e-6-step FD round-off in A_* times
+#: |db| <= 0.16)
+CONSUMER_RESIDUAL_BOUND = 1e-8
+#: the frozen-Jacobian bounds of test_c13b, relative to max|block|
+JACOBIAN_REL_BOUNDS = {"J_R": 1e-8, "A_vg": 1e-7, "A_va": 1e-7, "A_pg": 1e-7, "A_pa": 1e-7}
+JACOBIAN_NAMES = ("J_R", "A_vg", "A_va", "A_pg", "A_pa")
+
+
+def _indep_ground_truth_keyframes():
+    """``[(R, v, p)]`` at KF0, KF1, KF2 from the exact ZOH increment (one ``expm`` per edge,
+    :func:`_zoh_increment_expm`) chained with the retyped gravity literal."""
+    R, v, p = _indep_rot(T.ROT_VEC_0), np.array([0.50, -0.30, 0.20]), np.zeros(3)
+    out = [(R, v, p)]
+    for edge in T.edges():
+        dR, dv, dp = _zoh_increment_expm(edge.omega_body, edge.f_body, edge.duration)
+        Dt = edge.duration
+        R, v, p = (R @ dR, v + F14_GRAVITY * Dt + R @ dv,
+                   p + v * Dt + 0.5 * F14_GRAVITY * Dt**2 + R @ dp)
+        out.append((R, v, p))
+    return out
+
+
+def _indep_eq21b(R_i, v_i, v_j, dvbar, Dt, A_vg, A_va, db):
+    """Rai Eq. (21b), retyped: ``R_i^T (v_j - v_i - g Dt) - dvbar - A^vg db_g - A^va db_a``."""
+    return (R_i.T @ (v_j - v_i - F14_GRAVITY * Dt) - dvbar
+            - A_vg @ db[0:3] - A_va @ db[3:6])
+
+
+def _indep_eq21c(R_i, p_i, p_j, v_i, dpbar, Dt, A_pg, A_pa, db):
+    """Rai Eq. (21c), retyped."""
+    return (R_i.T @ (p_j - p_i - v_i * Dt - 0.5 * F14_GRAVITY * Dt**2) - dpbar
+            - A_pg @ db[0:3] - A_pa @ db[3:6])
+
+
+@pytest.mark.claim("M2-F14")
+def test_c13e_cayley_factor_is_a_function_of_its_bbar():
+    """``CayleyFactor.from_edge(edge, bbar)`` as a FUNCTION of ``bbar``.
+
+    Every other ``from_edge`` call in this suite passes ``bbar = BIAS_TRUE``, where "uses
+    its input" and "uses the fixture constant" coincide; a ``from_edge`` that integrated at
+    the hard-coded true bias, and so leaked it into the factor, passed all 112 tests
+    (verification pass 6, M2-F14; S46, S47, S48).  ``bbar[3:6]`` was read by no ``src``
+    method, so zeroing or negating it was caught only by a copy-of-``src`` change detector
+    (S12, S13).  Here the factor is built at each of :data:`F14_BIASES` -- none of them the
+    true bias -- on both edges, and EVERY stored field is pinned against an independent
+    reference evaluated at that same input:
+
+    * ``bbar`` (all six) equals the input exactly;
+    * ``dRbar`` / ``dvbar`` / ``dpbar`` equal the retyped Cayley Eq. (9) sums
+      :func:`_indep_cayley_increment` at the input (``1e-12``), and ``Dt = N dt``;
+    * ``J_R`` / ``A_*`` equal the independent finite differences
+      :func:`_indep_cayley_bias_jacobians` at the input (c13b's bounds);
+    * a real consumer of ``bbar[3:6]``: Eq. (21b)/(21c) at the ground-truth keyframes and
+      the TRUE bias ``b``, with ``db = b - f.bbar`` formed from the factor's own field, must
+      equal the retyped residual with ``db = b - bbar_input`` and the reference increments
+      and Jacobians (``1e-8`` absolute).
+
+    All failures are collected and reported together, so a mutant that breaks several
+    fields is seen to break each of them.
+
+    Measured worst over the 8 (edge, bbar) cases: dRbar 2.2e-14, dvbar 6.1e-14, dpbar
+    9.5e-15, Dt 3.3e-16; J_R 3.3e-10, A_vg 3.6e-8, A_pg 3.8e-8, A_va 7.3e-9, A_pa 7.8e-9
+    (relative); Eq. (21b) 8.7e-10, Eq. (21c) 1.2e-10.  Mutants (as file edits): S46 dRbar
+    1.1e-2, dvbar / Eq. (21b) 7.5e-2; S47 additionally bbar != input and J_R 5.4e-3,
+    Eq. (21b) 2.5e-4; S48 dRbar 1.1e-2; S12 Eq. (21b) 8.1e-2, Eq. (21c) 2.0e-2; S13
+    Eq. (21b) 1.6e-1, Eq. (21c) 4.0e-2.
+    """
+    keyframes = _indep_ground_truth_keyframes()
+    failures = []
+    for edge in T.edges():
+        gyro, accel, dt = edge.gyro_stream(), edge.accel_stream(), edge.dt
+        (R_i, v_i, p_i), (R_j, v_j, p_j) = keyframes[edge.index], keyframes[edge.index + 1]
+        for label, bias in F14_BIASES.items():
+            where = f"edge {edge.index}, bbar = {label}"
+            assert _max_abs(bias, F14_TRUE_BIAS) >= 1e-2, f"{where}: bbar is the true bias"
+            f = B2.CayleyFactor.from_edge(edge, bias.copy())
+
+            if not (np.shape(f.bbar) == (6,) and np.array_equal(f.bbar, bias)):
+                failures.append(f"{where}: CayleyFactor.bbar is not its input "
+                                f"({np.asarray(f.bbar)} vs {bias})")
+
+            dR_ref, dv_ref, dp_ref = _indep_cayley_increment(gyro, accel, dt, bias)
+            for name, got, ref, bound in (("dRbar", f.dRbar, dR_ref, DRBAR_PIN_BOUND),
+                                          ("dvbar", f.dvbar, dv_ref, INCREMENT_PIN_BOUND),
+                                          ("dpbar", f.dpbar, dp_ref, INCREMENT_PIN_BOUND),
+                                          ("Dt", f.Dt, edge.n_steps * dt,
+                                           INCREMENT_PIN_BOUND)):
+                err = _max_abs(got, ref)
+                if not err <= bound:
+                    failures.append(f"{where}: CayleyFactor.{name} is not the Cayley "
+                                    f"increment at the input bbar ({err:.3e} > {bound:.0e})")
+
+            jac_ref = dict(zip(JACOBIAN_NAMES, _indep_cayley_bias_jacobians(edge, bias)))
+            for name in JACOBIAN_NAMES:
+                rel = (float(np.abs(getattr(f, name) - jac_ref[name]).max())
+                       / float(np.abs(jac_ref[name]).max()))
+                if not rel <= JACOBIAN_REL_BOUNDS[name]:
+                    failures.append(f"{where}: CayleyFactor.{name} is not the Cayley "
+                                    f"Jacobian at the input bbar (relative {rel:.3e} > "
+                                    f"{JACOBIAN_REL_BOUNDS[name]:.0e})")
+
+            # the consumer: db from the FACTOR's bbar, against db from the input
+            db_ref = F14_TRUE_BIAS - bias
+            db_f = F14_TRUE_BIAS - np.asarray(f.bbar, dtype=float)
+            Dt = edge.n_steps * dt
+            rv = f.velocity_residual(R_i, v_i, v_j, F14_GRAVITY, db=db_f)
+            rv_ref = _indep_eq21b(R_i, v_i, v_j, dv_ref, Dt,
+                                  jac_ref["A_vg"], jac_ref["A_va"], db_ref)
+            rp = f.position_residual(R_i, p_i, p_j, v_i, F14_GRAVITY, db=db_f)
+            rp_ref = _indep_eq21c(R_i, p_i, p_j, v_i, dp_ref, Dt,
+                                  jac_ref["A_pg"], jac_ref["A_pa"], db_ref)
+            for name, got, ref in (("Eq. (21b)", rv, rv_ref), ("Eq. (21c)", rp, rp_ref)):
+                err = _max_abs(got, ref)
+                if not err <= CONSUMER_RESIDUAL_BOUND:
+                    failures.append(
+                        f"{where}: factor {name} residual with db = b - bbar at ground "
+                        f"truth is {np.abs(got).max():.3e}, the reference "
+                        f"{np.abs(ref).max():.3e} (gap {err:.3e} > "
+                        f"{CONSUMER_RESIDUAL_BOUND:.0e})")
+    assert not failures, "\n".join(failures)
+
+
+def _indep_exp_increment(gyro, accel, dt, bias):
+    """Baseline 1's Eq. (9) sums, retyped, with the Exp retraction as retyped Rodrigues."""
+    R, v, p = np.eye(3), np.zeros(3), np.zeros(3)
+    for omega, acc in zip(gyro, accel):
+        w = omega - bias[0:3]
+        a = acc - bias[3:6]
+        p = p + v * dt + 0.5 * (R @ a) * dt**2
+        v = v + (R @ a) * dt
+        R = R @ _indep_rot(w * dt)
+    return R, v, p
+
+
+def _indep_exp_bias_jacobians(edge, bias):
+    """``(J_R, J_vg, J_va, J_pg, J_pa)`` of :func:`_indep_exp_increment` by central
+    differences (step :data:`CAYLEY_REF_FD_EPS`), J_R in the right chart."""
+    gyro, accel, dt = edge.gyro_stream(), edge.accel_stream(), edge.dt
+    R0 = _indep_exp_increment(gyro, accel, dt, bias)[0]
+    eps = CAYLEY_REF_FD_EPS
+    J_R, J_v, J_p = np.zeros((3, 3)), np.zeros((3, 6)), np.zeros((3, 6))
+    for m in range(6):
+        e = np.zeros(6)
+        e[m] = eps
+        Rp, vp, pp = _indep_exp_increment(gyro, accel, dt, bias + e)
+        Rm, vm, pm = _indep_exp_increment(gyro, accel, dt, bias - e)
+        J_v[:, m] = (vp - vm) / (2.0 * eps)
+        J_p[:, m] = (pp - pm) / (2.0 * eps)
+        if m < 3:
+            J_R[:, m] = (_indep_so3_log(R0.T @ Rp) - _indep_so3_log(R0.T @ Rm)) / (2.0 * eps)
+    return J_R, J_v[:, 0:3], J_v[:, 3:6], J_p[:, 0:3], J_p[:, 3:6]
+
+
+@pytest.mark.claim("M2-F14")
+def test_c05c_forster_and_galilean_constructors_are_functions_of_their_bias():
+    """The M2-F14 treatment for Baselines 1 and 3, whose constructors also take a bias.
+
+    At each of :data:`F14_BIASES` (none the true bias), on both edges:
+
+    * Baseline 1 ``integrate_edge(edge, bbar)`` stores ``bias_hat == bbar`` and its
+      ``(dR, dv, dp, Dt)`` equal the retyped Exp Euler sums :func:`_indep_exp_increment`
+      (``1e-12``); ``bias_jacobians_fd(edge, bbar)`` equals the independent finite
+      differences :func:`_indep_exp_bias_jacobians` (c13b's bounds);
+    * Baseline 3 ``integrate_edge(edge, bbar)`` stores ``bias_hat == bbar``, hands GTSAM
+      ``biasHat() = (bbar_a, bbar_g)`` (``ConstantBias`` is accel first), and its increment
+      is the exact ZOH increment at ``(omega - bbar_g, a - bbar_a)``, one ``expm``
+      (:func:`_zoh_increment_expm`), to Tier 0.
+
+    Measured worst: Baseline 1 dR / dv / dp 1.1e-16 / 4.5e-17 / 3.5e-18, Jacobians
+    <= 2.3e-8 relative; Baseline 3 dR / dv / dp 1.0e-14 / 2.3e-14 / 4.7e-15.  A Baseline 1
+    or Baseline 3 constructor that integrates at the hard-coded true bias is off by
+    1.1e-2 in dR (and 7.5e-2 in dv).
+    """
+    failures = []
+    for edge in T.edges():
+        gyro, accel, dt = edge.gyro_stream(), edge.accel_stream(), edge.dt
+        assert np.ptp(gyro, axis=0).max() == 0.0 and np.ptp(accel, axis=0).max() == 0.0
+        for label, bias in F14_BIASES.items():
+            where = f"edge {edge.index}, bbar = {label}"
+
+            # Baseline 1
+            pim = B1.integrate_edge(edge, bias.copy())
+            if not np.array_equal(pim.bias_hat, bias):
+                failures.append(f"{where}: Baseline 1 bias_hat is not its input")
+            ref = _indep_exp_increment(gyro, accel, dt, bias)
+            for name, got, want in (("dR", pim.dR, ref[0]), ("dv", pim.dv, ref[1]),
+                                    ("dp", pim.dp, ref[2]),
+                                    ("Dt", pim.dt_total, edge.n_steps * dt)):
+                err = _max_abs(got, want)
+                if not err <= INCREMENT_PIN_BOUND:
+                    failures.append(f"{where}: Baseline 1 {name} is not the Exp increment "
+                                    f"at the input bias ({err:.3e})")
+            got_j = B1.bias_jacobians_fd(edge, bias.copy())
+            ref_j = _indep_exp_bias_jacobians(edge, bias)
+            for name, g_, r_ in zip(JACOBIAN_NAMES, got_j, ref_j):
+                rel = float(np.abs(g_ - r_).max()) / float(np.abs(r_).max())
+                if not rel <= JACOBIAN_REL_BOUNDS[name]:
+                    failures.append(f"{where}: Baseline 1 {name} is not the Exp Jacobian "
+                                    f"at the input bias (relative {rel:.3e})")
+
+            # Baseline 3
+            gal = B3.integrate_edge(edge, bias.copy())
+            if not np.array_equal(gal.bias_hat, bias):
+                failures.append(f"{where}: Baseline 3 bias_hat is not its input")
+            hat_vec = np.asarray(gal.pim.biasHat().vector())
+            if not np.array_equal(hat_vec, np.concatenate([bias[3:6], bias[0:3]])):
+                failures.append(f"{where}: Baseline 3 hands GTSAM biasHat {hat_vec}, not "
+                                f"(bbar_a, bbar_g)")
+            dR, dv, dp = _zoh_increment_expm(gyro[0] - bias[0:3], accel[0] - bias[3:6],
+                                             edge.n_steps * dt)
+            for name, got, want in (("dR", gal.dR, dR), ("dv", gal.dv, dv),
+                                    ("dp", gal.dp, dp)):
+                err = _max_abs(got, want)
+                if not err <= TIER0:
+                    failures.append(f"{where}: Baseline 3 {name} is not the exact ZOH "
+                                    f"increment at the input bias ({err:.3e})")
+    assert not failures, "\n".join(failures)
+
+
 # ======================================================================================
 # Baseline 3 -- GTSAM 4.3.0 Galilean
 # ======================================================================================

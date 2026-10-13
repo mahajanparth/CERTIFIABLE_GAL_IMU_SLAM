@@ -52,8 +52,15 @@ M2-F13) found the factor's frozen rotation ``dRbar`` pinned by nothing.
 as written (killed by the direct ``dRbar`` pin) and once with that pin disabled (killed by
 the end-to-end Eq. (19) residual at ground truth).
 
-Mutations are applied with ``monkeypatch`` against the imported modules rather than by
-editing files, so each one is undone automatically and the mutants cannot leak into
+Verification pass 6 (``docs/verification/stage-b_m2-baselines_pass6.md`` Sec. 4) found
+that every ``from_edge`` call passed ``bbar = BIAS_TRUE`` (M2-F14: S46, S47, S48 leak the
+fixture bias; S12, S13 corrupt ``bbar[3:6]``) and that Baseline 3's ``sigma_int`` /
+``sigma_bg`` / ``sigma_ba`` were pinned by nothing (M2-F15: S35, S36).  Those seven are
+replayed as REAL FILE EDITS in a scratch copy (``PASS6_F14_SURVIVORS``,
+``PASS6_F15_SURVIVORS``) against ``test_c13e`` / ``test_c05c`` / ``test_c25b``.
+
+Mutations before pass 6 are applied with ``monkeypatch`` against the imported modules
+rather than by editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
 is what the production call sites look up, so the patch really is in force.
 """
@@ -1058,8 +1065,46 @@ PASS6_F15_SURVIVORS = [
 ]
 
 
-#: filled by the M2-F14 remediation below
-PASS6_F14_SURVIVORS = []
+_C13E = "test_c13e_cayley_factor_is_a_function_of_its_bbar"
+_C05C = "test_c05c_forster_and_galilean_constructors_are_functions_of_their_bias"
+#: the fixture's true bias as a literal -- what a ``from_edge`` that leaks it hard-codes
+_FIXTURE_BIAS = "np.array([0.0100, -0.0150, 0.0080, 0.0600, -0.0400, 0.0900])"
+_DRBAR_MSG = "CayleyFactor.dRbar is not the Cayley increment at the input bbar"
+_BBAR_MSG = "CayleyFactor.bbar is not its input"
+_CONSUMER_MSG = "factor Eq. (21b) residual with db = b - bbar at ground truth"
+
+#: M2-F14.  ``message`` may be a tuple: then EVERY text must appear.  S12/S13 must die on
+#: the Eq. (21b) consumer of ``bbar[3:6]``, not only on the direct ``bbar`` pin.
+#: F14-B1 / F14-B3 are the same leak in the Baseline 1 / Baseline 3 constructors.
+PASS6_F14_SURVIVORS = [
+    ("S46", "preintegration_cayley.py",
+     [("pim = integrate_edge(edge, bbar,", f"pim = integrate_edge(edge, {_FIXTURE_BIAS},")],
+     _C13E, (_DRBAR_MSG, "CayleyFactor.dvbar is not the Cayley increment", _CONSUMER_MSG)),
+    ("S47", "preintegration_cayley.py",
+     [("bbar = np.asarray(bbar, dtype=float)\n        pim",
+       f"bbar = {_FIXTURE_BIAS}\n        pim")],
+     _C13E, (_BBAR_MSG, _DRBAR_MSG, "CayleyFactor.J_R is not the Cayley Jacobian",
+             _CONSUMER_MSG)),
+    ("S48", "preintegration_cayley.py",
+     [("dRbar=pim.dR,",
+       "dRbar=integrate_edge(edge, np.concatenate([[0.0100, -0.0150, 0.0080], bbar[3:6]]),"
+       " cls=CayleyPreintegration, variant=variant).dR,")],
+     _C13E, _DRBAR_MSG),
+    ("S12", "preintegration_cayley.py",
+     [("return cls(bbar=bbar,", "return cls(bbar=np.concatenate([bbar[0:3], np.zeros(3)]),")],
+     _C13E, (_CONSUMER_MSG, _BBAR_MSG)),
+    ("S13", "preintegration_cayley.py",
+     [("return cls(bbar=bbar,", "return cls(bbar=np.concatenate([bbar[0:3], -bbar[3:6]]),")],
+     _C13E, (_CONSUMER_MSG, _BBAR_MSG)),
+    ("F14-B1", "preintegration_forster.py",
+     [("pim = cls(bias_hat=np.asarray(bias_hat, dtype=float),",
+       f"pim = cls(bias_hat={_FIXTURE_BIAS},")],
+     _C05C, "Baseline 1 dR is not the Exp increment at the input bias"),
+    ("F14-B3", "preintegration_galilean.py",
+     [("self.bias_hat = np.asarray(bias_hat, dtype=float)",
+       f"self.bias_hat = {_FIXTURE_BIAS}")],
+     _C05C, "Baseline 3 dR is not the exact ZOH increment at the input bias"),
+]
 
 
 @pytest.fixture(scope="module")
@@ -1074,9 +1119,10 @@ def pass6_control(tmp_path_factory):
 def _assert_file_level_kill(root, mutant_id, src_file, edit, killer, message):
     code, out = _run_in_copy(root, [killer], src_file, edit)
     assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killer}"
-    assert message in out, (
-        f"{mutant_id} kills {killer}, but not on the intended assertion "
-        f"({message!r}):\n{out[-3000:]}")
+    for text in ((message,) if isinstance(message, str) else message):
+        assert text in out, (
+            f"{mutant_id} kills {killer}, but not on the intended assertion "
+            f"({text!r}):\n{out[-3000:]}")
 
 
 @pytest.mark.claim("M2-F15")
@@ -1086,3 +1132,20 @@ def test_pass6_f15_survivor_is_killed_as_a_file_edit(tmp_path, pass6_control, mu
                                                      src_file, edit, killer, message):
     """S35 / S36: Baseline 3's noise-model plumbing, edited on disk."""
     _assert_file_level_kill(tmp_path, mutant_id, src_file, edit, killer, message)
+
+
+@pytest.mark.claim("M2-F14")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killer,message", PASS6_F14_SURVIVORS,
+                         ids=[m[0] for m in PASS6_F14_SURVIVORS])
+def test_pass6_f14_survivor_is_killed_as_a_file_edit(tmp_path, pass6_control, mutant_id,
+                                                     src_file, edit, killer, message):
+    """S46 / S47 / S48 (the factor leaks the fixture bias) and S12 / S13 (``bbar[3:6]``
+    zeroed / negated), edited on disk -- with no copy-of-``src`` guard involved."""
+    _assert_file_level_kill(tmp_path, mutant_id, src_file, edit, killer, message)
+
+
+@pytest.mark.claim("M2-F14")
+def test_pass6_sweep_covers_every_medium_survivor():
+    """The 7 medium survivors of the pass-6 report, none dropped."""
+    ids = {m[0] for m in PASS6_F14_SURVIVORS + PASS6_F15_SURVIVORS}
+    assert {"S12", "S13", "S35", "S36", "S46", "S47", "S48"} <= ids
