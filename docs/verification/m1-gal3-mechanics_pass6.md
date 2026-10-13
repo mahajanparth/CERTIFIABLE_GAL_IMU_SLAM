@@ -21,7 +21,7 @@ Branch `m1-gal3-mechanics`, verified at `9cda195`. gtsam 4.3.0, numpy, scipy, sy
 | Harness replay (all 45 `MUTATIONS`, as real file edits, both claim files run in full) | **45/45 killed**, each on every named test and on the assertion its needle names |
 | Own sweep (54 new mutants, Q01..Q54) | 25 killed, 15 proven equivalent, **14 SURVIVE** |
 | **Gate (zero non-equivalent survivors)** | **FAILS**: 14 survivors (12 medium, 2 low) |
-| Full suite, clean tree | 120 passed at the start (197 s); final run below |
+| Full suite, clean tree | 120 passed at the start (197 s) and at the end, on the committed report (405 s, under load) |
 
 ## M1-C60: REFUTED
 
