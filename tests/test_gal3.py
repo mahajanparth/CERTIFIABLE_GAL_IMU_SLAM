@@ -486,7 +486,9 @@ def test_log_exp_roundtrip():
         back = log(exp(xi))
         assert abs(float(np.linalg.norm(back[0:3])) - (2 * np.pi - 3.5)) <= 1e-9
         assert np.abs(back[0:3] + (2 * np.pi - 3.5) * ax).max() <= 1e-9
-        assert float(np.abs(back[0:3] - xi[0:3]).max()) >= 1e-3
+        # (A former `|back - xi| >= 1e-3` was deleted -- pass-7 verifier, "tests that
+        # cannot fail": the equality just above fixes back = -(2 pi - 3.5) ax, so
+        # back - xi = -2 pi ax by data alone; it could not fail independently.)
 
     # The rotation block near the far end of the chart, where so3_log's quaternion
     # extraction must use a DIAGONAL Shepperd branch: tr(R) in (-0.99, -0.9], i.e.
@@ -503,8 +505,10 @@ def test_log_exp_roundtrip():
     # qw = sqrt(1 + tr)/2 and, for R orthogonal to within delta, qw^2 + n^2 = 1 + O(delta)
     # with n < 1e-10, so qw = 1 + O(delta) + O(1e-20).  Hence 2 qv/qw = 2 qv (1 + O(delta)):
     # the two returns differ by a RELATIVE O(delta) ~ eps, i.e. a few ulp of a result of
-    # size < 2e-10, which is below the rounding of the division itself.  No claim
-    # (C22, C23, C51, C52 all bound absolute error >= 1e-14) can separate them.
+    # size < 2e-10, which is below the rounding of the division itself.  Under the
+    # RELATIVE small-angle bound below (1e-14, threshold 1e-15) it is still equivalent:
+    # measured relative change 0.0 on 40000 R with theta in [1e-14, 1e-2] (qw rounds to
+    # exactly 1.0 wherever n < 1e-10).
     r_band = rng(2200)
     tr_band = r_band.uniform(-0.99, -0.9, size=20000)
     phi_band = np.arccos((tr_band - 1.0) / 2.0)[:, None] * rand_axis(r_band, 20000)
@@ -524,6 +528,27 @@ def test_log_exp_roundtrip():
     R_small = Rotation.from_rotvec(phi_small).as_matrix()
     worst_small = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_small, phi_small))
     assert worst_small <= 1e-15, worst_small
+    # ... and RELATIVE: |so3_log(R) - log(R)| / |log(R)| <= 1e-14 against a 50-digit mpmath
+    # log of the ROUNDED matrix R (theta = atan2(|skew(R)|/2, (tr R - 1)/2)), measured
+    # 4.5e-16.  The absolute bound above is blind where theta itself is tiny: moving the
+    # n -> 0 branch to n < 1e-5 (pass-7 R03, mutation harness so3_log_small_branch_1e-5)
+    # is a RELATIVE error n^2/3 = 3.3e-11 at theta ~ 2e-5 but only 6.5e-16 absolute.
+    import mpmath
+
+    def log_mp(R):
+        with mpmath.workdps(50):
+            M = [[mpmath.mpf(float(R[i, j])) for j in range(3)] for i in range(3)]
+            w = [M[2][1] - M[1][2], M[0][2] - M[2][0], M[1][0] - M[0][1]]
+            sn = mpmath.sqrt(w[0] ** 2 + w[1] ** 2 + w[2] ** 2) / 2      # sin theta
+            t = mpmath.atan2(sn, (M[0][0] + M[1][1] + M[2][2] - 1) / 2)
+            return np.array([float(t / (2 * sn) * x) for x in w])
+
+    worst_small_rel = 0.0
+    for R in R_small:
+        ref = log_mp(R)
+        worst_small_rel = max(worst_small_rel,
+                              float(np.abs(so3_log(R) - ref).max() / np.linalg.norm(ref)))
+    assert worst_small_rel <= 1e-14, worst_small_rel
     # Pass-6 so3_log mutants ruled EQUIVALENT by the verifier, with their measured effect
     # (change of so3_log's output, mutant vs clean) against the tolerance-equivalence
     # threshold (1/10 of the tightest bound on so3_log's output in the affected region):
@@ -536,13 +561,16 @@ def test_log_exp_roundtrip():
     # * Q09 (first diagonal branch with >=): changes the output only on exact ties
     #   R00 == R11 or R00 == R22; there the two branches evaluate algebraically equal
     #   quaternions.  Measured change 1.1e-15 at |phi| in (1.6, pi] (8000 tied rotations).
+    #   EQUIVALENT by rule 2 (pass-7 verifier): on 3000 exact ties with tr <= 0 the
+    #   change is 1.1e-15 <= 8 ulp of |phi| in [2.09, pi] (>= 1.8e-15), and the error vs
+    #   phi is 6.7e-16 for mutant and clean (sup norm equal).
     # * Q12 (trace branch for tr > -0.5 instead of tr > 0): exact algebra; s >= sqrt(2)
     #   so rounding is not amplified.  Measured change 1.6e-15 on 20000 R with tr in
-    #   (-0.5, 0]; error vs phi 8.9e-16 for mutant AND clean code.
-    # OPEN under the strict rule: for |phi| ~ 1 .. pi the tightest log bound is this test's
-    # 2.5e-15 band bound, so the threshold is 2.5e-16 -- about half an ulp of pi.  Q09's and
-    # Q12's measured changes (1.1e-15, 1.6e-15) exceed it although neither mutant is less
-    # accurate than the clean code (no independent-reference check can separate them).
+    #   (-0.5, 0]; error vs phi 8.9e-16 for mutant AND clean code (pass-7: change 1.1e-15,
+    #   error 6.7e-16 for both on 5000 R).  The 2.5e-15 band bound above covers only
+    #   tr <= -0.9, which Q12 never touches (it changes tr in (-0.5, 0], theta in (2.09,
+    #   2.42)).  There the tightest bound on so3_log's output is C52's localCoordinates
+    #   1e-12, threshold 1e-13: Q12 is EQUIVALENT by rule 1 (1.6e-15 <= 1e-13).
 
 
 @pytest.mark.claim("M1-C23")
