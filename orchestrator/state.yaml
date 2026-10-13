@@ -691,7 +691,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: deriving
+  status: implementing
   claims: []
   seed:
     id: null
@@ -709,9 +709,20 @@ milestones:
   - role: deriver
     agent_id: deriver-M3-002
     started: '2026-10-13T08:34:53+00:00'
+    finished: '2026-10-13T09:25:31+00:00'
+    outcome: completed
+    note: '38 claims (35 DERIVED, 3 OPEN-HYPOTHESIS). n = 124 (136 anisotropic); 106 primary + 366 redundant
+      constraints incl. a Galilean B2 analogue (one Gram identity per lifting side). Isotropy: Rai''s
+      forcing argument does not apply, but body-frame v/p anisotropy is obstructed in the base lifting;
+      rotation anisotropy and v-p correlation are free; full anisotropy costs 6 liftings per edge. I re-ran
+      check_constraints: every family vanishes at truth to ~1e-15, joint rank 471.'
+  - role: implementer
+    agent_id: impl-M3-001
+    started: '2026-10-13T09:25:31+00:00'
     finished: null
     outcome: running
-    note: Restart of the M3 derivation from the WIP scratch scripts.
+    note: Implement src/qcqp from the M3 claim list only (no derivation narrative or scratch scripts)
+      with per-claim tests and a mutation harness.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
