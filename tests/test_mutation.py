@@ -1161,3 +1161,259 @@ def test_pass6_sweep_covers_every_medium_survivor():
     """The 7 medium survivors of the pass-6 report, none dropped."""
     ids = {m[0] for m in PASS6_F14_SURVIVORS + PASS6_F15_SURVIVORS}
     assert {"S12", "S13", "S35", "S36", "S46", "S47", "S48"} <= ids
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-7 sweep (docs/verification/stage-b_m2-baselines_pass7.md
+# Sec. 4, findings M2-F16 / M2-F17 and the fixture-degenerate low survivors), plus the
+# same class -- an input replaced by its fixture value -- at every other site that
+# tests/test_input_dependence.py now varies.  All are REAL FILE EDITS, run in parallel
+# copies, and every kill must land on the intended assertion's ``E `` line (M2-F19).
+# ======================================================================================
+
+_ID = "tests/test_input_dependence.py::"
+_FIX_G_LIT = "np.array([0.0, 0.0, -9.81])"
+_FIX_BG_LIT = "np.array([0.0100, -0.0150, 0.0080])"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS7_MUTANTS = [
+    # ---- pass-7 medium survivors (M2-F16, M2-F17) -----------------------------------
+    ("U10", "preintegration_cayley.py",
+     [("return rotation_from_eq16(R_i, self.dRbar, self.xi(b_g))",
+       "return rotation_from_eq16(R_i, self.dRbar, self.J_R @ (np.asarray(b_g, dtype=float)"
+       f" - {_FIX_BG_LIT}))")],
+     (_ID + "test_b2_factor_methods_read_own_fields", _ID + "test_b2_factor_from_edge"),
+     (".predicted_rotation ignores its bbar/fields", "predicted_rotation at b_g != bbar_g")),
+    ("U13", "preintegration_forster.py",
+     [("pim = integrate_edge(edge, bias_hat, cls=cls, **kwargs)",
+       f"pim = integrate_edge(edge, {_FIXTURE_BIAS}, cls=cls, **kwargs)")],
+     (_ID + "test_b1_integrate_edge_states",), ("Baseline 1/2 integrate_edge_states(",)),
+    ("U20", "preintegration_galilean.py",
+     [("params.setGyroscopeCovariance(sigma_g**2 * np.eye(3))",
+       "params.setGyroscopeCovariance(0.0 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("stored gyroscope covariance is not sigma_g^2 I",
+      "gyro-only rotation block is not sigma_g^2 Dt I")),
+    ("U26", "preintegration_galilean.py",
+     [("params.setGyroscopeCovariance(sigma_g**2 * np.eye(3))",
+       "params.setGyroscopeCovariance(4.0 * sigma_g**2 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("stored gyroscope covariance is not sigma_g^2 I",
+      "gyro-only rotation block is not sigma_g^2 Dt I")),
+    ("U40", "preintegration_galilean.py",
+     [("params.setAccelerometerCovariance(sigma_a**2 * np.eye(3))",
+       "params.setAccelerometerCovariance(1.005 * sigma_a**2 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("stored accelerometer covariance is not sigma_a^2 I",
+      "accel-only velocity block is not sigma_a^2 Dt I")),
+    ("U23", "preintegration_galilean.py",
+     [("params.setIntegrationCovariance(sigma_int**2 * np.eye(3))",
+       "params.setIntegrationCovariance((1e-3 if sigma_int else 0.0)**2 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("stored integration covariance is not sigma_int^2 I",
+      "integration-only covariance is not sigma_int^2 Dt I")),
+    ("U23b", "preintegration_galilean.py",
+     [("params.setIntegrationCovariance(sigma_int**2 * np.eye(3))",
+       "params.setIntegrationCovariance(1e-3**2 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("make_params(sigma_int=0) stores a nonzero integration covariance",
+      "sigma_int = 0 (all densities 0) gives a nonzero covariance")),
+    ("U30", "preintegration_galilean.py",
+     [("return navtriple(self.pim.predict(navstate(state_i), to_gtsam_bias(self.bias_hat)))",
+       "return navtriple(self.pim.predict(navstate(state_i), "
+       f"to_gtsam_bias({_FIXTURE_BIAS})))")],
+     (_ID + "test_b3_predict",), ("Baseline 3 predict at bias_hat",)),
+    ("U31", "preintegration_galilean.py",
+     [("b = pim.bias_hat + swap_bias_blocks(db_gtsam)",
+       f"b = {_FIXTURE_BIAS} + swap_bias_blocks(db_gtsam)")],
+     (_ID + "test_b3_corrected_increment_gal3",), ("db = 0, is not the increment at bias_hat",)),
+    ("U32", "preintegration_galilean.py",
+     [("states.append(integrate_edge(edge, bias_hat, **kwargs).predict(states[-1]))",
+       f"states.append(integrate_edge(edge, {_FIXTURE_BIAS}, **kwargs).predict(states[-1]))")],
+     (_ID + "test_b3_integrate_edge_states",), ("Baseline 3 integrate_edge_states(",)),
+    ("U38", "preintegration_galilean.py",
+     [("Vhat = single_step(gyro[k], accel[k], dt, bias_hat, **kwargs)",
+       f"Vhat = single_step(gyro[k], accel[k], dt, {_FIXTURE_BIAS}, **kwargs)")],
+     (_ID + "test_b3_bias_jacobian_recursion",), ("bias_jacobian_recursion(bias",)),
+    # ---- pass-7 fixture-degenerate survivors -----------------------------------------
+    ("U03", "preintegration_cayley.py",
+     [("self.dvbar, self.Dt, g_W,", "self.dvbar, 0.5, g_W,")],
+     (_ID + "test_b2_factor_methods_read_own_fields",), (".velocity_residual (g=",)),
+    ("U04", "preintegration_cayley.py",
+     [("self.dpbar, self.Dt, g_W,", "self.dpbar, 0.5, g_W,")],
+     (_ID + "test_b2_factor_methods_read_own_fields",), (".position_residual (g=",)),
+    ("U05", "preintegration_cayley.py",
+     [("Dt=pim.dt_total, J_R=J_R,", "Dt=0.5, J_R=J_R,")],
+     (_ID + "test_b2_factor_from_edge",), ("Dt is not the literal edge duration",)),
+    ("U06", "preintegration_cayley.py",
+     [("- np.asarray(g_W) * Dt)", f"- {_FIX_G_LIT} * Dt)")],
+     (_ID + "test_b2_eq21b_eq21c", _ID + "test_b2_factor_methods_read_own_fields"),
+     ("velocity_residual_eq21b (Dt=", ".velocity_residual (g=")),
+    ("U07", "preintegration_cayley.py",
+     [("- 0.5 * np.asarray(g_W) * Dt**2)", f"- 0.5 * {_FIX_G_LIT} * Dt**2)")],
+     (_ID + "test_b2_eq21b_eq21c", _ID + "test_b2_factor_methods_read_own_fields"),
+     ("position_residual_eq21c (Dt=", ".position_residual (g=")),
+    ("U11", "preintegration_forster.py",
+     [("Dt = self.dt_total", "Dt = 0.5")],
+     (_ID + "test_b1_predict",), ("Forster predict on the",)),
+    ("U12", "preintegration_forster.py",
+     [("g_W = np.asarray(g_W, dtype=float)\n        R_i, v_i, p_i",
+       f"g_W = {_FIX_G_LIT}\n        R_i, v_i, p_i")],
+     (_ID + "test_b1_predict", _ID + "test_b1_integrate_edge_states"),
+     ("Forster predict on the", "Baseline 1/2 integrate_edge_states(")),
+    ("U33", "preintegration_galilean.py",
+     [("pim.integrate_measurement(omega, acc, dt)\n    return pim.increment_gal3()",
+       "pim.integrate_measurement(omega, acc, 2.5e-3)\n    return pim.increment_gal3()")],
+     (_ID + "test_b3_integrate_stream_and_single_step",), ("single_step(dt=",)),
+    ("U34", "preintegration_galilean.py",
+     [("g_W = np.asarray(g_W, dtype=float)\n    return gal3(np.eye(3), 0.5 * g_W",
+       f"g_W = {_FIX_G_LIT}\n    return gal3(np.eye(3), 0.5 * g_W")],
+     (_ID + "test_b3_endpoint_relations",),
+     ("endpoint_W (Dt=", "endpoint_W_form (Dt=")),
+    ("U39", "preintegration_galilean.py",
+     [("pim.dt_total if Dt is None else Dt)", "0.5 if Dt is None else Dt)")],
+     (_ID + "test_b3_corrected_increment_gal3",),
+     ("clock with Dt = None is not the literal edge duration",)),
+    # ---- the same class at the other sites the inventory varies (V series) ----------
+    ("V01", "trajectory.py",
+     [("v=v_i + G_W * Dt + R_i @ dv,\n                     p=p_i + v_i * Dt + 0.5 * G_W * Dt**2",
+       f"v=v_i + {_FIX_G_LIT} * Dt + R_i @ dv,\n"
+       f"                     p=p_i + v_i * Dt + 0.5 * {_FIX_G_LIT} * Dt**2")],
+     (_ID + "test_traj_initial_state_and_chain",), ("chain ignores the module gravity",)),
+    ("V02", "trajectory.py",
+     [("0.6 * np.sin(0.7 * k * dt + _PHASE)", "0.6 * np.sin(0.7 * k * DT + _PHASE)")],
+     (_ID + "test_traj_time_varying_stream",), ("time_varying_stream(17, 0.001) values",)),
+    ("V03", "preintegration_forster.py",
+     [("sigma_g=sigma_g, sigma_a=sigma_a, **kwargs)", "sigma_g=0.0, sigma_a=0.0, **kwargs)")],
+     (_ID + "test_b1_integrate_edge",), ("densities not stored",)),
+    ("V04", "preintegration_forster.py",
+     [("    bias_hat = np.asarray(bias_hat, dtype=float)\n    base = integrate_edge(",
+       "    eps = FD_EPS\n    bias_hat = np.asarray(bias_hat, dtype=float)\n"
+       "    base = integrate_edge(")],
+     (_ID + "test_b1_bias_jacobians_fd",), ("ignores eps = 0.03",)),
+    ("V05", "preintegration_forster.py",
+     [("        self.dR = np.array(self.dR, dtype=float, copy=True)\n",
+       "        self.dR = np.eye(3)\n")],
+     (_ID + "test_b1_single_step_reads_every_field",),
+     ("integrate_measurement dR from the given start",)),
+    ("V06", "preintegration_cayley.py",
+     [("pim = integrate_edge(edge, bbar, cls=CayleyPreintegration, variant=variant)",
+       "pim = integrate_edge(edge, bbar, cls=CayleyPreintegration, variant=VARIANT_RAW)")],
+     (_ID + "test_b2_factor_from_edge",), ("reparam): dRbar",)),
+    ("V07", "preintegration_cayley.py",
+     [("            edge, bbar, cls=CayleyPreintegration, variant=variant)",
+       "            edge, bbar, cls=CayleyPreintegration, variant=VARIANT_RAW)")],
+     (_ID + "test_b2_factor_from_edge",), ("reparam): J_R",)),
+    ("V08", "preintegration_galilean.py",
+     [("g_W, sigma_g, sigma_a, combined=combined)", "G_W, sigma_g, sigma_a, combined=combined)")],
+     (_ID + "test_b3_constructor_reads_every_input", _ID + "test_b3_predict"),
+     ("g_W did not reach the params", "Baseline 3 predict at bias_hat")),
+    ("V09", "preintegration_galilean.py",
+     [("pim_cls = (gtsam.PreintegratedCombinedMeasurementsG if combined",
+       "pim_cls = (gtsam.PreintegratedCombinedMeasurementsG if False")],
+     (_ID + "test_b3_constructor_reads_every_input",), ("PIM class",)),
+    ("V10", "preintegration_galilean.py",
+     [("    Uhat_inv = increment_at(np.zeros(6)).inverse()",
+       "    eps = J_FD_EPS\n    Uhat_inv = increment_at(np.zeros(6)).inverse()")],
+     (_ID + "test_b3_bias_jacobian_fd_reads_eps",), ("bias_jacobian_fd ignores eps",)),
+    ("V11", "preintegration_galilean.py",
+     [("g_W = np.asarray(g_W, dtype=float)\n    return gal3(np.eye(3), -0.5 * g_W",
+       f"g_W = {_FIX_G_LIT}\n    return gal3(np.eye(3), -0.5 * g_W")],
+     (_ID + "test_b3_endpoint_relations",), ("endpoint_Hprime (Dt=",)),
+    ("V12", "preintegration_galilean.py",
+     [("                np.asarray(ns.position(), dtype=float) - 0.5 * g * Dt_ij**2,\n"
+       "                np.asarray(ns.velocity(), dtype=float) - g * Dt_ij,",
+       "                np.asarray(ns.position(), dtype=float),\n"
+       "                np.asarray(ns.velocity(), dtype=float),")],
+     (_ID + "test_b3_corrected_increment_gal3",), ("db = 0, is not the increment at bias_hat",)),
+    ("V13", "preintegration_galilean.py",
+     [("params.setBiasAccCovariance(sigma_ba**2 * np.eye(3))",
+       "params.setBiasAccCovariance(1e-4**2 * np.eye(3))")],
+     (_ID + "test_b3_make_params_stores_every_input",
+      _ID + "test_b3_densities_reach_the_covariance"),
+     ("stored bias-acc covariance is not sigma_ba^2 I", "accel random-walk block is not")),
+    # ---- M2-F18 regressions: the defensive copies removed -----------------------------
+    ("F18-B1", "preintegration_forster.py",
+     [("self.bias_hat = np.array(self.bias_hat, dtype=float, copy=True)",
+       "self.bias_hat = np.asarray(self.bias_hat, dtype=float)")],
+     (_ID + "test_f18_constructors_do_not_alias",),
+     ("ForsterPreintegration.bias_hat aliases the caller's array",)),
+    ("F18-B2", "preintegration_cayley.py",
+     [("setattr(self, name, np.array(getattr(self, name), dtype=float, copy=True))",
+       "setattr(self, name, np.asarray(getattr(self, name), dtype=float))")],
+     (_ID + "test_f18_constructors_do_not_alias",),
+     ("CayleyFactor.from_edge(edge, b).bbar aliases b",
+      "CayleyFactor.xi moves when the caller's bbar is overwritten")),
+    ("F18-B3", "preintegration_galilean.py",
+     [("self.bias_hat = np.array(bias_hat, dtype=float, copy=True)",
+       "self.bias_hat = np.asarray(bias_hat, dtype=float)")],
+     (_ID + "test_f18_constructors_do_not_alias",),
+     ("GalileanPreintegration.bias_hat aliases the caller's array",
+      "Baseline 3 predict moves when the caller's bias is overwritten")),
+]
+
+#: the pass-7 report's survivors that this file must kill (medium + fixture-degenerate)
+PASS7_REQUIRED = {"U10", "U13", "U20", "U23", "U23b", "U26", "U30", "U31", "U32", "U38",
+                  "U40", "U03", "U04", "U05", "U06", "U07", "U11", "U12", "U33", "U34",
+                  "U39"}
+
+
+@pytest.fixture(scope="module")
+def pass7_runs(tmp_path_factory):
+    """Run the unmutated control and every PASS7 mutant, each in its own copy, in
+    parallel.  The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS7_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass7_control"), killers)
+    assert code == 0, f"control copy fails a pass-7 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass7_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS7_MUTANTS))
+
+
+@pytest.mark.claim("M2-F17")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS7_MUTANTS,
+                         ids=[m[0] for m in PASS7_MUTANTS])
+def test_pass7_mutant_is_killed_as_a_file_edit(pass7_runs, mutant_id, src_file, edit,
+                                               killers, messages):
+    """Each pass-7 mutant, edited on disk, fails its killers on the intended assertions."""
+    code, out = pass7_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F17")
+def test_pass7_sweep_covers_every_listed_survivor():
+    """The 21 pass-7 survivors named for this remediation, none dropped."""
+    assert PASS7_REQUIRED <= {m[0] for m in PASS7_MUTANTS}
+
+
+@pytest.mark.claim("M2-F19")
+def test_f19_matcher_ignores_the_echoed_source(tmp_path):
+    """Pass 7's demonstration, inverted: under the S35 edit only c25b part (b) fails, yet
+    S36's part-(a) message is in the raw output (pytest echoes the test source).  The
+    matcher must NOT find it on an ``E `` line, and must find S35's own message there."""
+    s35 = next(m for m in PASS6_F15_SURVIVORS if m[0] == "S35")
+    s36_message = next(m for m in PASS6_F15_SURVIVORS if m[0] == "S36")[4]
+    code, out = _run_in_copy(tmp_path, [_C25B], s35[1], s35[2])
+    assert code != 0
+    assert s36_message in out, "pytest no longer echoes the source; revisit this test"
+    assert s36_message not in _failure_lines(out), \
+        "the matcher accepts a message that only appears in the echoed source"
+    assert s35[4] in _failure_lines(out)
