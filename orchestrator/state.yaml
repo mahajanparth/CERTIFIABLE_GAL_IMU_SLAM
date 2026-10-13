@@ -364,7 +364,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -487,9 +487,18 @@ milestones:
   - role: implementer
     agent_id: impl-M2-008-remediation
     started: '2026-10-13T08:34:53+00:00'
+    finished: '2026-10-13T08:40:25+00:00'
+    outcome: completed
+    note: '112/112. dRbar pinned against an independent Cayley integrator (2.2e-14) plus an end-to-end
+      Eq. (19) band; R01/R02/R04/R05/R10 killed (closest 1.9e4x outside the bound); a replay-fidelity
+      guard added. I re-applied the transpose: c13d fails. Orchestrator named the metrics in the C22 statement
+      (b4e8420).'
+  - role: verifier
+    agent_id: verify-M2-006
+    started: '2026-10-13T08:40:25+00:00'
     finished: null
     outcome: running
-    note: 'Finish F13 from the WIP commit: pin dRbar, kill R01/R02/R04/R05/R10, name C22''s metric.'
+    note: 'Sixth pass with a fresh planted claim: rule on F13 and the C22 metric clarification.'
   blocking_findings:
   - id: M2-F01
     resolved: true
