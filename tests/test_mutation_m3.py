@@ -44,6 +44,12 @@ K_C24A = T + "test_c24_cost_equals_direct[aniso-300-true]"
 K_C27 = T + "test_c27_truth_discrepancy_per_component"
 K_C34 = T + "test_c34_frame_of_anisotropic_lifting"
 K_C39 = T + "test_c39_instance_fingerprint"
+K_INSTANCE_Z = T + "test_instance_matches_independent_gtsam_reference[zero]"
+K_C13 = T + "test_c13_families_nontrivial_off_variety[False]"
+K_PROJ = T + "test_decoder_projection_is_nearest_rotation"
+K_WHITEN = T + "test_whitened_residual_is_symmetric_root_whitening"
+K_P1RA1 = T + "test_P1_is_column_and_RA1_is_row_orthonormality"
+K_BIASCONV = T + "test_bias_boundary_converters"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -112,6 +118,46 @@ MUTANTS = [
      "rho = np.vstack([layout.vec_form(layout.rho_v(e)), layout.vec_form(layout.rho_p(e))])",
      "rho = np.vstack([layout.vec_form(layout.rho_p(e)), layout.vec_form(layout.rho_v(e))])",
      "W_vp applied in (pos, vel) order", [K_C24A]),
+    # -- verifier pass 1 survivors (docs/verification/stage-b_m3-qcqp-derivation.md Sec. 6) --
+    ("fx-sigma-prior", "fixture.py", "SIGMA_PRIOR = 1.0e-3", "SIGMA_PRIOR = 3.0e-3",
+     "KF0 prior sigma changed", [K_INSTANCE, K_C24]),
+    ("fx-sigma-gnss", "fixture.py", "SIGMA_GNSS = 0.05 ", "SIGMA_GNSS = 0.5  ",
+     "GNSS sigma changed", [K_INSTANCE, K_C24]),
+    ("fx-bg-true", "fixture.py", "B_G = np.array([0.0100, -0.0150, 0.0080])",
+     "B_G = np.array([0.0100, -0.0150, 0.0090])", "true gyro bias changed", [K_INSTANCE, K_INSTANCE_Z]),
+    ("fx-v0", "fixture.py", "V_0 = np.array([0.50, -0.30, 0.20])", "V_0 = np.array([0.50, -0.30, 0.25])",
+     "initial velocity changed", [K_INSTANCE]),
+    ("fx-rotvec0", "fixture.py", "ROT_VEC_0 = np.array([0.10, -0.20, 0.30])",
+     "ROT_VEC_0 = np.array([0.10, -0.20, 0.35])", "initial attitude changed", [K_INSTANCE]),
+    ("lf-decode-v-mul", "lifting.py", "[z[layout.v(k)] / s for", "[z[layout.v(k)] * s for",
+     "decoder multiplies v by s", [K_C01]),
+    ("lf-decode-p-mul", "lifting.py", "[z[layout.p(k)] / s for", "[z[layout.p(k)] * s for",
+     "decoder multiplies p by s", [K_C01]),
+    ("lf-project-nodet", "lifting.py", "D = np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))])",
+     "D = np.eye(3)", "projection may return a reflection", [K_PROJ]),
+    ("lf-s-param-ignored", "lifting.py", "return s * z", "return z", "z_of_state ignores s", [K_C01]),
+    ("lf-bias-indices", "lifting.py", "return np.arange(self.bias0, self.bias0 + 6 * self.n_kf)",
+     "return np.arange(self.bias0, self.bias0 + 6 * (self.n_kf - 1))", "bias_indices drops a block", [K_C01]),
+    ("co-whiten-W-not-sqrt", "cost.py", "(U * np.sqrt(np.clip(w, 0, None))) @ U.T",
+     "(U * np.clip(w, 0, None)) @ U.T", "whitening by W instead of W^1/2", [K_WHITEN]),
+    ("co-whiten-nonsym-root", "cost.py", "(U * np.sqrt(np.clip(w, 0, None))) @ U.T @ (t.F @ z)",
+     "(U * np.sqrt(np.clip(w, 0, None))) @ (t.F @ z)", "non-symmetric root U Lambda^1/2", [K_WHITEN]),
+    ("co-whiten-noclip", "cost.py", "np.sqrt(np.clip(w, 0, None))", "np.sqrt(w)",
+     "NaN on a singular PSD weight", [K_WHITEN]),
+    ("cn-P1-RA1-swap", "constraints.py",
+     'fam["P1"].append(_mk("P1", f"R{k}^T R{k}[{a},{b}]", RtR[a, b] - I3[a, b] * ss))\n'
+     '            fam["RA1"].append(_mk("RA1", f"R{k} R{k}^T[{a},{b}]", RRt[a, b] - I3[a, b] * ss))',
+     'fam["P1"].append(_mk("P1", f"R{k}^T R{k}[{a},{b}]", RRt[a, b] - I3[a, b] * ss))\n'
+     '            fam["RA1"].append(_mk("RA1", f"R{k} R{k}^T[{a},{b}]", RtR[a, b] - I3[a, b] * ss))',
+     "P1 and RA1 contents exchanged (union unchanged)", [K_P1RA1]),
+    ("cn-PRIMARY-incl-RA1", "constraints.py", 'PRIMARY = ("P0", "P1", "P2", "P3")',
+     'PRIMARY = ("P0", "P1", "P2", "P3", "RA1")', "RA1 labelled primary", [K_C14]),
+    ("cn-family-max-signed", "constraints.py", "float(np.abs(r).max())", "float(r.max())",
+     "family_max reports signed max", [K_C13]),
+    ("gb-from-bias-swap", "gtsam_boundary.py",
+     "return np.concatenate([np.asarray(cb.gyroscope()), np.asarray(cb.accelerometer())])",
+     "return np.concatenate([np.asarray(cb.accelerometer()), np.asarray(cb.gyroscope())])",
+     "inverse bias converter in GTSAM order", [K_BIASCONV]),
     ("rw-missing-dt", "instance.py", "np.full(3, 1.0 / (F.SIGMA_BG_RW**2 * dtb))", "np.full(3, 1.0 / F.SIGMA_BG_RW**2)",
      "random-walk precision without Dt_b", [K_C25]),
 ]
