@@ -201,4 +201,4 @@ Open from earlier passes, not re-tested here: M0-F09, M0-F13.
 Scripts (verifier scratchpad `s5/`): `ext.py`, `grepalt.py`, `gt.py` (extractors), `arb5.py` (section 3c),
 `dlfull.py` (delama full (34)), `mut5.py` (section 4). C01, C13, C14, C15, C19 run inline.
 
-Full suite on the clean tree after committing this report: see the last line.
+Full suite on the clean tree after committing this report: `pytest -q` -> **143 passed**.
