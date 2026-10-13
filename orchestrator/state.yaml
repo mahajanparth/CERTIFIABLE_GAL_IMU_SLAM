@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -333,10 +333,19 @@ milestones:
   - role: verifier
     agent_id: verify-M1-007
     started: '2026-10-13T15:13:34+00:00'
+    finished: '2026-10-13T21:20:02+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C60 (theta^4-truncated sin/theta is off 3.1e-12 at 0.05). 55/55 confirmed;
+      F13, F14 FIXED; the four equivalence proofs valid. 14 non-equivalent survivors: fixed gravity (6),
+      negative Dt (6), so3_exp coefficient (Q05), structural_residual blind spot (Q25); new regression
+      F15.'
+  - role: implementer
+    agent_id: impl-M1-007-remediation
+    started: '2026-10-13T21:20:02+00:00'
     finished: null
     outcome: running
-    note: 'Sixth pass, fresh planted claim, zero-survivor rule: rule on F13/F14 and check every equivalence
-      proof.'
+    note: Fix the so3_exp regression (F15); random gravity and negative Dt in every gravity/Dt-facing
+      test; probe every structural zero (F16).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -432,7 +441,7 @@ milestones:
       and killed. Needs a verifier ruling.'
     resolution: Ruled FIXED by verify-M1-006 (docs/verification/m1-gal3-mechanics_pass5.md).
   - id: M1-F13
-    resolved: false
+    resolved: true
     summary: 'Pass-5 survivors (all blocking under the zero-survivor rule): P10 alpha declared positive=True
       consistently passes C30 (sp.solve at alpha = -1.3 returns []); P03 consistent Symbol subclass and
       P13 all symbols without real=True -- pin syms == [Symbol(n, real=True) ...]; P08 coefficient as
@@ -440,8 +449,9 @@ milestones:
       wrong only for Dt > 2 survives (5e-3 at Dt = 2.5) -- test Dt = 5, 20 or state Dt <= 2 in C41''s
       domain; P22 negative Dt as |Dt| -- test or state the domain. Equivalents to prove in place: P11
       (Float 0.5), P15. Stale test_hints for C30 and C41.'
+    resolution: Ruled FIXED by verify-M1-007 (docs/verification/m1-gal3-mechanics_pass6.md).
   - id: M1-F14
-    resolved: false
+    resolved: true
     summary: 'Zero-survivor gate rule (user decision 2026-10-13): every item previously filed as advisory
       must be killed by a test or proven equivalent with the proof written down. Items: M1-A01: Low/equivalent
       pass-3 survivors (non-blocking): V06 structural_residual without the det term (C02 det check vacuous),
@@ -451,10 +461,29 @@ milestones:
       bound is loose (measured 1.5e-13; a 3% th^4 coefficient error at 6.1e-13 survives) -- a longer Taylor
       branch or lower switch would allow ~1e-14; C36 guard admits NaN times (caught downstream); C24 dense
       sweep 1.60e-12 vs recorded 1.41e-12; C41''s 2.970 coefficient is seed-specific (1.994 on other configurations).'
+    resolution: Ruled FIXED by verify-M1-007 (docs/verification/m1-gal3-mechanics_pass6.md).
+  - id: M1-F15
+    resolved: false
+    summary: 'REGRESSION from 59330b2: the theta^6 term went into _so3_exp_batch but not the scalar gal3.so3_exp
+      used by imu_step_element, so C45''s ''integrate_increment equals the ordered product of imu_step_element''
+      (<= 1e-12) now fails near a 0.05 per-step angle (1.2-1.5e-12 at 60 steps, 5.9e-12 at 1000); tested
+      only at dt = 5e-5. Q05 (so3_exp th^4/720 -> /700, 6.2e-13) survives because nothing pins so3_exp
+      below 1e-12 and C42 compares so3_exp with itself.'
+  - id: M1-F16
+    resolved: false
+    summary: 'Every gravity-facing test uses g = (0,0,-9.81) although the claims hold for arbitrary g:
+      Q49 gravity_lift ignores g; Q50-Q53 x/y of g swapped in gravity_element, forster_endpoint, integrate_truth,
+      gravity_generator; Q54 gravity_lift_uncorrected ignores g. Every test except C41(a'') samples Dt
+      > 0 while C32/C41 state arbitrary Dt: Q28-Q31, Q35, Q36 abs(Dt) variants survive. Q25 structural_residual
+      reads X[3,0:2] (blind to P[3,2]); C02 probes only X[3,1]. Tests that cannot fail independently:
+      C30 redundant pins, C26 d > 0, C55 worst_naive, C45 worst_wrong, C42 dp re-check and so3_exp-vs-itself
+      dR check. Tolerance-equivalence rule (owner, 2026-10-13): a mutant is equivalent if it changes no
+      output by more than 1/10 of the tightest claim tolerance for that quantity, with the measured effect
+      written down.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -630,10 +659,17 @@ milestones:
   - role: implementer
     agent_id: impl-M2-011-remediation
     started: '2026-10-13T16:02:43+00:00'
+    finished: '2026-10-13T21:20:02+00:00'
+    outcome: completed
+    note: '232 passed. F23 (initial covariance never propagated) and F24 (so3_log near pi) fixed -- I
+      re-checked: covariance now propagates; so3_log 4e-16 at pi - 1e-12. 19 survivors killed on reference
+      checks; F22 copy/read-only semantics; sub-tolerance class listed with killing windows, not forced.'
+  - role: verifier
+    agent_id: verify-M2-009
+    started: '2026-10-13T21:20:02+00:00'
     finished: null
     outcome: running
-    note: Fix F23/F24 defects; kill W02, W07, W08, W09, W10, W13, W14, W46, U47, S39, W20; replace change-detector-only
-      kills with reference checks (F21-F25).
+    note: Ninth pass, fresh planted claim, zero-survivor rule with the tolerance-equivalence rule.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -801,21 +837,29 @@ milestones:
       **kwargs from bias_jacobian_recursion / single_step is NOT equivalent (body_P_sensor moves J 29.6%,
       single_step 1.67e-4); W46/U47 isotropic_precision tested only at tr Sigma = O(1) while the fixture''s
       rotation trace is 4.3e-8 (a 1e-6 clamp mis-weights 23x); W10 Rot3 branch of gal3 never exercised.'
+    note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
+      rule.
   - id: M2-F22
     resolved: false
     summary: 'test_f18 reads the field list from src (CayleyFactor._ARRAY_FIELDS), so shrinking the list
       shrinks the check: W07 (A_pa dropped), W08 (only bbar copied) pass all 203; W09 increment() returning
       views survives; b_g/b_a are views into bias_hat; S39 in-place edit of GalileanPreintegration.bias_hat
       desyncs it from GTSAM''s bias (predict moves 4.22e-2).'
+    note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
+      rule.
   - id: M2-F23
     resolved: false
     summary: 'REAL DEFECT: ForsterPreintegration(cov=C0) with zero noise densities never propagates C0
       -- bit-identical after 200 steps vs a true value 92% different (independently reproduced). test_b1_single_step_reads_every_field
       dodges it with sigma = 1e-30 and its has_noise-is-False assertion pins the defective gate.'
+    note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
+      rule.
   - id: M2-F24
     resolved: false
     summary: 'REAL DEFECT (low): so3_log has no near-pi branch: error 2.7e-3 at pi - 1e-6, 2.6e8 at pi
       - 1e-8; at theta = pi it returns norm ~15 vectors for 36% of axes.'
+    note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
+      rule.
   - id: M2-F25
     resolved: false
     summary: 'Remaining pass-8 survivors: kills only by change detectors (test_pass5_replay_is_faithful,
@@ -824,10 +868,12 @@ milestones:
       R36, R37, S16, S02, U49 (sub-tolerance scalings), W09, W10, U47, W20. 18 of these are sub-tolerance
       or FD-step perturbations that no finite-tolerance test can kill -- awaiting the owner''s ruling
       on a tolerance-equivalence rule.'
+    note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
+      rule.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: null
@@ -881,26 +927,52 @@ milestones:
   - role: verifier
     agent_id: verify-M3-001
     started: '2026-10-13T15:25:58+00:00'
+    finished: '2026-10-13T21:20:02+00:00'
+    outcome: completed
+    note: Caught planted M3-C40 (P2 alone excludes reflections at s = +1). 36/36 confirmed. Independent
+      rebuild of z, every family and Q matches src exactly; spurious-point hunt found none, with a proof
+      that the primary feasible set is exactly +/- z(state). 17 non-equivalent survivors outside the core
+      (fixture literals imported by the tests, decoder, project_so3, whitening, constants, helpers).
+  - role: implementer
+    agent_id: impl-M3-003
+    started: '2026-10-13T21:20:02+00:00'
     finished: null
     outcome: running
-    note: 'First independent verification of M3 with a planted claim, zero-survivor rule: own QCQP build,
-      spurious-point hunt, mutation sweep.'
+    note: 'Kill the 17 M3 survivors: test literals typed in the test, decoder at s != +/-1, project_so3
+      det, whitening, family constants and helpers (F03).'
   blocking_findings:
   - id: M3-F01
-    resolved: false
+    resolved: true
     summary: 'Under-specified claims (implementer report): IMU white-noise densities absent from the claims
       decide C27 (ratio not ~0.5 under the M2 isotropic densities; rotation part quadratic, v/p linear)
       and C34 part 2 (world-frame W_vp off only 2.6e-6, claimed >= 1e-3; 5.5e-2 with anisotropic accel
       noise). Random-walk precision convention, chordal prior weight and C35/C32 sampling distribution
       also unstated. C18 asserts 200/200 converge; implementer could only assert >= 150/200.'
     note: Claims revised in ad89dc4; resolution needs the implementer's update and a verifier ruling.
+    resolution: Resolved by the claim revision ad89dc4 and confirmed by verify-M3-001 (all 36 current
+      claims CONFIRMED).
   - id: M3-F02
-    resolved: false
+    resolved: true
     summary: 'C36-C38 (OPEN-HYPOTHESIS tightness) cannot be evaluated by M3: Clarabel ''optimal'' solves
       violate weak duality (dual 630.6 vs a feasible point of cost 8.7e-23), and C37''s eta denominator
       is ~1e-22 on a noise-free instance. Either move these to M4 with solver-validity preconditions (weak
       duality, residuals) and a noisy instance, or restate them.'
     note: Claims revised in ad89dc4; resolution needs the implementer's update and a verifier ruling.
+    resolution: Resolved by the claim revision ad89dc4 and confirmed by verify-M3-001 (all 36 current
+      claims CONFIRMED).
+  - id: M3-F03
+    resolved: false
+    summary: '17 survivors (verify-M3-001). Medium: fx-sigma-prior, fx-sigma-gnss (tests import these
+      from src, so the reference moves with the mutant); fx-bg-true (C39 fingerprint at 4 s.f. misses
+      it); lf-decode-v-mul, lf-decode-p-mul (decoder multiplies by s instead of dividing); lf-project-nodet
+      (project_so3 can return reflections); co-whiten-W-not-sqrt (whitened_residual uses W not sqrt W);
+      cn-P1-RA1-swap (primary/redundant split untested). Low: fx-v0, fx-rotvec0 (trajectory literals unpinned),
+      co-whiten-nonsym-root, cn-PRIMARY-incl-RA1, lf-s-param-ignored, lf-bias-indices, cn-family-max-signed,
+      gb-from-bias-swap (untested converter), co-whiten-noclip (NaN for singular PSD W_vp). Tests that
+      cannot fail: c23 residual/cost bitwise identities, c17 homogeneity, c31 Q vs itself, c32/c05/c06
+      never touch src, c30 rank weight-invariant. Tolerance-equivalence rule (owner, 2026-10-13): a mutant
+      is equivalent if it changes no output by more than 1/10 of the tightest claim tolerance for that
+      quantity, with the measured effect written down.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
