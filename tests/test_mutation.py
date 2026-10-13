@@ -56,6 +56,15 @@ C36 = G3 + "test_endpoint_only_valid_on_zero_time_slice"
 C42 = IMU + "test_increment_closed_form_blocks"
 C02 = G3 + "test_closure"
 C22 = G3 + "test_log_exp_roundtrip"
+C31 = G3 + "test_endpoint_relation"
+C32 = G3 + "test_gravity_element_is_one_exponential"
+C33 = G3 + "test_gravity_one_parameter_subgroup"
+C34 = G3 + "test_uncorrected_endpoint_is_wrong_twice"
+C35 = G3 + "test_right_time_shift_corrupts_position"
+C37 = IMU + "test_gtsam_navstate_endpoint_form"
+C38 = G3 + "test_two_endpoint_forms_agree"
+C43 = IMU + "test_forster_component_equations"
+C55 = IMU + "test_bias_convention_swap"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -359,6 +368,142 @@ MUTATIONS = {
         "    if tr > 0.0:\n",
         "    if tr > -0.99:\n",
         [C22], {C22: "assert worst_band <= 2.5e-15, worst_band"},
+    ),
+    # ---- sixth-pass SURVIVORS (M1-F15 / M1-F16) and the M1-F15 regression itself ----
+    "so3_exp_taylor_no_th6": (                                    # M1-F15 regression
+        "src/gal3.py",
+        "s = 1.0 - t2 / 6.0 + t4 / 120.0 - t4 * t2 / 5040.0",
+        "s = 1.0 - t2 / 6.0 + t4 / 120.0",
+        [C42, C45], {C42: "assert worst_so3_scipy <= 1e-14, worst_so3_scipy",
+                     C45: "assert worst_prod_switch <= 1e-12, worst_prod_switch"},
+    ),
+    "so3_exp_c_th4_over_700": (                                   # pass-6 Q05
+        "src/gal3.py",
+        "        c = 0.5 - t2 / 24.0 + t4 / 720.0         # (1 - cos th)/th^2\n",
+        "        c = 0.5 - t2 / 24.0 + t4 / 700.0         # (1 - cos th)/th^2\n",
+        [C42], {C42: "assert worst_so3_scipy <= 1e-14, worst_so3_scipy"},
+    ),
+    "structural_residual_row3_short": (                           # pass-6 Q25
+        "src/gal3.py",
+        "        np.abs(X[3, 0:3]).max(),\n",
+        "        np.abs(X[3, 0:2]).max(),\n",
+        [C02], {C02: "assert not missed, missed"},
+    ),
+    "gravity_lift_ignores_g": (                                   # pass-6 Q49
+        "src/gal3.py",
+        "    g = np.asarray(g, dtype=float).reshape(3)\n"
+        "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n",
+        "    g = G_DEFAULT\n"
+        "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n",
+        [C31, C32, C35, C36, C38, C43],
+        {C31: 'assert worst_ode <= 1e-9, (d["label"], worst_ode)',
+         C32: "assert worst_fuse_rg <= 1e-12, worst_fuse_rg",
+         C35: "assert worst_p_rg <= 1e-10, worst_p_rg",
+         C36: "assert worst_p_rg <= 1e-10, worst_p_rg",
+         C38: "assert worst_w_rg <= 1e-12, worst_w_rg",
+         C43: 'assert worst_block <= 1e-12, (d["label"], worst_block)'},
+    ),
+    "gravity_element_g_permuted": (                               # pass-6 Q50
+        "src/gal3.py",
+        "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, -Dt)\n",
+        "    g = g[[1, 0, 2]]\n    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, -Dt)\n",
+        [C32, C33], {C32: "assert worst_def_rg <= 1e-12, worst_def_rg",
+                     C33: "assert worst_def_rg <= 1e-10, worst_def_rg"},
+    ),
+    "forster_endpoint_g_permuted": (                              # pass-6 Q51
+        "src/gal3.py",
+        "    R_i = np.asarray(R_i, dtype=float)\n    v_i = np.asarray(v_i, dtype=float).reshape(3)\n",
+        "    g = g[[1, 0, 2]]\n"
+        "    R_i = np.asarray(R_i, dtype=float)\n    v_i = np.asarray(v_i, dtype=float).reshape(3)\n",
+        [C31, C37, C43], {C31: 'assert worst_alg <= 1e-12, (d["label"], worst_alg)',
+                          C37: "assert worst_alg <= 1e-12, worst_alg",
+                          C43: 'assert worst <= 1e-9, (d["label"], worst)'},
+    ),
+    "integrate_truth_g_permuted": (                               # pass-6 Q52
+        "src/imu_dynamics.py",
+        "    g = np.asarray(g, dtype=float).reshape(3)\n\n    E_s",
+        "    g = np.asarray(g, dtype=float).reshape(3)[[1, 0, 2]]\n\n    E_s",
+        [C31, C34, C37, C43, C45],
+        {C31: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C34: 'assert worst_p <= 1e-12, (d["label"], worst_p)',
+         C37: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C43: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C45: "assert worst_large_nav <= 1e-12, worst_large_nav"},
+    ),
+    "gravity_generator_g_permuted": (                             # pass-6 Q53
+        "src/gal3.py",
+        "    return np.concatenate([np.zeros(3), g, np.zeros(3), [-1.0]])\n",
+        "    return np.concatenate([np.zeros(3), g[[1, 0, 2]], np.zeros(3), [-1.0]])\n",
+        [C32], {C32: "assert worst_gen_rg == 0.0, worst_gen_rg"},
+    ),
+    "gravity_lift_uncorrected_ignores_g": (                       # pass-6 Q54
+        "src/gal3.py",
+        "    g = np.asarray(g, dtype=float).reshape(3)\n"
+        "    return gal(_I3, g * Dt, 0.5 * g * Dt * Dt, 0.0)\n",
+        "    g = G_DEFAULT\n"
+        "    return gal(_I3, g * Dt, 0.5 * g * Dt * Dt, 0.0)\n",
+        [C34], {C34: 'assert worst_p <= 1e-9, (d["label"], worst_p)'},
+    ),
+    "endpoint_abs_dt": (                                          # pass-6 Q28
+        "src/gal3.py",
+        "    Dt = float(np.asarray(D_ij)[3, 4])\n    left = compose(",
+        "    Dt = abs(float(np.asarray(D_ij)[3, 4]))\n    left = compose(",
+        [C31, C36, C38, C43],
+        {C31: 'assert worst_ode <= 1e-9, (d["label"], worst_ode)',
+         C36: "assert worst_p_rg <= 1e-10, worst_p_rg",
+         C38: "assert worst_form_rg <= 1e-9, worst_form_rg",
+         C43: 'assert worst_block <= 1e-12, (d["label"], worst_block)'},
+    ),
+    "gravity_lift_abs_dt": (                                      # pass-6 Q29
+        "src/gal3.py",
+        "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n",
+        "    return gal(_I3, g * abs(Dt), -0.5 * g * Dt * Dt, 0.0)\n",
+        [C31, C32, C38, C43],
+        {C31: 'assert worst_ode <= 1e-9, (d["label"], worst_ode)',
+         C32: "assert worst_fuse_rg <= 1e-12, worst_fuse_rg",
+         C38: "assert worst_w_rg <= 1e-12, worst_w_rg",
+         C43: 'assert worst_block <= 1e-12, (d["label"], worst_block)'},
+    ),
+    "forster_endpoint_abs_dt": (                                  # pass-6 Q30
+        "src/gal3.py",
+        "0.5 * g * Dt * Dt + R_i @",
+        "0.5 * g * Dt * abs(Dt) + R_i @",
+        [C31, C37, C43], {C31: 'assert worst_alg <= 1e-12, (d["label"], worst_alg)',
+                          C37: "assert worst_alg <= 1e-12, worst_alg",
+                          C43: 'assert worst <= 1e-9, (d["label"], worst)'},
+    ),
+    "navstate_phi_abs_dt": (                                      # pass-6 Q31
+        "src/gal3.py",
+        "N[0:3, 3] + N[0:3, 4] * Dt, N[0:3, 4])",
+        "N[0:3, 3] + N[0:3, 4] * abs(Dt), N[0:3, 4])",
+        [C40], {C40: "assert worst_shift_neg <= 1e-12, worst_shift_neg"},
+    ),
+    "increment_blocks_dp_abs_dt": (                               # pass-6 Q35
+        "src/imu_dynamics.py",
+        "        Dt * Dt * (gal3.gamma2(phi) @ acc),\n",
+        "        Dt * abs(Dt) * (gal3.gamma2(phi) @ acc),\n",
+        [C42], {C42: "assert worst_expm <= 1e-12, worst_expm"},
+    ),
+    "imu_step_element_abs_dt": (                                  # pass-6 Q36
+        "src/imu_dynamics.py",
+        "a * dt, 0.5 * a * dt * dt, dt)",
+        "a * dt, 0.5 * a * dt * abs(dt), dt)",
+        [C45], {C45: "assert worst_step_neg <= 1e-12, worst_step_neg"},
+    ),
+    # ---- stand-ins for the checks deleted in pass 6 ("cannot fail independently") ----
+    "bias_to_gtsam_naive": (               # replaces C55's gtsam-only worst_naive check
+        "src/imu_dynamics.py",
+        "    return gtsam.imuBias.ConstantBias(b[3:6], b[0:3])\n",
+        "    return gtsam.imuBias.ConstantBias(b[0:3], b[3:6])\n",
+        [C55], {C55: "assert worst <= 1e-14, worst"},
+    ),
+    "chain_swapped_duration": (            # replaces C45's data-only worst_wrong check
+        "src/imu_dynamics.py",
+        "    return compose(D_ij, D_jk)\n",
+        "    X = compose(D_ij, D_jk)\n"
+        "    X[0:3, 4] += D_jk[0:3, 3] * D_ij[3, 4] - D_ij[0:3, 3] * D_jk[3, 4]\n"
+        "    return X\n",
+        [C45], {C45: "assert worst <= 1e-12, worst"},
     ),
 }
 
