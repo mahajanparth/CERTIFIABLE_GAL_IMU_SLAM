@@ -715,7 +715,6 @@ def test_bias_convention_swap():
 
     r = rng(55)
     worst = 0.0
-    worst_naive = 0.0
     for _ in range(1000):
         b = r.normal(size=6)
         cb = imu.bias_to_gtsam(b)
@@ -723,11 +722,9 @@ def test_bias_convention_swap():
         worst = max(worst, float(np.abs(imu.bias_from_gtsam(cb) - b).max()))
         worst = max(worst, float(np.abs(
             np.concatenate([cb.gyroscope(), cb.accelerometer()]) - b).max()))
-        # the naive conversion (gyro passed as the accel slot) does not round-trip
-        import gtsam
-
-        naive = gtsam.imuBias.ConstantBias(b[0:3], b[3:6])
-        worst_naive = max(worst_naive, float(np.abs(
-            np.concatenate([naive.gyroscope(), naive.accelerometer()]) - b).max()))
     assert worst <= 1e-14, worst
-    assert worst_naive >= 1e-3, worst_naive
+    # DELETED (pass-6 verifier, "tests that cannot fail independently"): a check that the
+    # NAIVE conversion gtsam.imuBias.ConstantBias(b[0:3], b[3:6]) does not round-trip.
+    # It called gtsam's constructor only -- no src function -- so no change to src could
+    # make it fail.  A naive src.bias_to_gtsam is caught by ``worst`` above (its vector()
+    # would be b, not S b, and gyroscope()/accelerometer() would return swapped halves).

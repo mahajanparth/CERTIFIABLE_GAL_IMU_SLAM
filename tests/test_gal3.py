@@ -93,8 +93,14 @@ def test_closure():
     defects = {}
     X = X0.copy(); X[0:3, 0:3] = np.diag([1.0, 1.0, -1.0]); defects["det"] = X
     X = X0.copy(); X[0:3, 0:3] *= 1.1; defects["orth"] = X
-    X = X0.copy(); X[3, 1] = 0.5; defects["row3"] = X
-    X = X0.copy(); X[4, 3] = 0.5; defects["row4"] = X
+    # EVERY structural zero of rows 3 and 4 individually (X[3, 0..2], X[4, 0..3]): one
+    # probe per row lets the residual read a sub-slice such as X[3, 0:2] unseen, and the
+    # P[3, 2] = 0 part of the claim is then unchecked (mutation harness:
+    # structural_residual_row3_short, pass-6 Q25).
+    for j in range(3):
+        X = X0.copy(); X[3, j] = 0.5; defects[f"row3[{j}]"] = X
+    for j in range(4):
+        X = X0.copy(); X[4, j] = 0.5; defects[f"row4[{j}]"] = X
     X = X0.copy(); X[3, 3] = 1.5; defects["diag3"] = X
     X = X0.copy(); X[4, 4] = 1.5; defects["diag4"] = X
     flagged = {k: gal3.structural_residual(X) for k, X in defects.items()}
@@ -663,7 +669,9 @@ def test_cayley_denominator_never_vanishes():
         worst_mat = max(worst_mat, float(np.abs(Den - (I5 - 0.5 * hat_by_hand(xi))).max()))
         d = float(np.linalg.det(Den))
         worst = max(worst, abs(d - (1.0 + float(np.dot(xi[0:3], xi[0:3])) / 4.0)))
-        assert d > 0.0
+    # DELETED (pass-6 verifier): a per-draw ``assert d > 0.0``.  |d - (1 + |phi|^2/4)|
+    # <= 1e-10 below implies d >= 1 - 1e-10 > 0, so it could fire only when the
+    # determinant bound fails too.
     assert worst_mat <= 1e-12, worst_mat
     assert worst <= 1e-10, worst
 
@@ -837,8 +845,11 @@ def test_cayley_constraints_degree_two():
                     for i, (x, y) in enumerate(zip(syms, expected_syms))
                     if not (type(x) is sp.Symbol and x == y)]
     assert not sym_mismatch, sym_mismatch
-    assert syms == expected_syms
-    assert len(set(syms)) == 25
+    # DELETED (pass-6 verifier): ``assert syms == expected_syms`` and
+    # ``assert len(set(syms)) == 25``.  Both are implied by the two pins above: the name
+    # list equals the 25 distinct expected names (so len(syms) == 25 and the names are
+    # distinct), and every element IS sp.Symbol(name, real=True) -- symbols with distinct
+    # names are distinct, and element-wise equality is list equality.
     stray = set().union(*(e.free_symbols for e in exprs)) - set(syms)
     assert not stray, stray
     degrees = [sp.Poly(e, *syms).total_degree() for e in exprs]
