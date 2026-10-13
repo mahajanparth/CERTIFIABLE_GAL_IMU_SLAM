@@ -128,3 +128,82 @@ All six biases observable with **no bias prior**. Condition number `1.8e4`.
 
 **So M3/M4 use a 3-KF / 2-edge / GNSS-anchored instance.** The 2-KF case is kept only as a
 degenerate smoke test with its rank deficiency documented.
+
+
+---
+
+## Findings recorded in the session plan, added here so agents can cite them (2026-10-13)
+
+F5, F6, F10 and F11 were established during pre-flight but recorded only in the session plan. They are reproduced verbatim below. F1 (the working directory was not a repository) was resolved by cloning this repository and has no technical content.
+
+## F5. Toolchain gaps — **resolved, both fixes are plain wheel installs.**
+`numpy 2.2.3`, `scipy 1.15.2`, `sympy 1.14.0`, `pytest 9.0.2`, `matplotlib`, `pandas` present.
+`cvxpy`, `mosek`, `scs`, `clarabel` **all MISSING** — currently no way to solve or certify anything.
+
+`gtsam 4.2` has **zero** symbols matching `Gal`. Cause identified: **the Galilean IMU factor first ships in
+GTSAM 4.3.0 (released 2026-09-18)**; 4.2 predates it by ~3 years. Verified by file-existence probe across tags —
+`Gal3.{h,cpp}` appears at 4.3a0, `Gal3ImuEKF` at 4.3a1, and `GalileanImuFactor.h` / `GalileanPreintegration.{h,cpp}`
+**only at the 4.3.0 final tag**. It is fully Python-wrapped (`navigation.i`, `geometry.i`) and a
+`cp311 manylinux2014_x86_64` wheel exists — an exact match for this interpreter, so **no compilation is needed**.
+
+`cvxpy 1.9.3` requires `numpy>=2.0` and `python>=3.11` — this machine satisfies both. Clarabel and SCS arrive
+automatically as cvxpy dependencies.
+
+## F6. GTSAM 4.3.0 uses our exact convention, but a **different endpoint relation**.
+The GTSAM docs state `X = [[R,v,p],[0,1,t],[0,0,1]]` character-for-character, with the same product and inverse —
+so F2/F4 transfer directly. But GTSAM does **not** use `X_j = H_ij X_i D_ij` at all. It uses
+
+```
+X_j = W_ij . phi_{Dt}(X_i) . U_ij(beta_i)
+W_ij = NavState(I, 0.5 g Dt^2, g Dt)      # gravity, navigation frame, on the LEFT
+phi_{Dt}(R,p,v) = (R, p + v Dt, v)        # affine "coasting" map, NOT a group element
+U_ij = NavState(dR, dp, dv)               # bias-corrected IMU motion, body frame, on the RIGHT
+```
+
+Keyframes stay in `SE_2(3)`/`NavState`; **Gal(3) is internal to preintegration only**, and the time coordinate is
+projected out losslessly at the factor boundary by `P_N` (lossless because no noise enters the clock row).
+
+This sidesteps the F2 time-block problem entirely by never forming a Galilean endpoint product. **Design decision
+for M1: implement both** — our corrected pure-group relation (F2) *and* GTSAM's `W.phi.U` form — and unit-test
+them against each other. They must agree on `(R, v, p)`; if they disagree, one of them is wrong, and that is
+exactly the kind of silent convention bug this project cannot afford.
+
+**Three ordering footguns in GTSAM 4.3.0**, all verified in source, all of which will cause silent wrong answers:
+1. Matrix column order is `v` before `p`.
+2. C++ constructor order is `Gal3(R, r, v, t)` — **position before velocity**, the opposite of the matrix.
+3. Tangent order is `(omega, nu, rho, alpha)` = (rot, **vel**, pos, time), while `NavState` tangent is (rot, **pos**, vel).
+   GTSAM's own remap table `kGal3BlockForNavState[3] = {0, 6, 3}` is the ground truth here.
+Additionally `imuBias::ConstantBias` is ordered **(accel, gyro)**, while this project's contract fixes `[b_g; b_a]`.
+
+## F10. The real tightness risk is **graph sparsity**, not the Cayley singularity.
+Barfoot et al. report that their relaxation stays rank-1 up to `sigma ~ 0.5-1.0 rad` for rotation averaging,
+but that tightness **degrades with measurement sparsity** — their continuous-time sparse-measurement case had
+"quite a bit lower" log-SVR and a failure even at `sigma = 0.01`. **An IMU preintegration chain is precisely a
+sparse, chain-structured measurement graph.** This is the regime where their relaxation was weakest.
+
+Corroborated independently by Rai et al.'s own ablation: primary constraints plus their A1 and B1 families give
+a relative optimality gap of **at least 0.88 with 0/504 solves certified**. Only adding **B2** — the Gram identity
+`(Y')^T Y' = ||w||^2 I - w w^T` on the rotation-bias wedge lifting — collapses the gap to a median `2.8e-5`.
+Their single real-world failure (rank 3) was a window with a prolonged stationary segment and unobservable heading.
+
+**Three consequences baked into the plan:**
+1. **Redundant constraints are not optional polish; they are the whole ballgame.** Budget M3/M4 accordingly, and
+   expect to need Galilean analogues of B2, not just a port of A1/B1.
+2. Use **AutoTight** (Dumbgen, Holmes, Agro, Barfoot, T-RO 2024) — sample feasible points, build the monomial
+   data matrix, take its **nullspace** — rather than only hand-deriving identities. Rai explicitly follows it.
+3. **Excitation and observability are first-class experiment variables.** F9 already showed bias observability is
+   fragile; Rai's failure case and Barfoot's sparsity finding say tightness is fragile in the same direction.
+
+## F11. Solver accuracy is a correctness issue, not a performance one.
+Barfoot et al. declare rank-1 at **log-SVR >= 5**, i.e. `sigma_1/sigma_2 >= 1e5`, solved with MOSEK at
+`cvx_precision high`. A first-order solver converged to `~1e-4` **cannot distinguish a genuine `sigma_2 ~ 1e-6`
+from its own residual**. Therefore: **Clarabel (interior-point, `~1e-9` gaps) is the default backend; SCS is for
+scaling sanity checks only and its duality gaps and SVRs must never be quoted as certificates.** SDPA gives a
+second, independent interior-point implementation for cross-checking marginal certificates.
+
+Per the user's decision, **MOSEK is not used.** Documented consequence: numbers will not be bit-comparable with
+Rai's or Barfoot's published MOSEK results. Any comparison to their tables must say so explicitly.
+
+---
+
+## Execution plan — Stage B
