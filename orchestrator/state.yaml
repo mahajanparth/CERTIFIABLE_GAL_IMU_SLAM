@@ -454,7 +454,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -621,10 +621,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-008
     started: '2026-10-13T14:46:15+00:00'
+    finished: '2026-10-13T16:02:43+00:00'
+    outcome: completed
+    note: Caught planted M2-C31 (predict() from identity is off by exactly |g| Dt). 25/25 confirmed; gravity
+      bug fix confirmed correct. F16, F19 fixed; F17, F18 partial; F20 not fixed. 29 non-equivalent survivors
+      (6 medium, 23 low); two latent src defects (F23 initial covariance never propagated -- independently
+      reproduced; F24 so3_log near pi).
+  - role: implementer
+    agent_id: impl-M2-011-remediation
+    started: '2026-10-13T16:02:43+00:00'
     finished: null
     outcome: running
-    note: 'Eighth pass, fresh planted claim, zero-survivor rule: rule on F16-F20 and sweep for any non-equivalent
-      survivor.'
+    note: Fix F23/F24 defects; kill W02, W07, W08, W09, W10, W13, W14, W46, U47, S39, W20; replace change-detector-only
+      kills with reference checks (F21-F25).
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -740,31 +749,35 @@ milestones:
     resolution: PARTIALLY fixed per verify-M2-007 (docs/verification/stage-b_m2-baselines_pass7.md); the
       remainder is in M2-F16/F17/F19.
   - id: M2-F16
-    resolved: false
+    resolved: true
     summary: 'Baseline 3 make_params'' white gyro density sigma_g is pinned by nothing: zeroing it (U20)
       or quadrupling it (U26) passes the suite (independently reproduced: setGyroscopeCovariance(0) keeps
       test_baselines 36/36). sigma_a is pinned only to ~1% (x1.005 survives). sigma_int is pinned at one
       value only; hard-coding it to 1e-3 (U23/U23b) dies only on an edit-anchor change detector.'
+    resolution: Ruled FIXED by verify-M2-008 (docs/verification/stage-b_m2-baselines_pass8.md).
   - id: M2-F17
-    resolved: false
+    resolved: true
     summary: 'The true-bias leak survives in six more places because every caller passes BIAS_TRUE: CayleyFactor.predicted_rotation
       (U10, 7.9e-3), Baseline 3 predict (U30, 4.2e-2), corrected_increment_gal3 (U31, 4.8e-2), bias_jacobian_recursion
       (U38), Baseline 1/2 and 3 integrate_edge_states (U13, U32, KF2 velocity 0.109). Fixture-degenerate
       inputs are the same class: edge duration (always 0.5 s), gravity (one vector) and step dt can be
       hard-coded without failing anything; on a 0.2 s edge the velocity residual shifts by 2.87.'
+    resolution: Superseded by M2-F21..F25 per verify-M2-008.
   - id: M2-F18
-    resolved: false
+    resolved: true
     summary: 'All three constructors keep a reference to the caller''s bias array instead of copying it:
       an in-place update by the caller silently changes bbar while the frozen increments stay put (xi
       moves 7.3e-3; Baseline 3 predict 4.2e-2). Tests pass bias.copy() and cannot see it.'
+    resolution: Superseded by M2-F21..F25 per verify-M2-008.
   - id: M2-F19
-    resolved: false
+    resolved: true
     summary: 'Harness: _run_in_copy''s ''killed on the intended assertion'' check searches the whole pytest
       output, which includes the failing test''s source, so any message typed literally in the test always
       counts as found (S36 ''found'' under the S35 edit; _BBAR_MSG in S12/S13/S47). Match only ''E ''
       lines. File-level replays also fire on any edit of an anchor''s text (change detectors, not references).'
+    resolution: Ruled FIXED by verify-M2-008 (docs/verification/stage-b_m2-baselines_pass8.md).
   - id: M2-F20
-    resolved: false
+    resolved: true
     summary: 'Zero-survivor gate rule (user decision 2026-10-13): every item previously filed as advisory
       must be killed by a test or proven equivalent with the proof written down. Items: M2-A01: Low/equivalent
       pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13 truncated contrast with
@@ -780,6 +793,37 @@ milestones:
       a reference); S22, S26, S31, S39, S43, S45 survive outright. c13d ''predicted >= 1e-8'' depends
       only on fixture constants. Minor record drift: C06 FD 7.3e-9 vs quoted 2.7e-9, C07 left-convention
       gap 0.384 vs hint 2.1.'
+    resolution: Superseded by M2-F21..F25 per verify-M2-008.
+  - id: M2-F21
+    resolved: false
+    summary: 'Inputs still unvaried: W02 corrected_increment_gal3 removes gravity with the caller''s Dt
+      not dt_total (dv 11.48 at Dt = 1.37 on a 0.2 s edge; test reads only .time()); W13/W14 dropping
+      **kwargs from bias_jacobian_recursion / single_step is NOT equivalent (body_P_sensor moves J 29.6%,
+      single_step 1.67e-4); W46/U47 isotropic_precision tested only at tr Sigma = O(1) while the fixture''s
+      rotation trace is 4.3e-8 (a 1e-6 clamp mis-weights 23x); W10 Rot3 branch of gal3 never exercised.'
+  - id: M2-F22
+    resolved: false
+    summary: 'test_f18 reads the field list from src (CayleyFactor._ARRAY_FIELDS), so shrinking the list
+      shrinks the check: W07 (A_pa dropped), W08 (only bbar copied) pass all 203; W09 increment() returning
+      views survives; b_g/b_a are views into bias_hat; S39 in-place edit of GalileanPreintegration.bias_hat
+      desyncs it from GTSAM''s bias (predict moves 4.22e-2).'
+  - id: M2-F23
+    resolved: false
+    summary: 'REAL DEFECT: ForsterPreintegration(cov=C0) with zero noise densities never propagates C0
+      -- bit-identical after 200 steps vs a true value 92% different (independently reproduced). test_b1_single_step_reads_every_field
+      dodges it with sigma = 1e-30 and its has_noise-is-False assertion pins the defective gate.'
+  - id: M2-F24
+    resolved: false
+    summary: 'REAL DEFECT (low): so3_log has no near-pi branch: error 2.7e-3 at pi - 1e-6, 2.6e8 at pi
+      - 1e-8; at theta = pi it returns norm ~15 vectors for 36% of axes.'
+  - id: M2-F25
+    resolved: false
+    summary: 'Remaining pass-8 survivors: kills only by change detectors (test_pass5_replay_is_faithful,
+      pass6/pass7 edit anchors) do not count -- R36, R37, S02, S16, S21, S39, W13; low survivors Q01,
+      Q39, Q44, W15, W17, W18, W19 (small-angle branches), P23, P46, S21, S31, W11, W12 (FD step choices),
+      R36, R37, S16, S02, U49 (sub-tolerance scalings), W09, W10, U47, W20. 18 of these are sub-tolerance
+      or FD-step perturbations that no finite-tolerance test can kill -- awaiting the owner''s ruling
+      on a tolerance-equivalence rule.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
