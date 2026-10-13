@@ -992,6 +992,25 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
     with pytest.raises(ValueError):
         gal3.endpoint(X_bad, algebraic_instances[0][1], G)
 
+    # ... and the guard is TIGHT: the stated rule is t_i == 0 up to round-off, so
+    # offsets far below any physical time (position error g Dt t_i ~ 1e-10 at
+    # t_i = 1e-11) must already be refused, while round-off-sized offsets pass.
+    # Testing only t_i = 0.25 lets the tolerance grow to 1e-3 unseen (mutation
+    # harness: keyframe_time_tol_1e-3).
+    def refused(t):
+        X = algebraic_instances[0][0].copy()
+        X[3, 4] = t
+        try:
+            gal3.endpoint(X, algebraic_instances[0][1], G)
+        except ValueError:
+            return True
+        return False
+
+    near_bad = [t for t in (1e-11, -1e-11, 2e-12, -2e-12, 1e-6, -1e-4) if not refused(t)]
+    assert not near_bad, near_bad
+    near_ok = [t for t in (0.0, -0.0, 5e-13, -5e-13) if refused(t)]
+    assert not near_ok, near_ok
+
 
 # ==========================================================================
 # the NavState (SE_2(3)) side

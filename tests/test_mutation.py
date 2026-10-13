@@ -52,6 +52,7 @@ C21 = G3 + "test_log_and_gamma1_inverse"
 C41 = IMU + "test_increment_left_invariant_ode"
 C45 = IMU + "test_preintegration_chaining_is_the_group_product"
 C30 = G3 + "test_cayley_constraints_degree_two"
+C36 = G3 + "test_endpoint_only_valid_on_zero_time_slice"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -199,6 +200,12 @@ MUTATIONS = {
         "    S = sp.eye(3) - P / 2\n",
         "    S = sp.eye(3) + P / 2\n",
         [C30], {C30: "assert worst_sym_cay <= 1e-12"},
+    ),
+    "keyframe_time_tol_1e-3": (                                   # verifier V26
+        "src/gal3.py",
+        "KEYFRAME_TIME_TOL = 1e-12",
+        "KEYFRAME_TIME_TOL = 1e-3",
+        [C36], {C36: "assert not near_bad, near_bad"},
     ),
 }
 
