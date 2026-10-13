@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -318,9 +318,17 @@ milestones:
   - role: verifier
     agent_id: verify-M1-006
     started: '2026-10-13T09:40:00+00:00'
+    finished: '2026-10-13T14:46:15+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C59 (Cay(-xi) = Cay(xi)^-1 identically on gal(3)). 55/55 confirmed; F12 FIXED.
+      7 of 27 new mutants survive: P10 (alpha assumptions), P19 (Dt > 2 untested), low P03/P08/P13/P22.'
+  - role: implementer
+    agent_id: impl-M1-006-remediation
+    started: '2026-10-13T14:46:15+00:00'
     finished: null
     outcome: running
-    note: 'Narrow fifth pass with a fresh planted claim: rule on the orchestrator''s F12 fix.'
+    note: Kill P10/P03/P13/P08/P19/P22 and every promoted advisory item, or prove equivalence in place
+      (F13, F14).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -408,27 +416,37 @@ milestones:
     resolution: PARTIALLY fixed per verify-M1-005; the N01 symbol-identity hole and the C41 initial condition
       were fixed by the orchestrator in 1bca507 and are tracked as M1-F12 until a verifier rules.
   - id: M1-F12
-    resolved: false
+    resolved: true
     summary: 'C30 matched values to symbols by name only: a distinct sympy ''alpha'' in syms passed every
       check while a QCQP builder differentiating w.r.t. syms would drop the (alpha/2)u term (N01); column-major
       Re order also passed (N06). C41''s ODE check admitted a constant left factor (N20). Orchestrator
       fix 1bca507 pins the 25 symbols, their order and free_symbols, and D(0) = I; N01 is in the harness
       and killed. Needs a verifier ruling.'
-  advisory_findings:
-  - id: M1-A01
-    summary: 'Low/equivalent pass-3 survivors (non-blocking): V06 structural_residual without the det
-      term (C02 det check vacuous), V33 batch Taylor without theta^4 (2.4e-9), V44 so3_log threshold moved;
-      equivalents V02, V18, V39. C41 admissible dt is 3.367e-6 (rounded 3.37e-6 is one configuration over);
-      headroom is seed-specific (worst coefficient 1.72-4.09 over 300 seeds).'
-  - id: M1-A02
-    summary: 'Pass-4 low (non-blocking): C42''s 1e-12 bound is loose (measured 1.5e-13; a 3% th^4 coefficient
-      error at 6.1e-13 survives) -- a longer Taylor branch or lower switch would allow ~1e-14; C36 guard
-      admits NaN times (caught downstream); C24 dense sweep 1.60e-12 vs recorded 1.41e-12; C41''s 2.970
-      coefficient is seed-specific (1.994 on other configurations).'
+    resolution: Ruled FIXED by verify-M1-006 (docs/verification/m1-gal3-mechanics_pass5.md).
+  - id: M1-F13
+    resolved: false
+    summary: 'Pass-5 survivors (all blocking under the zero-survivor rule): P10 alpha declared positive=True
+      consistently passes C30 (sp.solve at alpha = -1.3 returns []); P03 consistent Symbol subclass and
+      P13 all symbols without real=True -- pin syms == [Symbol(n, real=True) ...]; P08 coefficient as
+      a zero-argument function (domain QQ[h()]) -- pin Poly domain in (ZZ, QQ); P19 preintegrate_constant
+      wrong only for Dt > 2 survives (5e-3 at Dt = 2.5) -- test Dt = 5, 20 or state Dt <= 2 in C41''s
+      domain; P22 negative Dt as |Dt| -- test or state the domain. Equivalents to prove in place: P11
+      (Float 0.5), P15. Stale test_hints for C30 and C41.'
+  - id: M1-F14
+    resolved: false
+    summary: 'Zero-survivor gate rule (user decision 2026-10-13): every item previously filed as advisory
+      must be killed by a test or proven equivalent with the proof written down. Items: M1-A01: Low/equivalent
+      pass-3 survivors (non-blocking): V06 structural_residual without the det term (C02 det check vacuous),
+      V33 batch Taylor without theta^4 (2.4e-9), V44 so3_log threshold moved; equivalents V02, V18, V39.
+      C41 admissible dt is 3.367e-6 (rounded 3.37e-6 is one configuration over); headroom is seed-specific
+      (worst coefficient 1.72-4.09 over 300 seeds). | M1-A02: Pass-4 low (non-blocking): C42''s 1e-12
+      bound is loose (measured 1.5e-13; a 3% th^4 coefficient error at 6.1e-13 survives) -- a longer Taylor
+      branch or lower switch would allow ~1e-14; C36 guard admits NaN times (caught downstream); C24 dense
+      sweep 1.60e-12 vs recorded 1.41e-12; C41''s 2.970 coefficient is seed-specific (1.994 on other configurations).'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -586,11 +604,19 @@ milestones:
   - role: implementer
     agent_id: impl-M2-010-remediation
     started: '2026-10-13T09:42:00+00:00'
+    finished: '2026-10-13T14:46:15+00:00'
+    outcome: completed
+    note: '203/203. Input inventory with every input varied at two non-fixture values; F18 defensive copies;
+      F19 ''E ''-line matcher; 37 file-edit mutants killed. REAL BUG fixed: corrected_increment_gal3 kept
+      the PIM''s gravity terms (off by |g| Dt for any non-zero-gravity PIM); I confirmed the fixed increment
+      is gravity-independent to 1.7e-18.'
+  - role: verifier
+    agent_id: verify-M2-008
+    started: '2026-10-13T14:46:15+00:00'
     finished: null
     outcome: running
-    note: 'Systematic sweep: vary EVERY input of every public function away from its fixture value (bias,
-      edge duration, gravity, dt, noise densities); copy inputs; fix the harness''s assertion matching
-      (F16-F19).'
+    note: 'Eighth pass, fresh planted claim, zero-survivor rule: rule on F16-F20 and sweep for any non-equivalent
+      survivor.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -729,28 +755,27 @@ milestones:
       output, which includes the failing test''s source, so any message typed literally in the test always
       counts as found (S36 ''found'' under the S35 edit; _BBAR_MSG in S12/S13/S47). Match only ''E ''
       lines. File-level replays also fire on any edit of an anchor''s text (change detectors, not references).'
-  advisory_findings:
-  - id: M2-A01
-    summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
-      truncated contrast with (I - xi^) (lower bound only); P33 weighted_square unsquared (c12 invariant);
-      P40 corrected increment clock zeroed (trivially J[9,:]=0); P44 bias random-walk covariances swapped
-      (rank invariant, equivalent). Tests that cannot fail are listed in pass3 report section 7.'
-  - id: M2-A02
-    summary: 'Pass-4 low/equivalent survivors (non-blocking): dead small-angle branches Q01/Q16/Q39; equivalents
-      Q04, Q36, Q44; FD-accuracy-only Q08, Q32; C25-only rank-invariant noise wiring Q28, Q29.'
-  - id: M2-A03
-    summary: 'Pass-5 low/equivalent survivors (non-blocking): R13, R18, R22, R31, R33 algebraic equivalents;
-      R36/R37 below c13b bounds; R38 unread variant field. Note for M3: R21 (affine method returning Eq.
-      (19)) is equal in value but drops the Y/Y'' lifting -- M3 must consume the lifted form explicitly.'
-  - id: M2-A04
-    summary: 'Pass-6 low (non-blocking): S02, S03, S11, S16, S20, S21 caught only by the copy-of-src replay
-      guard (a change detector, not a reference); S22, S26, S31, S39, S43, S45 survive outright. c13d
-      ''predicted >= 1e-8'' depends only on fixture constants. Minor record drift: C06 FD 7.3e-9 vs quoted
-      2.7e-9, C07 left-convention gap 0.384 vs hint 2.1.'
+  - id: M2-F20
+    resolved: false
+    summary: 'Zero-survivor gate rule (user decision 2026-10-13): every item previously filed as advisory
+      must be killed by a test or proven equivalent with the proof written down. Items: M2-A01: Low/equivalent
+      pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13 truncated contrast with
+      (I - xi^) (lower bound only); P33 weighted_square unsquared (c12 invariant); P40 corrected increment
+      clock zeroed (trivially J[9,:]=0); P44 bias random-walk covariances swapped (rank invariant, equivalent).
+      Tests that cannot fail are listed in pass3 report section 7. | M2-A02: Pass-4 low/equivalent survivors
+      (non-blocking): dead small-angle branches Q01/Q16/Q39; equivalents Q04, Q36, Q44; FD-accuracy-only
+      Q08, Q32; C25-only rank-invariant noise wiring Q28, Q29. | M2-A03: Pass-5 low/equivalent survivors
+      (non-blocking): R13, R18, R22, R31, R33 algebraic equivalents; R36/R37 below c13b bounds; R38 unread
+      variant field. Note for M3: R21 (affine method returning Eq. (19)) is equal in value but drops the
+      Y/Y'' lifting -- M3 must consume the lifted form explicitly. | M2-A04: Pass-6 low (non-blocking):
+      S02, S03, S11, S16, S20, S21 caught only by the copy-of-src replay guard (a change detector, not
+      a reference); S22, S26, S31, S39, S43, S45 survive outright. c13d ''predicted >= 1e-8'' depends
+      only on fixture constants. Minor record drift: C06 FD 7.3e-9 vs quoted 2.7e-9, C07 left-convention
+      gap 0.384 vs hint 2.1.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: deriving
   claims: []
   seed:
     id: null
@@ -778,10 +803,33 @@ milestones:
   - role: implementer
     agent_id: impl-M3-001
     started: '2026-10-13T09:25:31+00:00'
+    finished: '2026-10-13T14:46:15+00:00'
+    outcome: completed
+    note: 'Implemented from claims only: 96 tests pass, 5 fail; 33/38 claims pass; 23/23 mutants killed.
+      C27 and C34 depend on an IMU noise model the claims do not specify; C36-C38 SDP solves are numerically
+      invalid (dual 630 > primal-feasible cost 9e-23, weak duality violated; max|Q| 1.1e10); C37''s eta
+      is ill-posed on a noise-free instance.'
+  - role: deriver
+    agent_id: deriver-M3-003
+    started: '2026-10-13T14:46:15+00:00'
     finished: null
     outcome: running
-    note: Implement src/qcqp from the M3 claim list only (no derivation narrative or scratch scripts)
-      with per-claim tests and a mutation harness.
+    note: 'Revise the claim list for the implementer''s ambiguities: specify the noise model, fix C27/C34,
+      move or restate C36-C38.'
+  blocking_findings:
+  - id: M3-F01
+    resolved: false
+    summary: 'Under-specified claims (implementer report): IMU white-noise densities absent from the claims
+      decide C27 (ratio not ~0.5 under the M2 isotropic densities; rotation part quadratic, v/p linear)
+      and C34 part 2 (world-frame W_vp off only 2.6e-6, claimed >= 1e-3; 5.5e-2 with anisotropic accel
+      noise). Random-walk precision convention, chordal prior weight and C35/C32 sampling distribution
+      also unstated. C18 asserts 200/200 converge; implementer could only assert >= 150/200.'
+  - id: M3-F02
+    resolved: false
+    summary: 'C36-C38 (OPEN-HYPOTHESIS tightness) cannot be evaluated by M3: Clarabel ''optimal'' solves
+      violate weak duality (dual 630.6 vs a feasible point of cost 8.7e-23), and C37''s eta denominator
+      is ~1e-22 on a noise-free instance. Either move these to M4 with solver-validity preconditions (weak
+      duality, residuals) and a noisy instance, or restate them.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
