@@ -34,11 +34,46 @@ from gtsam.symbol_shorthand import B, V, X
 
 from src.qcqp import constraints as CN
 from src.qcqp import cost as CO
-from src.qcqp import fixture as FX
+from src.qcqp import fixture as SRC_FX   # used ONLY to pin src's literals against LIT
 import src.qcqp.instance as INST
 from src.qcqp import lifting as LF
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+class LIT:
+    """Instance literals, RETYPED here (not imported from src) so that the reference does not
+    move with a corrupted src literal.  Trajectory: M2 fixture M2_TRAJ_V1 as defined on branch
+    stage-b/m2-baselines (src/trajectory.py); sigmas: the M3 claims' domain text."""
+    B_G = np.array([0.0100, -0.0150, 0.0080])
+    B_A = np.array([0.0600, -0.0400, 0.0900])
+    BIAS_TRUE = np.concatenate([B_G, B_A])            # project order [b_g; b_a]
+    OMEGA_BODY = (np.array([0.35, -0.22, 0.17]), np.array([-0.28, 0.41, -0.33]))
+    F_BODY = (np.array([0.60, 0.45, 9.95]), np.array([-0.75, 0.90, 9.60]))
+    ROT_VEC_0 = np.array([0.10, -0.20, 0.30])
+    P_0 = np.zeros(3)
+    V_0 = np.array([0.50, -0.30, 0.20])
+    DT, STEPS = 2.5e-3, 200
+    SIGMA_PRIOR = 1e-3
+    SIGMA_GNSS = 0.05
+    SIGMA_BG_RW = 1.9e-5
+    SIGMA_BA_RW = 3.0e-3
+
+
+#: M2_TRAJ_V1 reference values (M2 src/trajectory.py, transcribed at 15 significant digits):
+#: these pin the ground-truth trajectory independently of any literal above
+M2_REF = dict(
+    V_KF1=np.array([-3.092347809743656e-01, -1.121267155202117e+00, 1.401383484057339e-01]),
+    P_KF1=np.array([5.715027067778627e-02, -3.148113358346768e-01, 9.348023290152563e-02]),
+    V_KF2=np.array([-1.520564406279614e+00, -1.903478183400628e+00, -1.641944548085670e-01]),
+    P_KF2=np.array([-4.312534482841444e-01, -1.111986889144151e+00, 7.234717707859262e-02]),
+    R_KF2=np.array([[9.677181225278726e-01, -2.412143599148208e-01, -7.305660751781723e-02],
+                    [2.301509945763355e-01, 9.638954740062700e-01, -1.339254825854730e-01],
+                    [1.027236828908148e-01, 1.127880656856546e-01, 9.882948432589516e-01]]),
+    DR_01=np.array([[9.903776532493884e-01, -9.387914277777526e-02, -1.016799414611560e-01],
+                    [7.470913760838102e-02, 9.811536442685306e-01, -1.782023319050390e-01],
+                    [1.164931272738697e-01, 1.688911865370475e-01, 9.787262734840944e-01]]),
+)
 
 # ======================================================================================
 # Independent references
@@ -107,10 +142,10 @@ def make_pim(gyro, acc, dt, bbar):
 
 
 def fixture_pim(e, bbar):
-    n = 200
-    gyro = np.tile(FX.OMEGA_BODY[e] + FX.B_G, (n, 1))
-    acc = np.tile(FX.F_BODY[e] + FX.B_A, (n, 1))
-    return make_pim(gyro, acc, 2.5e-3, bbar)
+    n = LIT.STEPS
+    gyro = np.tile(LIT.OMEGA_BODY[e] + LIT.B_G, (n, 1))
+    acc = np.tile(LIT.F_BODY[e] + LIT.B_A, (n, 1))
+    return make_pim(gyro, acc, LIT.DT, bbar)
 
 
 def U_of(pim, b):
@@ -137,7 +172,7 @@ def fd_J(pim, bbar, h):
 @functools.lru_cache(maxsize=None)
 def ref(bbar_key):
     """Independent per-edge data at nominal bias.  ``bbar_key`` is "true", "zero" or a tuple."""
-    bbar = {"true": FX.BIAS_TRUE, "zero": np.zeros(6)}.get(bbar_key) if isinstance(bbar_key, str) \
+    bbar = {"true": LIT.BIAS_TRUE, "zero": np.zeros(6)}.get(bbar_key) if isinstance(bbar_key, str) \
         else np.array(bbar_key, float)
     edges = []
     for e in range(2):
@@ -163,13 +198,13 @@ def ref(bbar_key):
 @functools.lru_cache(maxsize=None)
 def truth_ref():
     """Ground truth re-derived by chaining GTSAM's prediction at the true bias."""
-    ns = gtsam.NavState(Rot3.Expmap(FX.ROT_VEC_0), FX.P_0, FX.V_0)
+    ns = gtsam.NavState(Rot3.Expmap(LIT.ROT_VEC_0), LIT.P_0, LIT.V_0)
     out = [ns]
     for e in range(2):
-        out.append(fixture_pim(e, FX.BIAS_TRUE).predict(out[-1], cb(FX.BIAS_TRUE)))
+        out.append(fixture_pim(e, LIT.BIAS_TRUE).predict(out[-1], cb(LIT.BIAS_TRUE)))
     R = [s.attitude().matrix() for s in out]
     return LF.State(R, [np.asarray(s.velocity()) for s in out],
-                    [np.asarray(s.position()) for s in out], [FX.BIAS_TRUE.copy() for _ in out])
+                    [np.asarray(s.position()) for s in out], [LIT.BIAS_TRUE.copy() for _ in out])
 
 
 def lift_ref(state, ed):
@@ -224,7 +259,7 @@ def decode_ref(z):
                     [z[45 + 6 * k:51 + 6 * k] / s for k in range(3)])
 
 
-RW_PREC = np.diag([1 / (FX.SIGMA_BG_RW**2 * 0.5)] * 3 + [1 / (FX.SIGMA_BA_RW**2 * 0.5)] * 3)
+RW_PREC = np.diag([1 / (LIT.SIGMA_BG_RW**2 * 0.5)] * 3 + [1 / (LIT.SIGMA_BA_RW**2 * 0.5)] * 3)
 
 
 def J_direct(state, r, imu="iso", rot_weight=0.5, W_vp=None):
@@ -251,11 +286,11 @@ def J_direct(state, r, imu="iso", rot_weight=0.5, W_vp=None):
         elif imu == "world":
             q = np.r_[rv, rp]
             J += q @ (ed["W_vp"] if W_vp is None else W_vp) @ q
-    sp_ = FX.SIGMA_PRIOR
+    sp_ = LIT.SIGMA_PRIOR
     J += 0.5 / sp_**2 * np.sum((state.R[0] - tr.R[0])**2)
     J += np.sum((state.v[0] - tr.v[0])**2) / sp_**2 + np.sum((state.p[0] - tr.p[0])**2) / sp_**2
     for k in (1, 2):
-        J += np.sum((state.p[k] - tr.p[k])**2) / FX.SIGMA_GNSS**2
+        J += np.sum((state.p[k] - tr.p[k])**2) / LIT.SIGMA_GNSS**2
     for k in (0, 1):
         d = state.b[k + 1] - state.b[k]
         J += d @ RW_PREC @ d
@@ -292,11 +327,11 @@ def gtsam_cost(state, r, kind="iso", W_vp=None):
                                     ed["pim"])
         graph.add(f.cloneWithNewNoiseModel(noiseModel.Gaussian.Information(imu_info(ed, kind, W_vp))))
     graph.add(gtsam.PriorFactorPose3(X(0), Pose3(Rot3(tr.R[0]), tr.p[0]),
-                                     noiseModel.Isotropic.Sigma(6, FX.SIGMA_PRIOR)))
-    graph.add(gtsam.PriorFactorVector(V(0), tr.v[0], noiseModel.Isotropic.Sigma(3, FX.SIGMA_PRIOR)))
+                                     noiseModel.Isotropic.Sigma(6, LIT.SIGMA_PRIOR)))
+    graph.add(gtsam.PriorFactorVector(V(0), tr.v[0], noiseModel.Isotropic.Sigma(3, LIT.SIGMA_PRIOR)))
     for k in (1, 2):
-        graph.add(gtsam.GPSFactor(X(k), tr.p[k], noiseModel.Isotropic.Sigma(3, FX.SIGMA_GNSS)))
-    rw_sig = np.r_[[FX.SIGMA_BA_RW * np.sqrt(0.5)] * 3, [FX.SIGMA_BG_RW * np.sqrt(0.5)] * 3]
+        graph.add(gtsam.GPSFactor(X(k), tr.p[k], noiseModel.Isotropic.Sigma(3, LIT.SIGMA_GNSS)))
+    rw_sig = np.r_[[LIT.SIGMA_BA_RW * np.sqrt(0.5)] * 3, [LIT.SIGMA_BG_RW * np.sqrt(0.5)] * 3]
     for k in (0, 1):                                    # GTSAM (accel, gyro) order
         graph.add(gtsam.BetweenFactorConstantBias(B(k), B(k + 1), ConstantBias(),
                                                   noiseModel.Diagonal.Sigmas(rw_sig)))
@@ -390,8 +425,33 @@ def test_instance_matches_independent_gtsam_reference(which):
         assert np.abs(I.truth[k][0] - tr.R[k]).max() <= 1e-12
         assert np.abs(I.truth[k][1] - tr.v[k]).max() <= 1e-12
         assert np.abs(I.truth[k][2] - tr.p[k]).max() <= 1e-12
-    assert np.array_equal(I.b_true, FX.BIAS_TRUE)
+    assert np.array_equal(I.b_true, LIT.BIAS_TRUE)
     assert np.allclose(I.rw_precision, RW_PREC, rtol=1e-15, atol=0)
+    # factor-graph literals of the domain text
+    assert I.sigma_prior == LIT.SIGMA_PRIOR and I.sigma_gnss == LIT.SIGMA_GNSS
+    for k in (1, 2):
+        assert np.abs(I.gnss[k] - tr.p[k]).max() <= 1e-12
+    for got, want in zip(I.prior, (tr.R[0], tr.v[0], tr.p[0])):
+        assert np.abs(got - want).max() <= 1e-15
+    # the ground-truth trajectory is M2_TRAJ_V1's (independent transcription of M2's reference)
+    for k, (key_v, key_p) in ((1, ("V_KF1", "P_KF1")), (2, ("V_KF2", "P_KF2"))):
+        for st in (tr, LF.truth_state(I)):
+            assert np.abs(st.v[k] - M2_REF[key_v]).max() <= 1e-12
+            assert np.abs(st.p[k] - M2_REF[key_p]).max() <= 1e-12
+    assert np.abs(I.truth[2][0] - M2_REF["R_KF2"]).max() <= 1e-12
+    if which == "true":                       # at bbar = b_true the PIM rotation is the exact dR
+        assert np.abs(I.edges[0].dR - M2_REF["DR_01"]).max() <= 1e-12
+
+
+@pytest.mark.claim("M3-C01")
+def test_bias_boundary_converters():
+    """Both directions of the single bias-order conversion (CLAUDE.md footgun 4)."""
+    import src.qcqp.gtsam_boundary as GB
+    b = np.array([1.0, 2, 3, 4, 5, 6])                    # [b_g; b_a]
+    cbias = GB.to_gtsam_bias(b)
+    assert np.array_equal(cbias.gyroscope(), b[0:3]) and np.array_equal(cbias.accelerometer(), b[3:6])
+    assert np.array_equal(GB.from_gtsam_bias(ConstantBias(b[3:6], b[0:3])), b)
+    assert np.array_equal(GB.from_gtsam_bias(cbias), b)
 
 
 # ======================================================================================
@@ -436,11 +496,37 @@ def test_c01_index_map(which):
             scale = max(1.0, np.abs(rr).max())
             assert np.abs(za[124 + 6 * e:127 + 6 * e] - rho_v).max() <= 1e-14 * scale
             assert np.abs(za[127 + 6 * e:130 + 6 * e] - rho_p).max() <= 1e-14 * scale
-        # decoder round trip
-        d = LF.state_of_z(-2.5 * z)
-        for k in range(3):
-            assert np.abs(d.R[k] - st.R[k]).max() <= 1e-15
-            assert np.abs(d.b[k] - st.b[k]).max() <= 1e-15
+        # z_of_state's homogenising scale
+        assert np.array_equal(LF.z_of_state(st, inst(which), LF.BASE, s=-2.0), -2.0 * z)
+        # decoder round trip at several scales, every block (one multiply and one divide:
+        # at most 2 ulp relative -> 4.5e-16 * max(1, |x|))
+        for sc in (1.0, -1.0, -2.5, 0.3):
+            for layout, zz in ((LF.BASE, z), (LF.ANISO, za)):
+                d = LF.state_of_z(sc * zz, layout)
+                for k in range(3):
+                    for got, want in ((d.R[k], st.R[k]), (d.v[k], st.v[k]), (d.p[k], st.p[k]),
+                                      (d.b[k], st.b[k])):
+                        assert np.abs(got - want).max() <= 4.5e-16 * max(1.0, np.abs(want).max()), sc
+    assert np.array_equal(LF.BASE.bias_indices, np.arange(45, 63))
+    assert np.array_equal(LF.ANISO.bias_indices, np.arange(45, 63))
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_projection_is_nearest_rotation():
+    """state_of_z(project=True) returns the nearest PROPER rotation, also when the nearest
+    orthogonal matrix is a reflection (reference: SVD with the det correction, written here)."""
+    rng = np.random.default_rng(111)
+    for _ in range(200):
+        A = rexp(2 * rng.standard_normal(3)) @ np.diag([1.0, 1.0, -1.0]) + 0.1 * rng.standard_normal((3, 3))
+        U, _, Vt = np.linalg.svd(A)
+        assert np.linalg.det(U @ Vt) < 0                       # nearest orthogonal is a reflection
+        ref_R = U @ np.diag([1.0, 1.0, -1.0]) @ Vt
+        z = np.zeros(124)
+        z[0:9], z[S_IDX] = A.flatten(order="F"), 1.0
+        R = LF.state_of_z(z, project=True).R[0]
+        assert abs(np.linalg.det(R) - 1) <= 1e-12
+        assert np.abs(R - ref_R).max() <= 1e-12
+        assert np.abs(LF.project_so3(A) - ref_R).max() <= 1e-12
 
 
 @pytest.mark.claim("M3-C02")
@@ -496,7 +582,7 @@ def _time_varying(seed, n=150, dt=2.5e-3):
 
 @pytest.mark.claim("M3-C04")
 def test_c04_bias_jacobian_structure():
-    cases = [(fixture_pim(e, bb), bb) for e in range(2) for bb in (FX.BIAS_TRUE, np.zeros(6))]
+    cases = [(fixture_pim(e, bb), bb) for e in range(2) for bb in (LIT.BIAS_TRUE, np.zeros(6))]
     for seed in range(5):
         gyro, acc, dt = _time_varying(seed)
         bb = np.random.default_rng(50 + seed).normal(0, 0.05, 6)
@@ -596,6 +682,37 @@ def test_c05_cleared_residual():
     assert worst_t <= 1e-12
 
 
+def _inst_edge(which, e):
+    ed = inst(which).edges[e]
+    return dict(i=ed.i, j=ed.j, Dt=ed.Dt, J=ed.J, Ubar=Xmat(ed.dR, ed.dv, ed.dp, ed.Dt))
+
+
+def _src_top_block(st, which, e):
+    """The shipped affine forms evaluated on the shipped encoder: the 3x5 top block."""
+    z = LF.z_of_state(st, inst(which))
+    rR, rv, rp = CO.edge_residual_forms(inst(which), LF.BASE, e)
+    return np.column_stack([np.einsum("abn,n->ab", rR, z), rv @ z, rp @ z])
+
+
+@pytest.mark.claim("M3-C05")
+def test_c05_shipped_residual_vanishes_on_cayley_endpoints():
+    """Binds C05 to src: on X_j := G X_i Ubar Cay(x) the shipped forms vanish, off it they don't."""
+    rng = np.random.default_rng(55)
+    for which in ("true", "zero"):
+        bbar = inst(which).bbar
+        for e in range(2):
+            ed = _inst_edge(which, e)
+            for _ in range(100):
+                st = random_state(rng)
+                x = ed["J"] @ (st.b[e] - bbar)
+                Xj = Gmat(ed["Dt"]) @ Xmat(st.R[e], st.v[e], st.p[e], 0.0) @ ed["Ubar"] @ cay5(x)
+                st.R[e + 1], st.v[e + 1], st.p[e + 1] = Xj[0:3, 0:3], Xj[0:3, 3], Xj[0:3, 4]
+                assert np.abs(_src_top_block(st, which, e)).max() <= 1e-12 * max(1.0, np.abs(Xj).max())
+                st2 = st.copy()
+                st2.v[e + 1] = st.v[e + 1] + 1e-3 * rng.standard_normal(3)
+                assert np.abs(_src_top_block(st2, which, e)).max() > 1e-6
+
+
 @pytest.mark.claim("M3-C06")
 def test_c06_residual_factorisation():
     rng = np.random.default_rng(6)
@@ -613,6 +730,27 @@ def test_c06_residual_factorisation():
                 r = A @ (I5 - 0.5 * xhat(x)) - Bm @ (I5 + 0.5 * xhat(x))
                 pred = Xi @ ed["Ubar"] @ cay5(x) @ (gexp(eps) - I5) @ (I5 - 0.5 * xhat(x))
                 worst = max(worst, np.abs(r - pred).max())
+    assert worst <= 1e-12, worst
+
+
+@pytest.mark.claim("M3-C06")
+def test_c06_shipped_residual_factorisation():
+    """Binds C06 to src: the shipped forms equal the top block of X_i Ubar Cay(x)(Exp(eps)-I)(I-x^/2)."""
+    rng = np.random.default_rng(66)
+    worst = 0.0
+    for which in ("true", "zero"):
+        bbar = inst(which).bbar
+        for e in range(2):
+            ed = _inst_edge(which, e)
+            for _ in range(100):
+                st = random_state(rng)
+                x = ed["J"] @ (st.b[e] - bbar)
+                eps = np.r_[0.1 * rng.standard_normal(9), 0.0]
+                Xi = Xmat(st.R[e], st.v[e], st.p[e], 0.0)
+                Xj = Gmat(ed["Dt"]) @ Xi @ ed["Ubar"] @ cay5(x) @ gexp(eps)
+                st.R[e + 1], st.v[e + 1], st.p[e + 1] = Xj[0:3, 0:3], Xj[0:3, 3], Xj[0:3, 4]
+                pred = Xi @ ed["Ubar"] @ cay5(x) @ (gexp(eps) - I5) @ (I5 - 0.5 * xhat(x))
+                worst = max(worst, np.abs(_src_top_block(st, which, e) - pred[0:3, :]).max())
     assert worst <= 1e-12, worst
 
 
@@ -692,6 +830,40 @@ def test_c09_primary_vanish_on_liftings():
     _family_check(["P0", "P1", "P2", "P3"], 1e-12, 1e-12)
 
 
+def _orth_forms(k, rows):
+    """Hand-built P1 (columns, R^T R = s^2 I) or RA1 (rows, R R^T = s^2 I) forms of rotation k."""
+    def idx(r_, c_):
+        return 15 * k + r_ + 3 * c_
+    out = []
+    for a in range(3):
+        for b in range(a, 3):
+            if rows:   # (R R^T)_ab = sum_c R_ac R_bc
+                tt = [(1.0, idx(a, c), idx(b, c)) for c in range(3)]
+            else:      # (R^T R)_ab = sum_c R_ca R_cb
+                tt = [(1.0, idx(c, a), idx(c, b)) for c in range(3)]
+            if a == b:
+                tt.append((-1.0, S_IDX, S_IDX))
+            out.append(_bilinear(N_BASE, tt))
+    return out
+
+
+@pytest.mark.claim("M3-C09")
+@pytest.mark.claim("M3-C10")
+def test_P1_is_column_and_RA1_is_row_orthonormality():
+    """Pins each family's MEANING, not only the union (P1 <-> RA1 swapped would keep the union)."""
+    fam = fams("true")
+    for k in range(3):
+        for name, rows in (("P1", False), ("RA1", True)):
+            mine = [c.A.toarray() for c in fam[name][6 * k:6 * k + 6]]
+            for A in _orth_forms(k, rows):
+                assert min(np.abs(A - M).max() for M in mine) == 0.0, (name, k)
+    # and the two differ off the variety (so the check above is not vacuous): at a non-orthogonal
+    # R the column and row Gram matrices differ
+    z = np.zeros(124)
+    z[0:9], z[S_IDX] = np.arange(1.0, 10.0), 1.0
+    assert max(abs(c.residual(z) - d.residual(z)) for c, d in zip(fam["P1"][:6], fam["RA1"][:6])) > 1
+
+
 @pytest.mark.claim("M3-C10")
 def test_c10_rai_table1_analogues_vanish():
     _family_check(["RA1", "RB1", "RB2", "RC1"], 1e-12, 1e-12)
@@ -717,7 +889,12 @@ def test_c13_families_nontrivial_off_variety(aniso):
         mins = {f: np.inf for f in fam}
         for _ in range(20):
             zp = z0 + 1e-3 * rng.standard_normal(len(z0))
-            for f, m in fmax(zp, fam).items():
+            own = {f: max(abs(float(zp @ (c.A.toarray() @ zp)) - c.b) for c in cs) for f, cs in fam.items()}
+            src_max = CN.family_max(zp, fam)          # the src helper must report |g|, not g
+            for f, m in own.items():
+                # round-off of z^T A z is ~ eps |z|^2 max|A| (RR cancels: |A| ~ 1e4 vs g ~ 1e-4)
+                tol = 1e-13 * (zp @ zp) * max(abs(c.A).max() for c in fam[f])
+                assert abs(src_max[f] - m) <= tol, (f, src_max[f], m)
                 mins[f] = min(mins[f], m)
         assert all(v > 1e-7 for v in mins.values()), (which, mins)
 
@@ -734,6 +911,10 @@ def _vech_stack(cs):
 def test_c14_family_sizes_and_ranks():
     fam = fams("true")
     assert {f: len(v) for f, v in fam.items()} == EXPECTED_SIZES
+    # the primary / redundant labelling (C09 lists P0-P3 as primary; C10, C11 the redundant ones)
+    assert tuple(CN.PRIMARY) == ("P0", "P1", "P2", "P3")
+    assert set(CN.REDUNDANT) == {"RA1", "RB1", "RB2", "RC1", "RG", "RL", "RH", "RS"}
+    assert tuple(CN.ANISO_PRIMARY) == ("P4",) and tuple(CN.ANISO_REDUNDANT) == ("RR",)
     for f, cs in fam.items():
         assert np.linalg.matrix_rank(_vech_stack(cs), tol=1e-9) == len(cs), f
     prim = [c for f in ("P0", "P1", "P2", "P3") for c in fam[f]]
@@ -805,7 +986,6 @@ def test_c17_homogeneous_symmetric(aniso):
     rng = np.random.default_rng(17)
     cs = CN.flat(fams("true", aniso))
     n = 136 if aniso else 124
-    lam = 1.7
     nonzero_b = [c for c in cs if c.b != 0]
     assert len(nonzero_b) == 1 and nonzero_b[0].b == 1.0 and nonzero_b[0].family == "P0"
     A0 = nonzero_b[0].A.toarray()
@@ -814,9 +994,14 @@ def test_c17_homogeneous_symmetric(aniso):
         A = c.A.toarray()
         assert A.shape == (n, n)
         assert np.array_equal(A, A.T)
+        # Homogeneity: the shipped residual is evaluated as z^T A z - b with nothing else
+        # (checked against an own evaluation, so a stray linear/constant term would show).
+        # The identity lam^2 z^T A z == (lam z)^T A (lam z) was deleted: it holds for EVERY A
+        # and could not fail (verifier pass 1, Sec. 7).
         z = rng.standard_normal(n)
-        g1, g2 = z @ A @ z, (lam * z) @ A @ (lam * z)
-        assert abs(lam**2 * g1 - g2) <= 1e-12 * (z @ z) * max(np.abs(A).max(), 1e-300)
+        for lam in (1.7, -0.3):
+            own = float((lam * z) @ (A @ (lam * z))) - c.b
+            assert abs(c.residual(lam * z) - own) <= 1e-12 * max(1.0, abs(own))
 
 
 # ======================================================================================
@@ -963,18 +1148,29 @@ def test_c22_gram_identities_do_not_pin_lifting(mode):
 @pytest.mark.claim("M3-C23")
 @pytest.mark.parametrize("aniso", [False, True])
 def test_c23_global_sign_flip(aniso):
+    """-z is the same state: bound to independent references.  (The bitwise identities
+    g(-z) == g(z), (-z)^T Q (-z) == z^T Q z hold for ANY quadratic form and could not fail; they
+    were replaced, verifier pass 1 Sec. 7.)"""
+    layout = LF.ANISO if aniso else LF.BASE
+    variant = "aniso" if aniso else "iso"
+    rng = np.random.default_rng(23)
     for which in ("true", "zero"):
-        z = z_ref(truth_ref(), ref(which), aniso=aniso)
-        for c in CN.flat(fams(which, aniso)):
-            assert c.residual(-z) == c.residual(z)
-        variant = "aniso" if aniso else "iso"
+        r = ref(which)
         Q = CO.assemble_Q(terms(which, variant))
-        assert (-z) @ Q @ (-z) - z @ Q @ z == 0.0
-        a = LF.state_of_z(z, LF.ANISO if aniso else LF.BASE)
-        b = LF.state_of_z(-z, LF.ANISO if aniso else LF.BASE)
-        for k in range(3):
-            for x, y in ((a.R, b.R), (a.v, b.v), (a.p, b.p), (a.b, b.b)):
-                assert np.array_equal(x[k], y[k])
+        for st in [truth_ref()] + [random_state(rng) for _ in range(20)]:
+            zm = -z_ref(st, r, aniso=aniso)
+            # constraints at -z: all vanish (src matrices, own evaluation)
+            for c in CN.flat(fams(which, aniso)):
+                assert abs(float(zm @ (c.A @ zm)) - c.b) <= 1e-10 * max(1.0, float(zm @ zm))
+            # cost at -z equals the independent 5x5 cost of the state
+            Jd = J_direct(st, r, imu=variant)
+            assert abs(CO.factored_cost(zm, terms(which, variant)) - Jd) <= 1e-12 * max(1.0, Jd)
+            assert abs(zm @ Q @ zm - Jd) <= 1e-12 * max(1.0, Jd) + 1e-7   # dense cancellation, C26
+            # and decodes to the state itself
+            d = LF.state_of_z(zm, layout)
+            for k in range(3):
+                for got, want in ((d.R[k], st.R[k]), (d.v[k], st.v[k]), (d.p[k], st.p[k]), (d.b[k], st.b[k])):
+                    assert np.abs(got - want).max() <= 4.5e-16 * max(1.0, np.abs(want).max())
 
 
 # ======================================================================================
@@ -1051,7 +1247,7 @@ def test_c27_truth_discrepancy_per_component():
     st = truth_ref()
     dev = {"rot": [], "vel": [], "pos": []}
     for lam in (1, 0.5, 0.25, 0.125):
-        bbar = tuple((1 - lam) * FX.BIAS_TRUE)
+        bbar = tuple((1 - lam) * LIT.BIAS_TRUE)
         I = INST.build_instance(np.array(bbar))            # code under test: the M3 residuals
         z = LF.z_of_state(st, I)
         m = {"rot": 0.0, "vel": 0.0, "pos": 0.0}
@@ -1080,7 +1276,7 @@ def test_c28_cayley_vs_exp_is_cubic():
     ed = ref("zero")["edges"][0]
     dev = []
     for s in (1, 0.5, 0.25, 0.125):
-        x = ed["J"] @ (s * FX.BIAS_TRUE)
+        x = ed["J"] @ (s * LIT.BIAS_TRUE)
         dev.append(np.abs(ed["Ubar"] @ (cay5(x) - gexp(x))).max())
     factors = [dev[k] / dev[k + 1] for k in range(3)]
     assert all(7.5 <= f <= 8.5 for f in factors), (dev, factors)
@@ -1133,7 +1329,36 @@ def test_c30_whitened_jacobian_full_rank(which):
         cols.append((fp - fm) / (2 * h))
     Jw = np.array(cols).T
     sv = np.linalg.svd(Jw, compute_uv=False)
+    # NB the rank is invariant to any positive per-term rescaling, so it cannot see a wrong
+    # whitening weight; test_whitened_residual_is_symmetric_root_whitening pins the weights.
     assert int((sv > 1e-12 * sv[0]).sum()) == 45
+
+
+def _sym_root(W):
+    w, U = np.linalg.eigh(W)
+    return (U * np.sqrt(np.clip(w, 0.0, None))) @ U.T
+
+
+@pytest.mark.claim("M3-C30")
+def test_whitened_residual_is_symmetric_root_whitening():
+    """||sqrt(W) F z||^2 must equal the cost, with the SYMMETRIC root, also for a singular PSD
+    weight (eigh then returns eigenvalues ~ -1e-10, whose sqrt would be NaN without a clip)."""
+    rng = np.random.default_rng(300)
+    Qr = np.linalg.qr(rng.standard_normal((6, 6)))[0]
+    W_sing = Qr @ np.diag([1e6, 2e6, 5e6, 1e6, 0.0, 0.0]) @ Qr.T
+    assert np.linalg.eigvalsh(W_sing).min() < 0           # round-off makes it "slightly negative"
+    cases = [(terms("true"), LF.BASE), (terms("zero", "aniso"), LF.ANISO),
+             (CO.terms(inst("true"), LF.ANISO, "aniso", W_vp=W_sing), LF.ANISO)]
+    for T, layout in cases:
+        for _ in range(10):
+            st = random_state(rng)
+            z = LF.z_of_state(st, inst("true"), layout)
+            wr = CO.whitened_residual(z, T)
+            assert np.all(np.isfinite(wr))
+            own = np.concatenate([_sym_root(t.W) @ (t.F @ z) for t in T])
+            assert np.abs(wr - own).max() <= 1e-9 * max(1.0, np.abs(own).max())
+            cost = CO.factored_cost(z, T)
+            assert abs(wr @ wr - cost) <= 1e-9 * max(1.0, cost)
 
 
 # ======================================================================================
@@ -1146,7 +1371,6 @@ def test_c31_isotropy_obstruction():
     ed = r["edges"][0]
     d = np.array([0.3, -1.0, 0.5])
     rng = np.random.default_rng(31)
-    Q = CO.assemble_Q(terms("zero"))
 
     def coeff(st, W):
         vals = []
@@ -1157,14 +1381,19 @@ def test_c31_isotropy_obstruction():
             vals.append(rho @ W @ rho)
         return 0.5 * (vals[2] - 2 * vals[1] + vals[0])
 
-    def coeff_Q(st):
+    def coeff_cost(st, f):
         vals = []
         for lam in (0, 1, 2):
             s2 = st.copy()
             s2.v[1] = st.v[1] + lam * d
-            z = z_ref(s2, r)
-            vals.append(z @ Q @ z)
+            vals.append(f(s2))
         return 0.5 * (vals[2] - 2 * vals[1] + vals[0])
+
+    def m3(s2):
+        return CO.factored_cost(LF.z_of_state(s2, inst("zero")), terms("zero"))
+
+    def ref_cost(s2):
+        return J_direct(s2, r)
 
     iso, aniso, qz = [], [], []
     for _ in range(200):
@@ -1172,19 +1401,23 @@ def test_c31_isotropy_obstruction():
         st.R[0] = rexp(2 * rng.standard_normal(3))
         iso.append(coeff(st, 3 * I3))
         aniso.append(coeff(st, np.diag([1.0, 2.0, 5.0])))
-        qz.append(coeff_Q(st))
+        qz.append((coeff_cost(st, m3), coeff_cost(st, ref_cost)))
     assert np.ptp(iso) <= 1e-9 and abs(iso[0] - 3 * d @ d) <= 1e-9
     assert np.ptp(aniso) > 1.0, np.ptp(aniso)
-    # the base cost's lam^2 coefficient is R_0-independent (it is d^T Q_vv d)
-    assert np.ptp(qz) <= 1e-6 * abs(np.mean(qz)), np.ptp(qz)
-    assert abs(np.mean(qz) - d @ Q[24:27, 24:27] @ d) <= 1e-6 * abs(np.mean(qz))
+    # the shipped base cost's lam^2 coefficient equals the independent 5x5 cost's, and is
+    # R_0-independent (the claim's proof step); the former "Q vs Q[24:27,24:27]" check compared
+    # Q with itself and was replaced (verifier pass 1, Sec. 7)
+    qm = np.array([a for a, _ in qz])
+    qr = np.array([b for _, b in qz])
+    assert np.abs(qm - qr).max() <= 1e-6 * np.abs(qr).max(), np.abs(qm - qr).max()
+    assert np.ptp(qm) <= 1e-6 * abs(np.mean(qm)), np.ptp(qm)
 
 
 SUB = np.r_[np.arange(0, 30), np.arange(45, 51), np.arange(63, 93), [S_IDX]]   # 67 entries
 
 
 @functools.lru_cache(maxsize=None)
-def _samples(seed):
+def _samples(seed, shipped=False):
     """6000 i.i.d. lifted states at bbar = 0 from the claims' sampler (numpy default_rng(seed)):
     the degree-2 monomial matrix over the edge-0 sub-vector, and rho_v, rho_p of edge 0."""
     assert len(SUB) == 67
@@ -1195,7 +1428,7 @@ def _samples(seed):
     rows, rhov, rhop = [], [], []
     for _ in range(6000):
         st = claim_sampler_state(rng)
-        zs = z_ref(st, r)[SUB]
+        zs = (LF.z_of_state(st, inst("zero")) if shipped else z_ref(st, r))[SUB]
         rows.append(np.outer(zs, zs)[iu])
         rr = resid5(st, ed, r["bbar"])
         M = st.R[0] @ ed["dR"]
@@ -1207,7 +1440,8 @@ def _samples(seed):
 @pytest.mark.claim("M3-C32")
 @pytest.mark.slow
 def test_c32_monomial_fit():
-    Phi, rv, rp, iu = _samples(2)
+    # the monomials come from the SHIPPED encoder (binds C32 to src); f from the 5x5 residual
+    Phi, rv, rp, iu = _samples(2, shipped=True)
     assert Phi.shape == (6000, 2278)
 
     def relres(f):
