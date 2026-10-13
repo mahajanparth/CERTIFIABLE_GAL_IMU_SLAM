@@ -273,13 +273,21 @@ C_FD_EPS = 1e-6
 def corrected_increment_gal3(pim: GalileanPreintegration, db_gtsam, Dt=None) -> Gal3:
     """GTSAM's bias-corrected increment as a ``Gal3``.
 
-    Zero gravity plus an identity ``NavState`` make ``predict()`` return the corrected
-    increment directly, so no endpoint relation has to be inverted.  ``db_gtsam`` is in
-    GTSAM's ``[b_a; b_g]`` column order.
+    ``predict()`` from the identity ``NavState`` returns the corrected increment plus the
+    gravity terms of the PIM's own params, ``v = dv + g Dt`` and ``p = dp + g Dt^2 / 2``
+    (the endpoint relation, claim M2-C03, at ``R_i = I``, ``v_i = p_i = 0``).  Those terms
+    are removed here, so the result is the increment for ANY ``n_gravity``.  (Before
+    pass 8 they were not: the function was correct only for a zero-gravity PIM -- every
+    caller in the suite built one -- and off by ``|g| Dt`` in velocity otherwise.)
+    ``db_gtsam`` is in GTSAM's ``[b_a; b_g]`` column order.
     """
     b = pim.bias_hat + swap_bias_blocks(db_gtsam)
     ns = pim.pim.predict(NavState(), to_gtsam_bias(b))
-    return gal3(ns.attitude().matrix(), ns.position(), ns.velocity(),
+    g = np.asarray(pim.params.n_gravity, dtype=float)
+    Dt_ij = pim.dt_total
+    return gal3(ns.attitude().matrix(),
+                np.asarray(ns.position(), dtype=float) - 0.5 * g * Dt_ij**2,
+                np.asarray(ns.velocity(), dtype=float) - g * Dt_ij,
                 pim.dt_total if Dt is None else Dt)
 
 
