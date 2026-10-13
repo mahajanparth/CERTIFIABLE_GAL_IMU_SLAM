@@ -208,7 +208,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -277,10 +277,18 @@ milestones:
   - role: implementer
     agent_id: impl-M2-004-remediation
     started: '2026-10-12T23:45:30+00:00'
+    finished: '2026-10-13T00:00:47+00:00'
+    outcome: completed
+    note: '88/88 passing; 38 of the verifier''s 39 mutants killed, 1 proven no-op. New finite-difference
+      covariance reference with anisotropic noise. The 17% gap vs GTSAM is a chart difference plus an
+      O(dt) Euler-vs-ZOH remainder. I re-flipped the covariance coupling sign: test_c06b now fails.'
+  - role: verifier
+    agent_id: verify-M2-003
+    started: '2026-10-13T00:00:47+00:00'
     finished: null
     outcome: running
-    note: 'Kill the 14 surviving mutants: independent covariance reference with anisotropic noise (F07),
-      time-varying stream for B1/B2 (F08), nonzero-bias tests for Eqs. 21b/21c (F09), record fixes (F10).'
+    note: Third verification pass with a fresh planted claim; rulings on F07-F10, circularity checks,
+      its own 30+ mutant sweep.
   blocking_findings:
   - id: M2-F01
     resolved: true
