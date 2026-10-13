@@ -361,9 +361,11 @@ def test_increment_closed_form_blocks():
     # * Q03 (Taylor branch for theta <= THETA_SMALL instead of <): changes only theta =
     #   0.05 exactly, where the Taylor branch's (1 - cos th)/th^2, stopped at th^4, is off
     #   by th^6/8! times |K K| <= th^2, i.e. <= 0.05^8/8! = 9.7e-16, plus rounding.
-    #   Measured change 1.0e-15 on 2000 axes.  OPEN under the strict rule: that is AT the
-    #   1e-15 threshold (it can exceed it by an ulp), and the mutant is as accurate as
-    #   the clean code there, so no independent-reference check can kill it.
+    #   Measured change 1.0e-15 on 2000 axes; pass-7 verifier 9.99e-16 on 3000 phi with
+    #   |phi| == 0.05 exactly, error vs mpmath 9.99e-16 for mutant and clean (sup norm on
+    #   [0.045, 0.055] unchanged).  EQUIVALENT: 9.99e-16 <= 1e-15 (rule 1), and also at
+    #   rounding level and no worse than clean (rule 2).  It also passes the 2e-15
+    #   switch pin below (threshold 2e-16 -> 8-ulp floor 1.8e-15 applies).
 
     # dR = Exp(omega Dt) as the integrators compute it: the batched Rodrigues used by
     # integrate_truth / integrate_increment, against scipy Rotation, ACROSS the
@@ -397,10 +399,12 @@ def test_increment_closed_form_blocks():
     # N15's measured CHANGE of the batch output, mutant vs clean, on 250000 angles in
     # [1e-3, 0.05) is 1.1e-15 (the th^8/8! = 9.7e-16 truncation of the clean Taylor c,
     # plus rounding); pass-6 Q40 (batch Taylor branch for th <= THETA_SMALL, i.e. at
-    # th = 0.05 exactly) measures the same 1.1e-15 on 200000 axes.  OPEN: both sit AT the
-    # threshold, and both mutants are at least as accurate as the clean code, so no
-    # independent-reference check can kill them.  (Just below 0.03, where the clean
-    # truncation is 1.6e-17, N15's change is 1.1e-16 -- see worst_batch_lo below.)
+    # th = 0.05 exactly) measures the same 1.1e-15 on 200000 axes.  EQUIVALENT (pass-7
+    # verifier): both changes are <= 8 ulp(1) = 1.8e-15 (rule 2 floor) and neither mutant
+    # is worse than clean in sup norm (N15 1.1e-16 vs clean 9.99e-16 on [1e-3, 0.05),
+    # pointwise worse by > 1 ulp on 0/8000; Q40 9.99e-16 = clean).  (Just below 0.03,
+    # where the clean truncation is 1.6e-17, N15's change is 1.1e-16 -- see worst_batch_lo
+    # below.)
     assert worst_batch <= 1e-14, worst_batch
     # Just below a LOWERED switch: on theta in [0.025, 0.03) the Taylor branch must keep
     # its th^6 term of sin(th)/th.  Against a 40-digit mpmath Rodrigues, <= 2.5e-15
@@ -421,6 +425,29 @@ def test_increment_closed_form_blocks():
     worst_batch3 = float(np.abs(imu._so3_exp_batch(phi3) - Rotation.from_rotvec(
         phi3.reshape(-1, 3)).as_matrix().reshape(4, 5, 3, 3)).max())
     assert worst_batch3 <= 1e-14, worst_batch3
+
+    # BOTH Rodrigues (scalar gal3.so3_exp and the batched one) at the top of their Taylor
+    # branch, theta in [0.04, 0.05) and just above the switch (0.05 .. 0.052, and the
+    # double just below it), against the 40-digit mpmath Rodrigues: <= 2e-15 each
+    # (measured 1.0e-15 for both, the th^8/8! = 9.7e-16 truncation of c plus rounding).
+    # The 1e-14 sweeps above leave a 10x band: a wrong th^6 term in (1 - cos th)/th^2,
+    # c + th^6/10000, measures 4.9e-15 here (scalar: pass-7 R01, so3_exp_c_th6_over_10000;
+    # batch: pass-7 R32, so3_exp_batch_c_th6_over_10000), killed by these pins with a 2.4x
+    # margin.  Under this bound pass-7 R08 (scalar switch at 0.03: 1.4e-17, more accurate),
+    # pass-4 N15 (batch switch at 1e-3: 1.1e-16) and pass-6 Q03 / Q40 (<= at 0.05 exactly:
+    # 1.0e-15, as clean) all pass.  Own stream rng(4201).
+    r_sw = rng(4201)
+    th_sw = np.concatenate([np.linspace(0.04, 0.05, 400, endpoint=False),
+                            [np.nextafter(gal3.THETA_SMALL, 0.0)] * 20,
+                            np.linspace(gal3.THETA_SMALL, 0.052, 40)])
+    phi_sw = th_sw[:, None] * rand_axis(r_sw, th_sw.size)
+    ref_sw = np.array([rodrigues_mp(p) for p in phi_sw])
+    assert int(np.sum(np.linalg.norm(phi_sw, axis=1) < gal3.THETA_SMALL)) >= 400  # INPUT GUARD
+    worst_sw_scalar = max(float(np.abs(gal3.so3_exp(p) - R).max())
+                          for p, R in zip(phi_sw, ref_sw))
+    worst_sw_batch = float(np.abs(imu._so3_exp_batch(phi_sw) - ref_sw).max())
+    assert worst_sw_scalar <= 2e-15, worst_sw_scalar
+    assert worst_sw_batch <= 2e-15, worst_sw_batch
 
 
 @pytest.mark.claim("M1-C43")
