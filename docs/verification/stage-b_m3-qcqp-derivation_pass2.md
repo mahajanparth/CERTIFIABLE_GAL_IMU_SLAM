@@ -223,4 +223,10 @@ v/p at \|s\| != 1, whitening, labels, helpers) now fail on the corresponding mut
   about 1e-13).
 
 ## 7. Full suite
-(filled in below)
+
+Clean tree at 4ccbefa (src/ and tests/ identical to 2b625b0 and to the final commit): `pytest -q -p no:cacheprovider tests/`
+gives **131 passed in 3092 s** (heavily loaded machine). Clean tree at 07b3fcc (only this report differs): **131 passed in 97 s**
+(OMP/OPENBLAS threads = 2). `git status` was empty after both runs.
+
+Addendum C35 at seed 2 (the claim uses seed 4; pass 1 reproduced seed 4): rank 2015, null 263 (gap 1.9e-7 -> 4.0e-15),
+restricted spans 60 / 92 / 106 / 136 / 226 / 236. Identical to the claim.
