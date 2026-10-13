@@ -23,15 +23,24 @@ Conventions used for the structured (non-string) fields:
   different letters for the same slot sequence (``delama`` vs ``gtsam``); comparing
   ``tangent_slots`` is meaningful, comparing ``tangent_order`` is not.
 * ``None`` means "this source has no such object", not "unknown".
-* ``error_handedness`` -- the invariance of the minimised error / cost under group
-  translation.  ``"left-invariant"`` if the cost is unchanged when every group-valued state
-  argument (the state AND its estimate / measurement of the same state) is left-multiplied
-  by the same group element; ``"right-invariant"`` for right multiplication; ``"none"`` only
-  if neither holds.  It is evaluated on the source's printed cost / residual WITH the weight
-  the source prints (a general weight W_m / covariance unless a scalar is printed).  Relative
-  measurements and inputs (pre-integrated increments, bias terms) are not states and do not
-  translate.  Under this rule ``X Xh^-1`` is right-invariant (delama Eq. 34, barfoot Eqs.
-  25/28), ``Xh^-1 X`` left-invariant (gtsam Eq. 21), and rai's tau ||r^R||_F^2 of Eq. (20)
+* ``error_handedness`` -- the translation invariance of the source's GROUP-VALUED ERROR
+  COMPONENT.  Take the composition the source prints between a group-valued state and its
+  estimate / prediction (rai: the rotation residual r^R of Eq. (19) inside its weighted term
+  tau_R ||r^R||_F^2 of Eq. (20); delama: log(Upsilon_k Upsilon_hat_k^-1) of Eq. (34); barfoot:
+  cay^-1(C C~_m^T), cay^-1(T T~_m^-1) of Eqs. (25)/(28) with weight W_m; gtsam: Upsilon_hat^-1
+  Upsilon of Eq. (21)), with the weight the source prints (a general SPD weight unless a scalar
+  is printed).  ``"left-invariant"`` if it is unchanged when the state and its estimate are both
+  left-multiplied by the same group element, ``"right-invariant"`` for right multiplication,
+  ``"none"`` if neither.  Everything that is not that group-valued pair is HELD FIXED under both
+  translations: R^3 states (rai's v_i, p_i), bias terms (delama's second component of (34)),
+  and relative measurements entering as fixed data (rai's dRbar_ij and xi_ij).  Holding
+  dRbar_ij fixed is what makes rai one-sided: conjugating it with the translation would make
+  rai's rotation term bi-invariant, and bi-invariance is not a value of this field.
+  Consequence, stated so nobody over-reads the field: it describes the error COMPONENT, not
+  the whole minimised cost.  rai's full Eq. (20) cost is not invariant under either translation
+  with v_i, p_i in R^3 (only the yaw subgroup about gravity leaves it invariant), and delama's
+  full Eq. (34) is right-invariant only when the bias moves under delama's own action (Eq. 24).
+  Under this rule: rai left-invariant, delama right-invariant, barfoot right-invariant, gtsam
   left-invariant.  The tests decide every row by this one rule
   (``tests/test_conventions.py::error_invariance``).
 """
