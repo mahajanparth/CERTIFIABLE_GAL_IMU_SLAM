@@ -180,7 +180,6 @@ class Problem:
         for k, y in inst["gnss"].items():
             terms.append((f"gnss{k}", inst["w_gnss"] * np.eye(3), L.vec(idx_p(k), 3) - np.outer(y, s)))
         wR, wv, wp = inst["w_prior"]; pr = inst["prior"]
-        R0 = L.mat3(idx_R(0)).reshape(9, self.n, order="C")
         R0 = np.stack([L.e(idx_R(0) + a) for a in range(9)])            # vec(R0) column-major
         terms.append(("prior_R", 0.5 * wR * np.eye(9), R0 - np.outer(pr["R"].flatten(order="F"), s)))
         terms.append(("prior_v", wv * np.eye(3), L.vec(idx_v(0), 3) - np.outer(pr["v"], s)))
@@ -216,9 +215,10 @@ class Problem:
                     u, w = R[:, a], R[:, b_]; c1, c2 = (comp + 1) % 3, (comp + 2) % 3
                     A = quad(u[c1], w[c2]) - quad(u[c2], w[c1]) - quad(s, R[comp, c])
                     add("P2_hand_cols", f"R{k} col{a}x col{b_} [{comp}]", A)
-                    u, w = R[a, :], R[b_, :]
-                    A = quad(u[c1], w[c2]) - quad(u[c2], w[c1]) - quad(s, R[c, comp])
-                    add("RA2_hand_rows", f"R{k} row{a}x row{b_} [{comp}]", A)
+                    # NOTE (M3 review): row handedness R_(a) x R_(b) = s R_(c) is NOT a separate
+                    # family.  Column and row cross products are both entries of cof(R), so the
+                    # row version is the same set of 9 quadratic forms {cof(R)_ij - s R_ij} as P2.
+                    # Verified by check_constraints.row_handedness_is_P2().
         for e in range(NE):
             B = self.blocks(e)
             W_ = skew_lin(B["w"])                                    # [omega(b)]_x as linear forms
@@ -242,6 +242,17 @@ class Problem:
                     for a in range(3):
                         A = quad(s, vv[a]) - sum(quad(Mx[a, r], cc[r]) for r in range(3))
                         add("RL_direct", f"{tag} s{nm}-Mc [{a}]", A)
+                # RS row-skew: Y Mx^T = [Mx w]_x  (Y Mx^T = Mx [w]_x Mx^T = [Mx w]_x for Mx in SO(3)).
+                # Both sides are bilinear: (lifted x rotation) and (rotation x bias).  9 per matrix lifting.
+                for a in range(3):
+                    for c in range(3):
+                        A = sum(quad(Ym[a, k2], Mx[c, k2]) for k2 in range(3))
+                        if a != c:
+                            d_ = 3 - a - c
+                            eps = 1.0 if (a, c, d_) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] else -1.0
+                            # [x]_x[a,c] = -eps_{acd} x_d ; x = Mx w = sum_k Mx[:,k] w_k
+                            A = A + eps * sum(quad(Mx[d_, k2], B["w"][k2]) for k2 in range(3))
+                        add("RS_row_skew", f"{tag} (Y M^T - [Mw]x)[{a},{c}]", A)
                 # RB1 kernel: Y w = 0
                 for a in range(3):
                     add("RB1_kernel", f"{tag} (Y w)[{a}]", sum(quad(Ym[a, c], B["w"][c]) for c in range(3)))
@@ -263,7 +274,6 @@ class Problem:
                 A = sum(quad(Vv[r], Pv[r]) for r in range(3)) - sum(quad(B["cv"][r], B["cp"][r]) for r in range(3))
                 add("RG_cross_gram", f"{tag} V.P", A)
                 # RH lifting handedness: (Mx e_a) x w_k = Mx ([e_a]_x c_k)  for every lifted column w_k = Mx c_k
-                cols = [(f"Ycol{c}", Ym[:, c], -W_[:, c]) for c in range(3)]   # Y e_c = Mx [w]_x e_c ; body vec = [w]_x e_c
                 cols = [(f"Ycol{c}", Ym[:, c], W_[:, c]) for c in range(3)] + [("V", Vv, B["cv"]), ("P", Pv, B["cp"])]
                 for nm, wk, ck in cols:
                     for a in range(3):
@@ -287,8 +297,13 @@ class Problem:
 
 
 PRIMARY = ["P0_homog", "P1_orth_cols", "P2_hand_cols", "P3_lift", "P4_resid_lift"]
-REDUNDANT = ["RA1_orth_rows", "RA2_hand_rows", "RB1_kernel", "RB2_gram_wedge", "RC1_norm", "RG_cross_gram",
-             "RL_direct", "RH_lift_hand", "RR_resid_norm"]
+REDUNDANT = ["RA1_orth_rows", "RB1_kernel", "RB2_gram_wedge", "RC1_norm", "RG_cross_gram",
+             "RL_direct", "RH_lift_hand", "RS_row_skew", "RR_resid_norm"]
+# Rai Table I subsets and their analogues here:  A1 -> RA1_orth_rows,  B1 -> RB1_kernel,
+# B2 -> RB2_gram_wedge,  C1 -> RC1_norm.  RB2 + RG + RC1 together are the Galilean Gram identity
+# [Y V P]^T [Y V P] = E^T E with E = [[w]_x, c^v, c^p] (15 per lifting side).
+RAI_TABLE_I = ["RA1_orth_rows", "RB1_kernel", "RB2_gram_wedge", "RC1_norm"]
+GALILEAN_EXTRA = ["RG_cross_gram", "RL_direct", "RH_lift_hand", "RS_row_skew"]
 
 
 def eval_family(F, z):
