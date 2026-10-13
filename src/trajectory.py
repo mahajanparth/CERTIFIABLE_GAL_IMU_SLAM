@@ -180,6 +180,12 @@ class NavTriple:
     v: np.ndarray
     p: np.ndarray
 
+    def __post_init__(self) -> None:
+        # M2-F18: copy, never alias the caller's arrays (frozen, hence object.__setattr__)
+        for name in ("R", "v", "p"):
+            object.__setattr__(self, name, np.array(getattr(self, name), dtype=float,
+                                                    copy=True))
+
     def as_tuple(self):
         return self.R, self.v, self.p
 
@@ -193,6 +199,12 @@ class Edge:
     f_body: np.ndarray          #: true (bias-free) body specific force, constant
     dt: float
     n_steps: int
+
+    def __post_init__(self) -> None:
+        # M2-F18: copy, never alias the caller's arrays (frozen, hence object.__setattr__)
+        for name in ("omega_body", "f_body"):
+            object.__setattr__(self, name, np.array(getattr(self, name), dtype=float,
+                                                    copy=True))
 
     @property
     def duration(self) -> float:

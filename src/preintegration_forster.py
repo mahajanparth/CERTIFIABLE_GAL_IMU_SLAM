@@ -63,6 +63,19 @@ class ForsterPreintegration:
     #: 9x9 propagated covariance in (rotation, velocity, position) block order
     cov: np.ndarray = field(default_factory=lambda: np.zeros((9, 9)))
 
+    def __post_init__(self) -> None:
+        # M2-F18: never alias a caller's array.  ``np.asarray`` of a float array is the
+        # caller's object, so an in-place update of the caller's bias estimate would move
+        # ``bias_hat`` while the increment accumulated at the old value stayed frozen.
+        self.bias_hat = np.array(self.bias_hat, dtype=float, copy=True)
+        self.sigma_g = np.array(self.sigma_g, dtype=float, copy=True)
+        self.sigma_a = np.array(self.sigma_a, dtype=float, copy=True)
+        self.dR = np.array(self.dR, dtype=float, copy=True)
+        self.dv = np.array(self.dv, dtype=float, copy=True)
+        self.dp = np.array(self.dp, dtype=float, copy=True)
+        self.dt_total = float(self.dt_total)
+        self.cov = np.array(self.cov, dtype=float, copy=True)
+
     @property
     def b_g(self) -> np.ndarray:
         return np.asarray(self.bias_hat, dtype=float)[0:3]

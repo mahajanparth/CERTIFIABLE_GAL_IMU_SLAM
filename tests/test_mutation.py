@@ -1101,7 +1101,7 @@ PASS6_F14_SURVIVORS = [
        f"pim = cls(bias_hat={_FIXTURE_BIAS},")],
      _C05C, "Baseline 1 dR is not the Exp increment at the input bias"),
     ("F14-B3", "preintegration_galilean.py",
-     [("self.bias_hat = np.asarray(bias_hat, dtype=float)",
+     [("self.bias_hat = np.array(bias_hat, dtype=float, copy=True)",
        f"self.bias_hat = {_FIXTURE_BIAS}")],
      _C05C, "Baseline 3 dR is not the exact ZOH increment at the input bias"),
 ]

@@ -281,6 +281,14 @@ class CayleyFactor:
     A_pa: np.ndarray
     variant: str = DEFAULT_VARIANT
 
+    #: the array-valued fields, copied on construction (M2-F18: never alias the caller)
+    _ARRAY_FIELDS = ("bbar", "dRbar", "dvbar", "dpbar", "J_R", "A_vg", "A_va", "A_pg", "A_pa")
+
+    def __post_init__(self) -> None:
+        for name in self._ARRAY_FIELDS:
+            setattr(self, name, np.array(getattr(self, name), dtype=float, copy=True))
+        self.Dt = float(self.Dt)
+
     @classmethod
     def from_edge(cls, edge, bbar, variant: str = DEFAULT_VARIANT) -> "CayleyFactor":
         from .preintegration_forster import bias_jacobians_fd, integrate_edge

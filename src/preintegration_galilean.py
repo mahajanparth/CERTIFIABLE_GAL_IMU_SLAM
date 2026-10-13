@@ -137,7 +137,7 @@ class GalileanPreintegration:
 
     def __init__(self, bias_hat, params=None, g_W=G_W,
                  sigma_g: float = 0.0, sigma_a: float = 0.0, combined: bool = False):
-        self.bias_hat = np.asarray(bias_hat, dtype=float)
+        self.bias_hat = np.array(bias_hat, dtype=float, copy=True)   # M2-F18: no aliasing
         self.combined = combined
         self.params = params if params is not None else make_params(
             g_W, sigma_g, sigma_a, combined=combined)
