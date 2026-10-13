@@ -528,7 +528,11 @@ claims:
   kind: DERIVED
   test_hint: '500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured
     4.4e-16). Note dp has NO Gamma1*w term because the generator''s w slot is 0: position is driven entirely
-    by the alpha*Gamma2*u coupling.'
+    by the alpha*Gamma2*u coupling. The batched Rodrigues the integrators use (_so3_exp_batch) vs scipy
+    Rotation on 147 angles spanning 0, 1e-10..0.03, 0.045..0.055 (both sides of and exactly on THETA_SMALL =
+    0.05), 0.06..3.1, pi, 4, 7.5, 12: <= 1e-12 (measured 1.53e-13, set by the th^4-truncated Taylor branch
+    just below the switch), and on a (4, 5, 3) batch: <= 1e-14 (measured 5.6e-16). Mutation harness
+    so3_exp_batch_c_over_theta (4.94) and so3_exp_batch_taylor_no_th4 (2.58e-9).'
   domain: (omega, a) constant on the interval.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -568,7 +572,11 @@ claims:
     integrate_increment_dp_uses_new_dv), and first order on the time-varying stream (5.8e-5 at dt = 5e-5,
     ratio 2.000). imu_step_element(omega, a, dt) = exp(dt (0, a, 0, 1)) . (Exp(omega dt), 0, 0, 0) by
     scipy expm/Rotation, 200 draws: <= 1e-12 (measured 1.0e-13), and integrate_increment equals the
-    ordered product of these elements (measured 1.7e-18). Plus 2000 purely algebraic random triples at <=
+    ordered product of these elements (measured 1.7e-18). LARGE-STEP regime (dt = 0.2, 12 steps, 20
+    streams, omega ~ 3 N(0,I3) so every |omega| dt >= THETA_SMALL by input guard): integrate_increment vs
+    the ordered product of scipy expm/Rotation per-step elements <= 1e-12 (measured 3.6e-15), and
+    integrate_truth vs the stated recursion stepped with scipy Rotation <= 1e-12 (measured 7.1e-15);
+    mutation harness so3_exp_batch_c_over_theta (10.7). Plus 2000 purely algebraic random triples at <=
     1e-14 (measured 0.0). A test that uses dv_jk * Dt_ij instead must FAIL (worst miss 4.23, asserted >=
     1e-3).'
   domain: Total. Requires the increments to be adjacent and expressed in the same body frame convention.

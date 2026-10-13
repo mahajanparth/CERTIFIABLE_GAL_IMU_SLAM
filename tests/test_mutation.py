@@ -53,6 +53,7 @@ C41 = IMU + "test_increment_left_invariant_ode"
 C45 = IMU + "test_preintegration_chaining_is_the_group_product"
 C30 = G3 + "test_cayley_constraints_degree_two"
 C36 = G3 + "test_endpoint_only_valid_on_zero_time_slice"
+C42 = IMU + "test_increment_closed_form_blocks"
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -206,6 +207,19 @@ MUTATIONS = {
         "KEYFRAME_TIME_TOL = 1e-12",
         "KEYFRAME_TIME_TOL = 1e-3",
         [C36], {C36: "assert not near_bad, near_bad"},
+    ),
+    "so3_exp_batch_c_over_theta": (                               # verifier V34
+        "src/imu_dynamics.py",
+        "(1.0 - np.cos(np.where(small, 1.0, th))) / np.where(small, 1.0, t2))",
+        "(1.0 - np.cos(np.where(small, 1.0, th))) / np.where(small, 1.0, th))",
+        [C42, C45], {C42: "assert worst_batch <= 1e-12, worst_batch",
+                     C45: "assert worst_large <= 1e-12, worst_large"},
+    ),
+    "so3_exp_batch_taylor_no_th4": (                              # verifier V33 (low)
+        "src/imu_dynamics.py",
+        "s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0,",
+        "s = np.where(small, 1.0 - t2 / 6.0,",
+        [C42], {C42: "assert worst_batch <= 1e-12, worst_batch"},
     ),
 }
 

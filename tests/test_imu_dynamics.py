@@ -216,6 +216,25 @@ def test_increment_closed_form_blocks():
     assert np.abs(dp - Dt ** 2 * (gal3.gamma2(omega * Dt) @ acc)).max() <= 1e-15
     assert np.abs(dp).max() >= 1e-3
 
+    # dR = Exp(omega Dt) as the integrators compute it: the batched Rodrigues used by
+    # integrate_truth / integrate_increment, against scipy Rotation, ACROSS the
+    # small-angle switch THETA_SMALL = 0.05 (both sides, and exactly on it) and up to
+    # large angles.  The integrators' tests step at |omega| dt << 0.05, so only this
+    # check sees the closed-form branch (mutation harness: so3_exp_batch_c_over_theta).
+    th = np.concatenate([[0.0], np.logspace(-10, -1.5, 40), np.linspace(0.045, 0.055, 41),
+                         [gal3.THETA_SMALL], np.linspace(0.06, 3.1, 60), [np.pi, 4.0, 7.5, 12.0]])
+    phi = th[:, None] * rand_axis(r, th.size)
+    worst_batch = float(np.abs(imu._so3_exp_batch(phi)
+                               - Rotation.from_rotvec(phi).as_matrix()).max())
+    # (the Taylor branch is truncated after th^4: its first omitted term in sin(th)/th
+    # contributes th^7/5040 = 1.5e-13 just below the switch, which sets the bound)
+    assert worst_batch <= 1e-12, worst_batch
+    # and with extra leading axes, as the integrators call it
+    phi3 = 1.5 * r.normal(size=(4, 5, 3))
+    worst_batch3 = float(np.abs(imu._so3_exp_batch(phi3) - Rotation.from_rotvec(
+        phi3.reshape(-1, 3)).as_matrix().reshape(4, 5, 3, 3)).max())
+    assert worst_batch3 <= 1e-14, worst_batch3
+
 
 @pytest.mark.claim("M1-C43")
 def test_forster_component_equations(endpoint_dataset):
@@ -352,6 +371,44 @@ def test_preintegration_chaining_is_the_group_product():
             P = P @ imu.imu_step_element(om_s[j, k], a_s[j, k], dt)
         worst_prod = max(worst_prod, float(np.abs(gal(Dp[0][k], Dp[1][k], Dp[2][k], Dp[3]) - P).max()))
     assert worst_prod <= 1e-12, worst_prod
+
+    # ... also in a LARGE-STEP regime, |omega| dt ~ 0.2 .. 1.4 (well past the
+    # small-angle switch THETA_SMALL = 0.05, which every other integrate_* call stays
+    # below): integrate_increment = the ordered product of per-step elements built
+    # here from scipy expm and scipy Rotation, and integrate_truth = the stated
+    # recursion (p += v dt + f dt^2/2, v += f dt, R <- R Exp(omega dt), f = g + R a)
+    # stepped here with scipy Rotation (mutation harness: so3_exp_batch_c_over_theta).
+    h_L, n_L, b_L = 0.2, 12, 20
+    om_L = 3.0 * r.normal(size=(n_L, b_L, 3))
+    a_L = 3.0 * r.normal(size=(n_L, b_L, 3))
+    rot_L = Rotation.from_rotvec((om_L * h_L).reshape(-1, 3)).as_matrix().reshape(n_L, b_L, 3, 3)
+    assert float(np.linalg.norm(om_L * h_L, axis=-1).min()) >= gal3.THETA_SMALL  # INPUT GUARD
+    DL = imu.integrate_increment(om_L, a_L, h_L, n_L, per_step=True)
+    R0_L = rand_rot(r, n=b_L)
+    v0_L, p0_L = r.normal(size=(b_L, 3)), r.normal(size=(b_L, 3))
+    (RL, vL, pL), _ = imu.integrate_truth(R0_L, v0_L, p0_L, om_L, a_L, h_L, n_L, G,
+                                          per_step=True)
+    worst_large = worst_large_nav = 0.0
+    for k in range(b_L):
+        P = np.eye(5)
+        R_, v_, p_ = R0_L[k].copy(), v0_L[k].copy(), p0_L[k].copy()
+        for j in range(n_L):
+            A = np.zeros((5, 5))
+            A[0:3, 3] = h_L * a_L[j, k]
+            A[3, 4] = h_L
+            Rk = np.eye(5)
+            Rk[0:3, 0:3] = rot_L[j, k]
+            P = P @ sla.expm(A) @ Rk
+            f_ = G + R_ @ a_L[j, k]
+            p_ = p_ + v_ * h_L + 0.5 * h_L * h_L * f_
+            v_ = v_ + f_ * h_L
+            R_ = R_ @ rot_L[j, k]
+        worst_large = max(worst_large,
+                          float(np.abs(gal(DL[0][k], DL[1][k], DL[2][k], DL[3]) - P).max()))
+        worst_large_nav = max(worst_large_nav, float(np.abs(RL[k] - R_).max()),
+                              float(np.abs(vL[k] - v_).max()), float(np.abs(pL[k] - p_).max()))
+    assert worst_large <= 1e-12, worst_large
+    assert worst_large_nav <= 1e-12, worst_large_nav
 
     # ACCURACY: the continuous increments from three separate DOP853 solves chain
     # as the group product (eR, ev, ep = the [0, T1] solve above).
