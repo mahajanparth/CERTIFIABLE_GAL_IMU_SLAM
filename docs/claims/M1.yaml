@@ -223,13 +223,13 @@ claims:
     = (1 - theta sin(theta) / (2 (1 - cos theta))) / theta^2.
   source: DERIVED
   kind: DERIVED
-  test_hint: '20000 random phi with |phi| in (1e-9, pi] (seed 20241012+21): max abs of Gamma1inv(phi) @
-    Gamma1(phi) - I <= 1e-9 (measured 9.8e-10 WITHOUT the small-angle branch, dominated by the |phi| ~
-    1e-6 samples; WITH the M1-C24 Taylor branch, measured 1.8e-14 at the test seed -- assert <= 1e-13).
-    The equivalent form c2 = 1/theta^2 - (1+cos theta)/(2 theta sin theta) must NOT be used: assert
-    finiteness of c2 at theta = pi exactly and relative accuracy <= 1e-13 against 60-digit arithmetic at
-    theta = pi and pi - 10^-k, k = 3..9 (measured 1.0e-16); the forbidden form in src fails that bound
-    (mutation harness: c2_forbidden_form).'
+  test_hint: '20000 random phi with |phi| in (1e-9, pi] (seed 20241012+21): max abs of Gamma1inv(phi) @ Gamma1(phi)
+    - I <= 1e-9 (measured 9.8e-10 WITHOUT the small-angle branch, dominated by the |phi| ~ 1e-6 samples; WITH
+    the M1-C24 Taylor branch, measured 1.8e-14 at the test seed -- assert <= 1e-13). The equivalent form c2
+    = 1/theta^2 - (1+cos theta)/(2 theta sin theta) must NOT be used: assert finiteness of c2 at theta = pi
+    exactly and relative accuracy <= 1e-13 against 60-digit arithmetic at theta = pi and pi - 10^-k, k = 3..9
+    (measured 1.0e-16); the forbidden form in src fails that bound (mutation harness: c2_forbidden_form). Equivalent
+    mutant (proof in the test): u = np.linalg.solve(Gamma1, v) in place of Gamma1^-1 v (pass-3 V18).'
   domain: Requires Gamma1(phi) invertible, i.e. theta != 2*pi*k. Log_SO3 requires theta < pi for a unique
     branch.
   verdict: CONFIRMED
@@ -238,9 +238,13 @@ claims:
   statement: log(exp(xi)) = xi for every xi in gal(3) with ||phi|| < pi.
   source: DERIVED
   kind: DERIVED
-  test_hint: 2000 random xi with |phi| uniform in (0.05, pi - 1e-3), u, w ~ N(0,I3), alpha ~ N(0,1). max
-    abs err <= 1e-9 (measured 5.6e-15). Also assert it FAILS (returns the other branch) for |phi| > pi,
-    e.g. |phi| = 3.5 returns |phi'| = 2*pi - 3.5 = 2.783.
+  test_hint: '2000 random xi with |phi| uniform in (0.05, pi - 1e-3), u, w ~ N(0,I3), alpha ~ N(0,1). max abs
+    err <= 1e-9 (measured 5.6e-15). Also assert it FAILS (returns the other branch) for |phi| > pi, e.g. |phi|
+    = 3.5 returns |phi''| = 2*pi - 3.5 = 2.783. Rotation block near the chart edge, where so3_log must use
+    a diagonal Shepperd branch: 20000 R = Exp(phi) built by scipy with tr(R) uniform in (-0.99, -0.9] (theta
+    in (2.69, 3.04), seed 20241012+2200), max |so3_log(R) - phi| <= 2.5e-15 (measured 8.9e-16; <= 1.3e-15 on
+    four other seeds); taking the trace branch for tr > -0.99 gives 5.3e-15 (mutation harness so3_log_trace_branch_below_0,
+    pass-3 V44). Equivalent mutant (proof in the test): the theta ~ 0 return 2 qv / qw -> 2 qv (pass-3 V02).'
   domain: '||phi|| < pi. At ||phi|| = pi the SO(3) log is two-valued; above pi, log returns the wrapped
     branch.'
   verdict: CONFIRMED
@@ -270,18 +274,21 @@ claims:
     error 1.0 in kappa2, kappa3 and c2 at theta = 1e-9, and 1.8e-7 / 8.3e-8 in kappa3 / c2 at theta =
     1e-4).'
   domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
-    below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just
-    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the
-    1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11 at
-    8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the 1e-11
-    bound (mutation harness: theta_small_8e-2, caught by the dense sweep). Just above the switch, 1 -
-    cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2): the literal form gives kappa3
-    and c2 relative errors of ~2e-10 just above 5e-2 (1.6e-10 / 1.6e-10 at the test''s sweep points >=
-    5e-2; 1.9e-10 / 1.9e-10 over 500 points on [0.05, 0.06]; verifier 6.1e-10 / 2.0e-10 on its own
-    points), while 2 sin^2 keeps every coefficient within 1.11e-12 on the test''s dense sweep (theta in
-    1e-12..10, 863 points, series-defined 50-digit reference; measured 1.106e-12) and within 1.41e-12 on a
-    denser 6003-point sweep (logspace(1e-12, 10, 3000), linspace(0.045, 0.2, 3000), pi and both sides of
-    5e-2; verifier 1.36e-12 on its own 6003 points) -- 7x under the 1e-11 bound.'
+    below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just below
+    the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the 1 - cos(theta)
+    cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11 at 8e-2 (crossing
+    1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the 1e-11 bound (mutation
+    harness: theta_small_8e-2, caught by the dense sweep). Just above the switch, 1 - cos(theta) must be evaluated
+    as the identically equal 2 sin^2(theta/2): the literal form gives kappa3 and c2 relative errors of ~2e-10
+    just above 5e-2 (1.6e-10 / 1.6e-10 at the test''s sweep points >= 5e-2; 1.9e-10 / 1.9e-10 over 500 points
+    on [0.05, 0.06]; verifier 6.1e-10 / 2.0e-10 on its own points), while 2 sin^2 keeps every coefficient within
+    1.11e-12 on the test''s dense sweep (theta in 1e-12..10, 863 points, series-defined 50-digit reference;
+    measured 1.106e-12) and within 1.41e-12 on a denser 6003-point sweep (logspace(1e-12, 10, 3000), linspace(0.045,
+    0.2, 3000), pi and both sides of 5e-2; verifier pass 3 1.36e-12 on its own 6003 points). The worst figure
+    is SWEEP-DEPENDENT: it is rounding in kappa3 / c2 just above the switch and grows with the sampling density
+    -- pass-4 verifier 1.60e-12 at theta = 0.0516 (7000 points); 1.65e-12 at theta = 0.0523 (c2) on a uniform
+    20001-point grid of [0.05, 0.07] against a 50-digit closed-form reference. Every measured figure is >=
+    6x under the 1e-11 bound.'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C25
@@ -354,15 +361,24 @@ claims:
   source: 'DERIVED (first two and the alpha=0 case of the third: pre-flight F3; the (alpha/2) u coupling
     is new here)'
   kind: DERIVED
-  test_hint: '2000 random xi with alpha != 0: substitute (Re, ve, pe) = Cay(xi) blocks and assert all
-    three residuals <= 1e-10 (measured 8.9e-16). Additionally assert each of the 15 scalar equalities
-    has sympy total_degree <= 2 in the lifted variables (phi, u, w, alpha, Re, ve, pe) -- measured max
-    total degree exactly 2. CONTENT of the 15 symbolic expressions (lambdified, fed by symbol name): at 300
-    true Cayley points from a test-local 5x5 solve (I5 - A/2)^-1 (I5 + A/2), A = xi^ by hand, all 15 vanish
-    <= 1e-12 (measured 1.3e-15); at 300 perturbed/arbitrary points (residual >= 1e-2 by input guard, measured
-    min 0.127) the symbolic AND the numeric cayley_constraint_residuals equal a hand-written residual to
-    <= 1e-12 relative (measured 6.7e-16 / 0.0). Mutation harness: cayley_symbolic_E3_no_alpha_u (2.20),
-    cayley_symbolic_S_plus (7.15).'
+  test_hint: '2000 random xi with alpha != 0: substitute (Re, ve, pe) = Cay(xi) blocks and assert all three
+    residuals <= 1e-10 (measured 8.9e-16). The returned symbolic object is pinned before its content: all 15
+    expressions are sympy Expr (not Poly; mutation harness cayley_symbolic_returns_poly); the 25 symbols, in
+    the documented order (phi0..2, u0..2, w0..2, alpha, Re row-major, ve0..2, pe0..2), print as those names
+    (cayley_symbolic_Re_column_major, pass-4 N06) AND each IS sympy.Symbol(name, real=True) -- plain Symbol
+    class, same .name, real assumption -- so a same-named fresh/positive alpha (cayley_symbolic_alpha_fresh_symbol
+    N01, cayley_symbolic_alpha_positive P10: sp.solve would drop every alpha < 0 root), all symbols non-real
+    (cayley_symbolic_not_real P13), a Symbol subclass (cayley_symbolic_alpha_subclass P03) or a symbol that
+    prints ''alpha'' but is named ''beta'' (cayley_symbolic_alpha_printer_spoof P16) all fail that pin; the
+    25 are distinct; every expression''s free symbols lie among them (cayley_symbolic_expr_foreign_alpha).
+    Each of the 15 has sympy total_degree <= 2 in those symbols (measured max exactly 2), and its Poly domain
+    is ZZ or QQ (measured QQ for all 15): a Float coefficient (cayley_symbolic_float_half P11, domain RR) or
+    an opaque constant h() = 0.5 (cayley_symbolic_opaque_half P08, domain QQ[h()]) fails. CONTENT of the 15
+    symbolic expressions (lambdified, fed by symbol name): at 300 true Cayley points from a test-local 5x5
+    solve (I5 - A/2)^-1 (I5 + A/2), A = xi^ by hand, all 15 vanish <= 1e-12 (measured 1.3e-15); at 300 perturbed/arbitrary
+    points (residual >= 1e-2 by input guard, measured min 0.127) the symbolic AND the numeric cayley_constraint_residuals
+    equal a hand-written residual to <= 1e-12 relative (measured 6.7e-16 / 0.0). Mutation harness: cayley_symbolic_E3_no_alpha_u
+    (2.20), cayley_symbolic_S_plus (7.15).'
   domain: Total. The (alpha/2) u product is degree 2, not 3, because alpha and u are independent lifted
     variables.
   verdict: CONFIRMED
@@ -430,11 +446,13 @@ claims:
     v blocks remain correct.
   source: DERIVED
   kind: DERIVED
-  test_hint: 500 random instances with t_i ~ 2*N(0,1). max|RHS[0:3,4] - (p_j + g*Dt*t_i)| <= 1e-10 and
-    |RHS[3,4] - t_i| <= 1e-12 (measured 3.6e-15). Implementation must assert t_i == 0 on keyframe states.
-    The guard (KEYFRAME_TIME_TOL = 1e-12) is tested on both sides of its tolerance -- t_i in {+-1e-11, +-2e-12,
-    1e-6, -1e-4, 0.25} must raise ValueError; t_i in {0, -0.0, +-5e-13} must be accepted (mutation harness
-    keyframe_time_tol_1e-3).
+  test_hint: '500 random instances with t_i ~ 2*N(0,1). max|RHS[0:3,4] - (p_j + g*Dt*t_i)| <= 1e-10 and |RHS[3,4]
+    - t_i| <= 1e-12 (measured 3.6e-15). Implementation must assert t_i == 0 on keyframe states. The guard (KEYFRAME_TIME_TOL
+    = 1e-12, inclusive) is tested on both sides of its tolerance -- t_i in {+-1e-11, +-2e-12, 1e-6, -1e-4,
+    0.25} must raise ValueError; t_i in {0, -0.0, +-5e-13} must be accepted (mutation harness keyframe_time_tol_1e-3)
+    -- and exactly AT it: +-1e-12 accepted, +-nextafter(1e-12, inf) = +-1.0000000000000002e-12 refused (keyframe_time_tol_1.9e-12,
+    pass-4 N14; keyframe_time_tol_9.9e-13). t_i in {NaN, +inf, -inf} must raise ValueError too: a guard of
+    the form abs(t_i) > tol admits NaN (keyframe_guard_admits_nan).'
   domain: Stated for all t_i; the correction g*Dt*t_i vanishes iff t_i = 0 or Dt = 0 or g = 0.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -502,29 +520,36 @@ claims:
     1)).
   source: DERIVED
   kind: DERIVED
-  test_hint: '(a) The closed form exp(Dt xi) against an independent DOP853 solve of Ddot = D xi^ (rtol =
-    atol = 1e-13), 200 configurations at each Dt in {0.02, 0.1, 0.4, 1.0, 2.0}: measured 1.39e-12
-    (asserted <= 1e-11). (b) The project''s explicit Euler scheme (euler_increment) vs exp(Dt xi): 1000
-    random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3)) at Dt = 0.4, the WORST Dt of the range (0.02, 0.4) (seed
-    20241012+41). The Euler error is FIRST ORDER: worst over the 1000 configurations = 2.970*dt, constant
-    to 4 digits across n = 1e3..1.6e5 (median 0.563*dt, mean 0.615*dt; verifier 2.97 at the test seed).
-    Rule: dt <= 2.5e-6 with tolerance 1e-5, tested at the boundary dt = 2.5e-6: measured 7.425e-6,
-    headroom 1.35x. The largest dt the 1e-5 tolerance admits on these configurations is 1e-5/2.970 =
-    3.37e-6; dt = 5e-6 FAILS it (1.485e-5, 4 of 1000 over), as does dt = 4e-6 (1.19e-5). (b'') Explicit
-    Euler pinned by its SIGNED first-order coefficient: (D_n - exp(T A))/dt = -(T/2) A^2 exp(T A) + O(dt)
-    with A = xi^ written by hand, T = 0.4, dt = 1e-4, same 1000 configurations: mismatch <= 1e-2 (measured
-    7.0e-4; a semi-implicit update gives ~2.9 -- mutation harness: euler_increment_semi_implicit); the
-    predicted coefficient max|(T/2) A^2 exp(TA)| = 2.970 matches (b)''s worst err/dt to 2e-6 relative
-    (asserted 1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). (c)
-    Time-varying stream (50 instances, Dt = 0.4) vs DOP853: err 5.2e-5 at dt = 1e-5 (<= 1e-4), ratio
-    err(2e-5)/err(1e-5) = 2.000 (in [1.8, 2.2]); input guard on the stream: left- vs right-invariant
-    rotation solutions differ by 0.44 (>= 1e-2). Separately assert the ODE itself ON THE IMPLEMENTATION:
-    max rel |(d/ds) D(s) - D(s) A| <= 1e-8 with D(s) = src preintegrate_constant(omega, a, s), A = (omega,
-    a, 0, 1)^ written by hand, central difference at h = 1e-6, 50 draws (measured 5.8e-11), and src
-    wedge(increment_generator(omega, a)) = A exactly (measured 0.0). (The former scipy-only form d/ds expm(sA)
-    = expm(sA) A held for any A.)'
-  domain: Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the
-    ordered product of per-sample exponentials, which is M1-C45.
+  test_hint: '(a) The closed form exp(Dt xi) against an independent DOP853 solve of Ddot = D xi^ (rtol = atol
+    = 1e-13), 200 configurations at each Dt in {0.02, 0.1, 0.4, 1.0, 2.0}: measured 1.39e-12 (asserted <= 1e-11).
+    (a'') Outside (0, 2]: 100 configurations at each Dt in {5, 20, -0.02, -0.4, -2, -5} (own stream, seed 20241012+4100)
+    against scipy expm(Dt A), A = (omega, a, 0, 1)^ written by hand: max |D - expm| / max(1, max|expm|) <=
+    1e-12 (measured 3.7e-14). Kills a closed form wrong only for Dt > 2 (mutation harness preintegrate_constant_wrong_above_2,
+    pass-5 P19: 1.0e-2) and one using |Dt| (preintegrate_constant_abs_dt, P22: 2.43). (b) The project''s explicit
+    Euler scheme (euler_increment) vs exp(Dt xi): 1000 random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3)) at Dt =
+    0.4, the WORST Dt of the range (0.02, 0.4) (seed 20241012+41). The Euler error is FIRST ORDER: worst over
+    the 1000 configurations = 2.970*dt AT THIS SEED, stable to 3 digits across n = 1e3..1.6e5 (2.9705 at n
+    = 1e3, 2.9698 at n = 1.6e5; median 0.563*dt, mean 0.615*dt). The 2.970 is seed-specific: pass-3 verifier,
+    300 other seeds of the same distribution, worst coefficient 1.72..4.09 (median 2.29), so the dt rule below
+    holds for THESE configurations, not for every draw. Rule: dt <= 2.5e-6 with tolerance 1e-5, tested at the
+    boundary dt = 2.5e-6: measured 7.425e-6, headroom 1.35x. The largest dt the 1e-5 tolerance admits on these
+    configurations is 1e-5/2.9698 = 3.367e-6; dt = 5e-6 FAILS it (1.485e-5, 4 of 1000 over), as does dt = 4e-6
+    (1.19e-5). (b'') Explicit Euler pinned by its SIGNED first-order coefficient: (D_n - exp(T A))/dt = -(T/2)
+    A^2 exp(T A) + O(dt) with A = xi^ written by hand, T = 0.4, dt = 1e-4, same 1000 configurations: mismatch
+    <= 1e-2 (measured 7.0e-4; a semi-implicit update gives ~2.9 -- mutation harness: euler_increment_semi_implicit);
+    the predicted coefficient max|(T/2) A^2 exp(TA)| = 2.970 matches (b)''s worst err/dt to 2e-6 relative (asserted
+    1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). Equivalent mutant (proof
+    in the test): dR + dR W dt -> dR (I3 + W dt) (pass-3 V39). (c) Time-varying stream (50 instances, Dt =
+    0.4) vs DOP853: err 5.2e-5 at dt = 1e-5 (<= 1e-4), ratio err(2e-5)/err(1e-5) = 2.000 (in [1.8, 2.2]); input
+    guard on the stream: left- vs right-invariant rotation solutions differ by 0.44 (>= 1e-2). Separately assert
+    the ODE itself ON THE IMPLEMENTATION: max rel |(d/ds) D(s) - D(s) A| <= 1e-8 with D(s) = src preintegrate_constant(omega,
+    a, s), A = (omega, a, 0, 1)^ written by hand, central difference at h = 1e-6, 50 draws (measured 5.8e-11),
+    src wedge(increment_generator(omega, a)) = A exactly (measured 0.0), and the initial condition preintegrate_constant(omega,
+    a, 0) = I5 to <= 1e-15 on 20 draws (measured 0.0; without it a constant left factor C exp(sA) passes the
+    ODE check -- pass-4 N20). (The former scipy-only form d/ds expm(sA) = expm(sA) A held for any A.)'
+  domain: 'Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the ordered
+    product of per-sample exponentials, which is M1-C45. Dt is any real number: the closed form is tested for
+    Dt in [-5, 20] (negative Dt is the backward solution from D(0) = I5).'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C42
@@ -532,13 +557,16 @@ claims:
     * Gamma2(omega*Dt) a, and the increment''s time block is Dt.'
   source: DERIVED (follows from M1-C19 and M1-C41)
   kind: DERIVED
-  test_hint: '500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured
-    4.4e-16). Note dp has NO Gamma1*w term because the generator''s w slot is 0: position is driven entirely
-    by the alpha*Gamma2*u coupling. The batched Rodrigues the integrators use (_so3_exp_batch) vs scipy
-    Rotation on 147 angles spanning 0, 1e-10..0.03, 0.045..0.055 (both sides of and exactly on THETA_SMALL =
-    0.05), 0.06..3.1, pi, 4, 7.5, 12: <= 1e-12 (measured 1.53e-13, set by the th^4-truncated Taylor branch
-    just below the switch), and on a (4, 5, 3) batch: <= 1e-14 (measured 5.6e-16). Mutation harness
-    so3_exp_batch_c_over_theta (4.94) and so3_exp_batch_taylor_no_th4 (2.58e-9).'
+  test_hint: '500 random (omega, a, Dt). max abs err vs exp(Dt*(omega,a,0,1)) blocks <= 1e-12 (measured 4.4e-16).
+    Note dp has NO Gamma1*w term because the generator''s w slot is 0: position is driven entirely by the alpha*Gamma2*u
+    coupling. The batched Rodrigues the integrators use (_so3_exp_batch) vs scipy Rotation on 147 angles spanning
+    0, 1e-10..0.03, 0.045..0.055 (both sides of and exactly on THETA_SMALL = 0.05), 0.06..3.1, pi, 4, 7.5,
+    12: <= 1e-14 (measured 1.1e-15). Its Taylor branch carries sin(th)/th through th^6 and (1 - cos th)/th^2
+    through th^4, so the first omitted terms add th^9/9! = 5e-18 and th^8/8! = 1e-15 to the matrix at the switch
+    (with sin(th)/th stopped at th^4, as before, it was 1.53e-13). On a (4, 5, 3) batch: <= 1e-14 (measured
+    5.6e-16). Mutation harness so3_exp_batch_c_over_theta (4.94), so3_exp_batch_taylor_no_th4 (2.58e-9), so3_exp_batch_taylor_no_th6
+    (1.53e-13), so3_exp_batch_c_no_th4 (2.16e-11, pass-4 N18), so3_exp_batch_c_th4_over_700 (6.19e-13, pass-4
+    N19). Equivalent mutant (proof in the test): the batch switch lowered to 1e-3 (pass-4 N15; 5.6e-16).'
   domain: (omega, a) constant on the interval.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
