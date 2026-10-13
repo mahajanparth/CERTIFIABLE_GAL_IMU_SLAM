@@ -6,7 +6,10 @@ passable, so it can be used directly in a pre-merge check.
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
+
+import yaml
 
 from . import dispatch, evidence as ev, gates, ledger, render
 
@@ -29,8 +32,20 @@ def cmd_claims(a):
 
 
 def cmd_gate(a):
-    data, evidence = _load(fresh=True)  # a gate always re-measures; stale evidence is worthless
+    tree = pathlib.Path(a.tree).resolve() if getattr(a, "tree", None) else None
+    data = ledger.load()
+    evidence = ev.collect(fresh=True, tree=tree)  # a gate always re-measures
     ms = ledger.milestone(data, a.milestone)
+    if tree:
+        # The branch's own claims file decides what is claimed and what was verified;
+        # findings, runs and the seed still come from main's ledger.
+        f = tree / "docs" / "claims" / f"{ms['id']}.yaml"
+        if not f.exists():
+            raise ledger.LedgerError(f"no claims file {f}")
+        ms["claims"] = (yaml.safe_load(f.read_text()) or {}).get("claims") or []
+        for cl in ms["claims"]:
+            cl.setdefault("verdict", None)
+            cl.setdefault("attack", None)
     ok, reasons = gates.evaluate(ms, evidence)
     if ok:
         print(f"{ms['id']} gate PASS — every claim bound, passing and independently confirmed, "
@@ -136,6 +151,8 @@ def main(argv=None) -> int:
     ]:
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("milestone")
+        if name == "gate":
+            sp.add_argument("--tree", help="evaluate against this milestone worktree's tests and claims")
     sub.add_parser("next", help="what to dispatch next, and why")
     sub.add_parser("agents", help="agent run history")
     sub.add_parser("report", help="regenerate PROGRESS.md")

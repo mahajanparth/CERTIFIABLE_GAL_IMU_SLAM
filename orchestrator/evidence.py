@@ -24,24 +24,30 @@ DONE = "DONE"
 ORDER = [REFUTED, FAILING, UNTESTED, UNTESTABLE, UNVERIFIED, DONE]
 
 
-def run_pytest(quiet: bool = True, extra: list[str] | None = None) -> tuple[int, str]:
+def run_pytest(quiet: bool = True, extra: list[str] | None = None,
+               cwd: pathlib.Path | None = None) -> tuple[int, str]:
     """Actually run the suite. Returns (exit_code, tail_of_output)."""
     cmd = [sys.executable, "-m", "pytest", "-q", "--no-header"]
     if extra:
         cmd += extra
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=cwd or ROOT, capture_output=True, text=True)
     out = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode, out
 
 
-def collect(fresh: bool = False) -> dict[str, dict]:
-    """Return {claim_id: {outcome, nodeid}}. With fresh=True, re-runs pytest first."""
-    if fresh or not EVIDENCE_FILE.exists():
-        run_pytest()
-    if not EVIDENCE_FILE.exists():
+def collect(fresh: bool = False, tree: pathlib.Path | None = None) -> dict[str, dict]:
+    """Return {claim_id: {outcome, nodeid}}. With fresh=True, re-runs pytest first.
+
+    ``tree`` is a milestone's worktree: the suite is run THERE and its evidence file read,
+    because a branch's tests and claims are not on main until the gate lets them merge.
+    """
+    evidence_file = (tree / EVIDENCE_FILE.name) if tree else EVIDENCE_FILE
+    if fresh or not evidence_file.exists():
+        run_pytest(cwd=tree)
+    if not evidence_file.exists():
         return {}
     try:
-        return json.loads(EVIDENCE_FILE.read_text())
+        return json.loads(evidence_file.read_text())
     except json.JSONDecodeError:
         return {}
 

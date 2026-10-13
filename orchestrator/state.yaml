@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: m0-literature-matrix
-  status: verifying
+  status: done
   claims: []
   seed:
     id: M0-S01
@@ -101,10 +101,11 @@ milestones:
   - role: verifier
     agent_id: verify-M0-005
     started: '2026-10-13T08:34:53+00:00'
-    finished: null
-    outcome: running
-    note: 'Narrow fifth pass with a fresh planted claim: rule on the restated error_handedness definition
-      (F12).'
+    finished: '2026-10-13T08:46:37+00:00'
+    outcome: completed
+    note: Caught planted M0-C19 at runtime (NavState velocity is v1 + R1 v2; gap up to 65.3). 15/15 confirmed;
+      F12 FIXED (wording consistent with error_invariance row by row; own computation agrees). 24/24 mutants
+      killed. Low M0-F14 docstring items fixed by the orchestrator in 77a23f2.
   blocking_findings:
   - id: M0-F01
     resolved: true
@@ -178,12 +179,13 @@ milestones:
       against the source.'
     resolution: PARTIALLY fixed per verify-M0-004; the definition wording is M0-F12.
   - id: M0-F12
-    resolved: false
+    resolved: true
     summary: 'The written error_handedness definition did not match what decides the rows: it said pre-integrated
       increments do not translate (they are delama''s and GTSAM''s states) and named the whole minimised
       cost (rai''s Eq. 20 and delama''s full Eq. 34 are not invariant). Orchestrator restated it in d939780
       as the invariance of the group-valued error component with non-group quantities held fixed; no table
       value changed. Needs a verifier ruling.'
+    resolution: Ruled FIXED by verify-M0-005 (docs/verification/m0-literature-matrix_pass5.md).
   advisory_findings:
   - id: M0-A01
     summary: 'Low, non-blocking (pass 3): bare parent labels the source never prints are accepted by lookup
@@ -196,6 +198,11 @@ milestones:
       item ''exact in Delta b_hat'', linearisation point ''epsilon_k = 1'', a left-prefixed negation inside
       rai.isotropy_reason''s necessity clause, appended text in gtsam.retraction. Also the commit message''s
       ''94/94'' mutants is 93/93.'
+  - id: M0-A03
+    summary: 'M0-F14 (low, pass 5): the yaw-subgroup sentence was false with v, p held fixed; test docstrings
+      carried the superseded definition; the vec(E - I) / SE(3) evaluation was unstated; ''estimate /
+      prediction'' omitted barfoot''s measurements. All four corrected in comments by the orchestrator
+      (77a23f2); no table value or assertion changed. M0-F09 and M0-F13 remain advisory.'
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
