@@ -310,10 +310,17 @@ milestones:
   - role: verifier
     agent_id: verify-M1-005
     started: '2026-10-13T09:10:03+00:00'
+    finished: '2026-10-13T09:40:00+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C58 (alpha does not enter det(I5 - xi^/2)). 55/55 confirmed. Derived the
+      symbolic Cayley blocks independently: exact match, Jacobian det (|phi|^2+4)^5/1024 > 0, so no spurious
+      solutions. F11 partial: symbol identity unpinned (N01). Orchestrator pinned it and D(0) = I in 1bca507.'
+  - role: verifier
+    agent_id: verify-M1-006
+    started: '2026-10-13T09:40:00+00:00'
     finished: null
     outcome: running
-    note: 'Fourth pass with a fresh planted claim: rule on F11, focused on the symbolic Cayley constraints
-      M3 consumes.'
+    note: 'Narrow fifth pass with a fresh planted claim: rule on the orchestrator''s F12 fix.'
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -390,7 +397,7 @@ milestones:
       C24 ''<= 1.1e-12'' is 1.106e-12 (1.36e-12 on a denser sweep). None near a tolerance.'
     resolution: Ruled FIXED by verify-M1-004 (docs/verification/m1-gal3-mechanics_pass3.md).
   - id: M1-F11
-    resolved: false
+    resolved: true
     summary: 'Medium pass-3 survivors: V22 cayley_constraints_symbolic E3 without the (alpha/2)u term
       (independently reproduced: 46/46 test_gal3 green) and V23 with S = I + [phi]x/2 -- C30''s symbolic
       part only counts 15 expressions of degree 2, never their content, and these are the constraints
@@ -398,12 +405,26 @@ milestones:
       with |omega| dt >= 0.05; one-step error 0.42 at dt 0.2); V26 KEYFRAME_TIME_TOL raised to 1e-3 (guard
       tested only at t_i = 0.25). Also C41''s central-difference check d/ds expm(sA) = expm(sA)A holds
       for ANY matrix and is unlabelled.'
+    resolution: PARTIALLY fixed per verify-M1-005; the N01 symbol-identity hole and the C41 initial condition
+      were fixed by the orchestrator in 1bca507 and are tracked as M1-F12 until a verifier rules.
+  - id: M1-F12
+    resolved: false
+    summary: 'C30 matched values to symbols by name only: a distinct sympy ''alpha'' in syms passed every
+      check while a QCQP builder differentiating w.r.t. syms would drop the (alpha/2)u term (N01); column-major
+      Re order also passed (N06). C41''s ODE check admitted a constant left factor (N20). Orchestrator
+      fix 1bca507 pins the 25 symbols, their order and free_symbols, and D(0) = I; N01 is in the harness
+      and killed. Needs a verifier ruling.'
   advisory_findings:
   - id: M1-A01
     summary: 'Low/equivalent pass-3 survivors (non-blocking): V06 structural_residual without the det
       term (C02 det check vacuous), V33 batch Taylor without theta^4 (2.4e-9), V44 so3_log threshold moved;
       equivalents V02, V18, V39. C41 admissible dt is 3.367e-6 (rounded 3.37e-6 is one configuration over);
       headroom is seed-specific (worst coefficient 1.72-4.09 over 300 seeds).'
+  - id: M1-A02
+    summary: 'Pass-4 low (non-blocking): C42''s 1e-12 bound is loose (measured 1.5e-13; a 3% th^4 coefficient
+      error at 6.1e-13 survives) -- a longer Taylor branch or lower switch would allow ~1e-14; C36 guard
+      admits NaN times (caught downstream); C24 dense sweep 1.60e-12 vs recorded 1.41e-12; C41''s 2.970
+      coefficient is seed-specific (1.994 on other configurations).'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
