@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: m0-literature-matrix
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M0-S01
@@ -84,10 +84,17 @@ milestones:
   - role: implementer
     agent_id: impl-M0-005-remediation
     started: '2026-10-13T01:52:30+00:00'
+    finished: '2026-10-13T02:02:04+00:00'
+    outcome: completed
+    note: '143 passed, 94/94 mutants killed. error_handedness defined and decided by one rule for every
+      row; rai changed none -> left-invariant (left 1e-16, right 0.08-1.1 relative). C06 reads necessity
+      and consequence from Rai''s text. I set rai back to none: the rai sourcing test fails.'
+  - role: verifier
+    agent_id: verify-M0-004
+    started: '2026-10-13T02:02:04+00:00'
     finished: null
     outcome: running
-    note: Define error_handedness and decide every row by one rule (F11); make the isotropy conclusion
-      and delama.linearized completeness checkable (F10).
+    note: Fourth pass with a fresh planted claim; arbitrates the error_handedness rule across all rows.
   blocking_findings:
   - id: M0-F01
     resolved: true
@@ -168,7 +175,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -242,10 +249,17 @@ milestones:
   - role: implementer
     agent_id: impl-M1-004-remediation
     started: '2026-10-13T01:40:05+00:00'
+    finished: '2026-10-13T02:02:04+00:00'
+    outcome: completed
+    note: '95 passed, 20/20 mutants killed with named killing assertions. C41 rule corrected to dt <=
+      2.5e-6 (worst error 2.970*dt, predicted coefficient matches). Stale hints re-measured. I flipped
+      the Cayley denominator sign: the denominator test fails.'
+  - role: verifier
+    agent_id: verify-M1-003
+    started: '2026-10-13T02:02:04+00:00'
     finished: null
     outcome: running
-    note: Kill the 5 survivors (F07), make C41's recorded rule true (F08), bind or delete tests that cannot
-      fail (F09), correct stale figures (F10).
+    note: Third pass with a fresh planted claim; rules on F07-F10 and checks the new C41 rule.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -530,14 +544,22 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: not_started
+  status: deriving
   claims: []
   seed:
     id: null
     statement: null
     caught: null
     published: false
-  agent_runs: []
+  agent_runs:
+  - role: deriver
+    agent_id: deriver-M3-001
+    started: '2026-10-13T02:02:04+00:00'
+    finished: null
+    outcome: running
+    note: 'Derive the QCQP for the 3-KF / 2-edge GNSS-anchored instance: lifted z, constraints incl. redundant
+      B2 analogues, cost, the isotropy question, spurious points. Runs alongside M0-M2 verification; merges
+      only after M1/M2 gates.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
