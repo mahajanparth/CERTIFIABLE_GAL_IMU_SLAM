@@ -88,10 +88,13 @@ claims:
     the rotation-state products, not a tuning choice.
   source: Rai et al. Eq. (23) and the preceding unnumbered display in Sec. IV-B
   kind: VERIFIED-PUBLISHED
-  test_hint: 'Assert isotropy_required is True. Then make it falsifiable numerically: draw 1e4 random
-    R in SO(3), r in R^3, and a random SPD 3x3 W that is not a multiple of I; assert r^T W r == (R r)^T
-    W (R r) fails (max relative difference > 1e-3), while it holds to 1e-12 when W = tau*I. This decides
-    the "structurally forced" word rather than trusting it.'
+  test_hint: 'Assert isotropy_required is True. Decide the recorded identity against the source: it must
+    be, symbol for symbol, the unnumbered display the paper prints immediately before Eq. (23), followed
+    by the sentence "This equality requires an isotropic weight", and Eq. (23) must define every weight
+    as the SCALAR tau^-1 = (1/3) tr Sigma in the same symbol tau. (Edited 2026-10-12, M0-F08: the earlier
+    hint asked for a numeric check that r^T W r == (R r)^T W (R r) fails for anisotropic W and holds for
+    W = tau*I. That is a theorem about SO(3); it reads no table value and cannot fail, so it decides nothing
+    about the table and was removed from the test.)'
   domain: Applies to the velocity and position residuals premultiplied by R_i (Eqs. 25a, 25b); drops cross-correlations
     of Sigma^f_ij.
   verdict: CONFIRMED

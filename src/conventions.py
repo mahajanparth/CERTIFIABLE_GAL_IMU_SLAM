@@ -51,17 +51,26 @@ CONVENTIONS: dict[str, dict] = {
         # v_i and p_i never leave R^3 (Eqs. 21b, 21c, 36) -- this is what "SO(3) only" means.
         "velocity_space": "R^3",
         "position_space": "R^3",
-        "error_handedness": "none",     # chordal / Frobenius matrix residual, not a group error
+        # Eq. (19) is a matrix DIFFERENCE in R^{3x3} (zero at the noise-free point), not a group
+        # error (identity at the noise-free point); no group composition of a state with an
+        # inverse appears in it.
+        "error_handedness": "none",
         "action_handedness": "none",
         "bias_order": ("b_g", "b_a"),   # gyro first
         "bias_dim": 6,
         "bias_virtual_slices": (),
         "bias_zero_process_noise": (),
-        "bias_correction_side": "none",  # absorbed algebraically via Cay(xi_ij), then lifted
+        # Eq. (15): R_i^T R_j = dRbar_ij Cay(xi_ij) Cay(-dphi_ij), xi_ij = J^R_ij delta_b_g -- the
+        # first-order gyro-bias correction Cay(xi_ij) multiplies the nominal pre-integrated
+        # rotation on the RIGHT, exactly as Exp(xi_ij) does in its predecessor Eq. (14).  (Was
+        # recorded as "none" until 2026-10-12; that contradicted Eqs. (14)-(16).)  The velocity
+        # and position corrections A^{v.}, A^{p.} of Eqs. (21b), (21c) are additive.
+        "bias_correction_side": "right",
         "exp_log_essential": False,      # Log removed by Eq. (14), Exp removed by Cayley Eq. (3)
         "exact": ("cayley rotation residual Eq. (19)", "denominator clearing Eq. (18)",
-                  "lifting Eq. (28)"),
-        "linearized": ("bias->measurement Jacobians A^{vg},A^{va},A^{pg},A^{pa} at bbar",
+                  "lifted vector Eq. (28)"),
+        "linearized": ("first-order bias Jacobians A^{vg},A^{va},A^{pg},A^{pa} at bbar in the "
+                       "velocity and position residuals Eqs. (21b), (21c)",
                        "cost weighting Eq. (23)"),
 
         # -- Eq. (19) / Eq. (21a), recorded structurally so the signs are decidable ------
@@ -143,12 +152,14 @@ CONVENTIONS: dict[str, dict] = {
             "bias_ordering": COULD_NOT_EXTRACT,   # unnumbered display between (10c) and (11)
             "chordal_residual": "14",
             "xi_definition": "15",
+            "bias_correction": "15",
             "cayley_determinant": "17",
             "denominator_clearing": "18",
             "rotation_residual": "19",
             "rotation_residual_restated": "21a",
             "velocity_residual": "21b",
             "position_residual": "21c",
+            "lifting_definitions_Gamma": "22a",
             "lifted_rotation_residual": "22b",
             "lifting_definitions_Y": "22c",
             "isotropic_weighting": "23",
@@ -212,7 +223,7 @@ CONVENTIONS: dict[str, dict] = {
                                    "requires_eq": {"log": "9", "J_L^{-1}": "10"}},
         },
         "exact": ("held-input mean propagation Eq. (22)",
-                  "endpoint factor Gamma_ij Eq. (18)"),
+                  "gravity left factor Gamma_ij Eq. (18)"),
         "linearized": ("error dynamics Eqs. (35)-(37) about epsilon_k = 0",
                        "bias update Eq. (39), first order in Delta b_hat"),
         "rank1_criterion": None,            # not a certifiable formulation
@@ -248,7 +259,11 @@ CONVENTIONS: dict[str, dict] = {
 
     # -------------------------------------------------------------- barfoot ---
     "barfoot": {
-        "citation": "arXiv:2308.12418v2, 31 May 2024; IJRR 44(3):366-387, 2025 "
+        # The journal fragment and its DOI are NOT printed by the arXiv render; they are
+        # sourced from the cached Crossref record tests/fixtures/crossref_10.1177_02783649241269337.json
+        # (volume 44, issue 3, pages 366-387, issue published-print 2025-03).
+        "citation": "arXiv:2308.12418v2 [cs.RO], 31 May 2024; IJRR 44(3):366-387, 2025, "
+                    "DOI 10.1177/02783649241269337 "
                     "(Barfoot, Holmes, Dumbgen -- Certifiably Optimal Rotation and Pose "
                     "Estimation Based on the Cayley Map)",
         "source_url": "https://arxiv.org/html/2308.12418v2",
@@ -260,7 +275,10 @@ CONVENTIONS: dict[str, dict] = {
         "ctor_order": None,                   # no composite constructor
         "tangent_order": ("rho", "phi"),      # Eq. (10) -- TRANSLATION FIRST
         "tangent_slots": ("position", "rotation"),
-        "error_handedness": "none",           # cost is built directly on the lifted variables
+        # The estimator costs Eq. (25) / Eq. (28) are cay^-1(C Ctilde_m^T) / cay^-1(T Ttilde_m^-1):
+        # the error X Xtilde^-1, invariant under X -> X S, Xtilde -> Xtilde S.  (Was recorded as
+        # "none" until 2026-10-12; that contradicted Eqs. (25), (28).)
+        "error_handedness": "right-invariant",
         "action_handedness": "none",
         "bias_order": None,
         "bias_dim": None,
@@ -295,6 +313,8 @@ CONVENTIONS: dict[str, dict] = {
             "cayley_se3": "15",
             "nonconvex": "17",
             "homogeneous_qcqp": "18",
+            "rotation_averaging_cost": "25",
+            "pose_averaging_cost": "28",
             "rank1_sdp": "19",
             "shor_relaxation": "20",
             "rank1_criterion": COULD_NOT_EXTRACT,   # Sec. 3 prose + figure captions
@@ -305,9 +325,12 @@ CONVENTIONS: dict[str, dict] = {
 
     # ----------------------------------------------------------------- gtsam ---
     "gtsam": {
-        "citation": "GTSAM Galilean preintegration docs "
-                    "borglab.github.io/gtsam/galileanimufactor/ (+ .../galileanimufactornees/), "
-                    "behaviour re-verified against the installed gtsam 4.3.0 wheel",
+        # Only the cached page is cited.  The companion NEES page (.../galileanimufactornees/)
+        # was dropped from this string on 2026-10-12: it is not cached and no value in this row
+        # is sourced to it.
+        "citation": "GTSAM docs, 'Galilean IMU preintegration with a left-invariant error', "
+                    "borglab.github.io/gtsam/galileanimufactor/; behaviour re-verified against "
+                    "the installed gtsam 4.3.0 wheel",
         "source_url": "https://borglab.github.io/gtsam/galileanimufactor/",
         "package_version": "4.3.0",
         "group": "Gal(3) x R^6",                 # direct product, Eq. (1)
@@ -372,6 +395,7 @@ CONVENTIONS: dict[str, dict] = {
             "error": "21",
             "error_vector": "22",
             "C_matrix": "24",
+            "transition_first_order": "25",
             "transition": "29",
             "bias_correction": "34",
             "bias_jacobian_recursion": "35",
@@ -423,8 +447,8 @@ INCOMPATIBILITIES: dict[str, dict] = {
               "says": "b = [b_g; b_a] (unnumbered display after Eq. 10c); delama uses "
                       "(b_omega, b_a, b_nu, b_rho); this project fixes [b_g; b_a]"},
         "blocks": ("b_g", "b_a"),
-        "consequence": "the two 3-blocks swap: accelerometer bias gets applied to the "
-                       "gyroscope. One explicit permutation at the GTSAM boundary, in one place",
+        "consequence": "the two 3-blocks swap: accelerometer bias gets applied to the gyroscope",
+        "commentary": "One explicit permutation at the GTSAM boundary, in one place",
         "runtime_check": "imuBias.ConstantBias([1,2,3],[40,50,60]).vector() == "
                          "[1,2,3,40,50,60]",
     },
@@ -475,7 +499,8 @@ INCOMPATIBILITIES: dict[str, dict] = {
               "gravity_position_coefficient": +0.5},
         "blocks": ("p",),
         "consequence": "using +0.5*g*dt**2 inside a Gal(3) left factor is off by exactly "
-                       "+g*dt**2 -- this is pre-flight defect F2",
+                       "+g*dt**2",
+        "commentary": "this is pre-flight defect F2 (docs/00_preflight_findings.md)",
         "reason": "not a contradiction: the sign difference is exactly the Galilean t2*v1 "
                   "coupling term of the gtsam group product, eq 3. With t2 = dt and "
                   "v1 = g*dt the left Gal(3) factor re-contributes +g*dt**2, so the stored "
@@ -483,3 +508,17 @@ INCOMPATIBILITIES: dict[str, dict] = {
                   "coupling because it carries no time coordinate.",
     },
 }
+
+
+#: Fields that are editorial commentary -- a row heading, a cross-reference to this project's
+#: own documents, or project policy.  No source (archived document, cached excerpt or the
+#: installed gtsam) can decide them; the claim suite checks only that they are present
+#: strings, and the mutation harness does not count them.  Every other leaf of CONVENTIONS /
+#: INCOMPATIBILITIES is checked against a source; for prose leaves the check parses the
+#: clauses that carry a fact (so plausible corruptions of them fail), which does not stop
+#: free text being appended to some of them.  UNVERIFIED -- do not cite these as fact.
+UNVERIFIED_COMMENTARY: tuple[tuple[str, ...], ...] = (
+    *((key, "where") for key in INCOMPATIBILITIES),
+    ("O3", "commentary"),
+    ("O7", "commentary"),
+)

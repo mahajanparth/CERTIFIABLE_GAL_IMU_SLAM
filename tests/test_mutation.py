@@ -1,9 +1,16 @@
-"""M0-F01 -- the claim suite must FAIL when the conventions table is wrong.
+"""M0-F01 / M0-F06 -- the claim suite must FAIL when the conventions table is wrong.
 
 The verifier's mutation run (``docs/verification/m0-literature-matrix.md``, F-6) corrupted
 41 fields of ``CONVENTIONS`` / ``INCOMPATIBILITIES`` and 40 of them still passed every test.
-This file re-runs that experiment against the rewritten ``tests/test_conventions.py`` and
-requires every mutant to be killed.
+Pass 2 (``docs/verification/m0-literature-matrix_pass2.md``, M0-F06) found 18 more plausible
+corruptions that survived.  This file re-runs both experiments against
+``tests/test_conventions.py`` and requires every mutant to be killed.
+
+One pass-2 "corruption" turned out to be the true value: ``rai.bias_correction_side ->
+"right"``.  Rai Eqs. (14)-(16) apply the bias correction Exp(xi_ij) / Cay(xi_ij) on the RIGHT
+of the pre-integrated rotation, so the table's former "none" was the error; the table now
+records "right" and the mutants below are the old "none" and "left".  The fields listed in
+``src.conventions.UNVERIFIED_COMMENTARY`` are not mutated: no source can decide them.
 
 Mutants are deliberately *plausible*: an equation label is moved to a real neighbouring
 equation of the same source (so the format guard ``^\\d+[a-z]?$`` still passes), an ordering
@@ -86,6 +93,100 @@ MUTANTS: list[tuple[tuple, object, str]] = [
     (("O7", "a", "gravity_position_coefficient"), +0.5, "gtsam's coefficient"),
 ]
 
+#: Pass 2 (M0-F06): the 18 corruptions that survived the d8257e5 suite, in the report's order.
+PASS2_SURVIVORS: list[tuple[tuple, object, str]] = [
+    (("rai", "error_handedness"), "left-invariant", "rai has no group error"),
+    # the report's mutant "right" IS the source's value (see module docstring); its two
+    # alternatives are mutated instead
+    (("rai", "bias_correction_side"), "none", "the table's pre-2026-10-12 value"),
+    (("rai", "bias_correction_side"), "left", "the other side"),
+    (("rai", "eq", "u_definitions"), "26a", "only the velocity half"),
+    (("rai", "exact"), ("cayley rotation residual Eq. (20)", "denominator clearing Eq. (18)",
+                        "lifted vector Eq. (28)"), "Eq. (20) for the residual"),
+    (("rai", "linearized"), ("first-order bias Jacobians A^{vg},A^{va},A^{pg},A^{pa} at bbar in "
+                             "the velocity and position residuals Eqs. (21b), (21c)",
+                             "cost weighting Eq. (22)"), "Eq. (22) for the weighting"),
+    (("delama", "exact"), ("held-input mean propagation Eq. (22)",
+                           "gravity left factor Gamma_ij Eq. (17)"), "Eq. (17) for Gamma"),
+    (("barfoot", "exact"), ("cayley lifting Eqs. (14), (16)", "homogeneous QCQP Eq. (18)"),
+     "Eqs. (14), (16)"),
+    (("gtsam", "linearized"), ("transition Eqs. (24)-(29)", "bias correction Eq. (34), first order"),
+     "Eqs. (24)-(29)"),
+    (("barfoot", "citation"),
+     "arXiv:2308.12418v2 [cs.RO], 31 May 2024; IJRR 43(3):366-387, 2024, "
+     "DOI 10.1177/02783649241269337 (Barfoot, Holmes, Dumbgen -- Certifiably Optimal Rotation "
+     "and Pose Estimation Based on the Cayley Map)", "IJRR 43(3) ... 2024"),
+    (("rai", "citation"),
+     "arXiv:2609.38048v1 [cs.RO], 30 Sep 2026 (Rai, Xu, Chen, Rosen -- A QCQP-Representable "
+     "IMU Pre-Integration Factor for Certifiable State Estimation)", "date 30 Sep 2026"),
+    (("rai", "citation"),
+     "arXiv:2609.38048v1 [cs.RO], 29 Sep 2026 (Rai, Xu, Chen, Carlone -- A QCQP-Representable "
+     "IMU Pre-Integration Factor for Certifiable State Estimation)", "author Carlone for Rosen"),
+    (("delama", "citation"),
+     "arXiv:2411.05548v8 [cs.RO], 21 Aug 2025; RA-L, DOI 10.1109/LRA.2024.3511424 (Delama, "
+     "Fornasier, Mahony, Weiss -- Equivariant IMU Preintegration with Biases: an SE_2(3) Group "
+     "Approach)", "title"),
+    (("gtsam", "endpoint_rejected_form"), "H_ij X_i D_ij  (gravity factor dropped)",
+     "the wrong dropped factor"),
+    (("O1", "consequence"), "nothing swaps; the constructor and matrix agree", "denies O1"),
+    (("O2", "consequence"), "a selection only; no permutation is needed", "denies O2"),
+    (("O4", "consequence"), "the same swap as O3 but on the measurements; the lift matrix E "
+                            "(gtsam Eq. 24, R^{10x6}) is exactly this permutation", "Eq. 24 for E"),
+    (("O6", "consequence"), "the letters agree with gtsam by luck, not by convention. Ordering "
+                            "may be inferred from a letter", "inverts the warning"),
+    (("O7", "reason"),
+     "not a contradiction: the sign difference is exactly the Galilean t2*v1 coupling term of "
+     "the gtsam group product, eq 3. With t2 = dt and v1 = g*dt the left Gal(3) factor "
+     "re-contributes +g*dt**2, so the stored entry must be -0.5*g*dt**2 to land on "
+     "+0.5*g*dt**2. SE_2(3) has the same coupling.", "last sentence inverted"),
+]
+
+#: Fields this pass added or corrected, and the remaining consequence/reason clauses.
+NEW_FIELDS: list[tuple[tuple, object, str]] = [
+    (("barfoot", "error_handedness"), "none", "the table's pre-2026-10-12 value"),
+    (("barfoot", "error_handedness"), "left-invariant", "the other side"),
+    (("barfoot", "eq", "rotation_averaging_cost"), "22", "the exp/ln rotation-averaging cost"),
+    (("barfoot", "eq", "pose_averaging_cost"), "29", "its lifted QCQP"),
+    (("barfoot", "eq", "cayley"), "14", "the whole block, inverse map included"),
+    (("rai", "eq", "bias_correction"), "16", "the noise-free relation"),
+    (("rai", "eq", "lifting_definitions_Gamma"), "22c", "the Y definitions"),
+    (("gtsam", "eq", "transition_first_order"), "26", "the exact error update"),
+    (("barfoot", "citation"),
+     "arXiv:2308.12418v2 [cs.RO], 31 May 2024; IJRR 44(3):366-387, 2025, "
+     "DOI 10.1177/02783649241269338 (Barfoot, Holmes, Dumbgen -- Certifiably Optimal Rotation "
+     "and Pose Estimation Based on the Cayley Map)", "DOI off by one"),
+    (("gtsam", "citation"),
+     "GTSAM docs, 'Galilean IMU preintegration with a right-invariant error', "
+     "borglab.github.io/gtsam/galileanimufactor/; behaviour re-verified against the installed "
+     "gtsam 4.3.0 wheel", "title"),
+    (("O3", "consequence"), "the two 3-blocks swap: accelerometer bias gets applied to the "
+                            "accelerometer", "no swap"),
+    (("O5", "consequence"), "any constraint template copied from gtsam into a Gal(3) lifting "
+                            "lands in the wrong block", "wrong source"),
+    (("O7", "consequence"), "using +0.5*g*dt**2 inside a Gal(3) left factor is off by exactly "
+                            "-g*dt**2", "sign of the offset"),
+    (("O7", "reason"),
+     "a contradiction: the sign difference is exactly the Galilean t2*v1 coupling term of "
+     "the gtsam group product, eq 3. With t2 = dt and v1 = g*dt the left Gal(3) factor "
+     "re-contributes +g*dt**2, so the stored entry must be -0.5*g*dt**2 to land on "
+     "+0.5*g*dt**2. SE_2(3) has no such coupling because it carries no time coordinate.",
+     "verdict inverted"),
+    (("delama", "citation"),
+     "arXiv:2411.05548v8 [cs.RO], 21 Aug 2025; RA-L, DOI 10.1109/LRA.2024.3511424 (Delama, "
+     "Fornasier, Mahony, Weiss -- Equivariant IMU Preintegration with Biases: a Special Galilean "
+     "Group Approach)", "title, citation shape intact"),
+    (("O2", "blocks"), ("nu",), "one of the two swapped blocks"),
+    (("O1", "b", "says"), "Gal3(R, r, v, t) -- position is the 3rd argument, velocity the 2nd",
+     "argument positions swapped"),
+    (("O4", "a", "says"), "u = [a; omega]; integrateMeasurement(measuredOmega, measuredAcc, deltaT)",
+     "API argument order swapped"),
+    (("O7", "b", "says"), "W_ij = NavState(I, +0.5*g*dt**2, g*dt), applied on the RIGHT of an "
+                          "SE_2(3) product AFTER the coasting map phi_dt", "wrong side"),
+    (("barfoot", "relaxation"), "Shor Eq. (20); tightness == rank(X) == 2", "rank 2"),
+]
+
+ALL_MUTANTS = MUTANTS + PASS2_SURVIVORS + NEW_FIELDS
+
 
 def _root(path):
     return CONVENTIONS if path[0] in CONVENTIONS else INCOMPATIBILITIES
@@ -159,18 +260,24 @@ def test_harness_gross_corruption_is_killed():
 
 
 @pytest.mark.claim("M0-F01")
-def test_mutant_list_is_the_verifiers_41():
-    paths = [m[0] for m in MUTANTS]
-    assert len(paths) == len(set(paths)) == 41
-    for path, value, _ in MUTANTS:
+def test_mutant_lists_are_complete_and_distinct():
+    from src.conventions import UNVERIFIED_COMMENTARY
+    assert len({m[0] for m in MUTANTS}) == len(MUTANTS) == 41
+    assert len(PASS2_SURVIVORS) == 18 + 1          # bias_correction_side contributes two
+    pairs = [(m[0], repr(m[1])) for m in ALL_MUTANTS]
+    assert len(pairs) == len(set(pairs))
+    for path, value, _ in ALL_MUTANTS:
         assert _get(path) != value, f"{path} mutant equals the real value"
         assert type(_get(path)) is type(value) or isinstance(_get(path), float), path
+        assert path not in UNVERIFIED_COMMENTARY, path
 
 
-# -- the 41 mutants --------------------------------------------------------------------
+# -- the mutants -----------------------------------------------------------------------
 
 @pytest.mark.claim("M0-F01")
-@pytest.mark.parametrize("path,value,why", MUTANTS, ids=[".".join(map(str, m[0])) for m in MUTANTS])
+@pytest.mark.claim("M0-F06")
+@pytest.mark.parametrize("path,value,why", ALL_MUTANTS,
+                         ids=[f"{'.'.join(map(str, m[0]))}[{i}]" for i, m in enumerate(ALL_MUTANTS)])
 def test_mutant_is_killed(path, value, why):
     failures = run_mutant(path, value)
     assert failures, (

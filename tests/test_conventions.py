@@ -23,12 +23,19 @@ fields still passed.  The rule now observed throughout:
        authors' LaTeX (:func:`canon`, :func:`bmatrices`);
     3. the **installed gtsam 4.3.0**, exercised at runtime;
     4. **execution of the recorded string itself** -- recorded formulas are parsed and run,
-       so a corrupted sign or slot produces a wrong *number*.
+       so a corrupted sign or slot produces a wrong *number*;
+    5. **cached excerpts of documents the HTML renders do not reproduce** -- a committed text
+       excerpt of the Barfoot PDF (for the sub-labels the HTML drops) and the Crossref record
+       of its journal version, each with its provenance in ``tests/fixtures/provenance.json``.
 
-``tests/test_mutation.py`` (claim M0-F01) corrupts each of the 41 fields the verifier
-mutated and requires this file to fail for every one of them.
+The equation index never invents a label: it holds exactly the tags each archived render
+prints (M0-F07).  ``tests/test_mutation.py`` (claims M0-F01/F06) corrupts the 41 fields of
+pass 1, the 18 survivors of pass 2 and the fields added since, and requires this file to fail
+for every one of them.  Fields no source can decide are listed, not silently skipped, in
+``src.conventions.UNVERIFIED_COMMENTARY``.
 
-Assertions that could not fail (F-7) were deleted, not reworded.
+Assertions that could not fail (F-7, M0-F08) were deleted, not reworded; each deletion is
+marked in place with the reason.
 """
 from __future__ import annotations
 
@@ -235,9 +242,10 @@ def source_prose(key: str) -> str:
 
 
 _LATEXML_BLOCK = re.compile(r'<table\b[^>]*\bid="[SA][^"]*?\.E(Gx)?([0-9]*)"[^>]*>')
-_LATEXML_ROW = re.compile(r'<tr\b[^>]*class="[^"]*ltx_eqn_row[^"]*"')
+_LATEXML_ROW = re.compile(r'<tr\b([^>]*\bclass="[^"]*ltx_eqn_row[^"]*"[^>]*)>')
 _LATEXML_TAG = re.compile(r"ltx_tag_equation(?:group)?[^>]*>\(([^<)]*)\)<")
 _LATEXML_ALT = re.compile(r'alttext="([^"]*)"')
+_LATEXML_TD = re.compile(r"<td\b([^>]*)>")
 
 
 def _table_end(raw: str, start: int) -> int:
@@ -251,43 +259,83 @@ def _table_end(raw: str, start: int) -> int:
     return i
 
 
-def _latexml_equations(raw: str) -> dict[str, str]:
-    """Row-resolved LaTeXML index: each tag gets the LaTeX of its own row(s) only.
+def _latexml_row(attrs: str, body: str) -> dict | None:
+    r"""One ``<tr class="ltx_eqn_row">``: its printed tags, its LaTeX, whether it has a
+    left-hand side (an aligned row whose first math cell is the ``align_left`` one is a
+    continuation line such as ``\qquad - ...``), and LaTeXML's row id."""
+    cells = []
+    for td in _LATEXML_TD.finditer(body):
+        nxt = body.find("<td", td.end())
+        seg = body[td.end(): nxt if nxt != -1 else len(body)]
+        cells.append((td.group(1), " ".join(_html.unescape(a) for a in _LATEXML_ALT.findall(seg))))
+    if any("white-space:normal" in a for a, _ in cells):
+        return None                     # an \intertext line: prose, not an equation row
+    tags = _LATEXML_TAG.findall(body)
+    latex = " ".join(lx for _, lx in cells if lx.strip())
+    if not tags and not latex.strip():
+        return None
+    math = [a for a, lx in cells if lx.strip()]
+    rid = re.search(r'\bid="([^"]*)"', attrs)
+    return {"tags": tags, "latex": latex, "id": rid.group(1) if rid else "",
+            "continuation": bool(math) and "ltx_align_left" in math[0]}
 
-    An equation *group* (``S4.EGx9`` = Delama (18)+(19)) carries several tags; the old index
-    gave every tag the whole group, so (18) and (19) were indistinguishable.  Untagged
-    continuation rows attach to the next tagged row.  Where LaTeXML drops a sub-letter tag
-    (barfoot's ``(14a)``, present in the PDF, absent from the HTML) inside a block whose
-    other rows carry ``<base><letter>`` tags, the row's letter is its position in the block.
+
+def _latexml_equations(raw: str) -> tuple[dict[str, str], dict[str, str], dict[str, list[str]]]:
+    r"""Row-resolved LaTeXML index that never invents a label (M0-F07).
+
+    Returns ``(index, blocks, unlabelled)``:
+
+    * ``index`` -- ``{tag -> LaTeX}`` for exactly the tags the HTML prints in
+      ``ltx_tag_equation`` cells.  A label is assigned content only by what LaTeXML itself
+      records: the tagged row; the rows LaTeXML ids ``<eq>Xa``, ``<eq>Xb``... (continuation
+      rows of the single-numbered display ``<eq>X``); untagged continuation lines that follow
+      a tagged row; and an untagged head row immediately followed by a tagged continuation
+      line (the ``r = ... \nonumber \\ \qquad - ... (25a)`` idiom).
+    * ``blocks`` -- ``{block number -> LaTeX of every row}``, so a bare block label such as
+      Barfoot "(15)" (how the authors cite it) denotes the whole display.
+    * ``unlabelled`` -- ``{block number -> [LaTeX of rows the HTML prints without a tag]}``.
+      These rows get NO label here, ever (the old index numbered them by row position and
+      thereby invented barfoot (14a)/(15a)/(16a)/(30b) and rai (25c)).
     """
     index: dict[str, str] = {}
+    blocks: dict[str, str] = {}
+    unlabelled: dict[str, list[str]] = {}
     for m in _LATEXML_BLOCK.finditer(raw):
         base = "" if m.group(1) else m.group(2)
         body = raw[m.end():_table_end(raw, m.end())]
-        starts = [r.start() for r in _LATEXML_ROW.finditer(body)] or [0]
-        rows = [body[a:b] for a, b in zip(starts, starts[1:] + [len(body)])]
-        parsed = [(_LATEXML_TAG.findall(r),
-                   " ".join(_html.unescape(a) for a in _LATEXML_ALT.findall(r))) for r in rows]
-        parsed = [(t, lx) for t, lx in parsed if t or lx.strip()]
-        lettered = bool(base) and any(
-            re.fullmatch(base + r"[a-z]", t) for tags, _ in parsed for t in tags
-        )
-        out, pending, last = {}, [], None
-        for k, (tags, lx) in enumerate(parsed):
-            if not tags and lettered:
-                tags = [base + chr(ord("a") + k)]
-            if tags:
-                for t in tags:
-                    out[t] = " ".join([*pending, lx])
-                    last = t
+        heads = list(_LATEXML_ROW.finditer(body))
+        rows = []
+        for k, h in enumerate(heads):
+            stop = heads[k + 1].start() if k + 1 < len(heads) else len(body)
+            row = _latexml_row(h.group(1), body[h.end():stop])
+            if row:
+                rows.append(row)
+        out: dict[str, list[str]] = {}
+        orphan: list[str] = []
+        pending: list[str] = []
+        last: list[str] = []
+        for row in rows:
+            if row["tags"]:
+                content = [*pending, row["latex"]] if (row["continuation"] and pending) else [row["latex"]]
+                if not (row["continuation"] and pending):
+                    orphan.extend(pending)
                 pending = []
+                for t in row["tags"]:
+                    out[t] = list(content)
+                last = row["tags"]
+            elif last and not pending and (row["continuation"] or re.search(r"X[a-z]+$", row["id"])):
+                for t in last:
+                    out[t].append(row["latex"])
             else:
-                pending.append(lx)
-        if pending and last:
-            out[last] += " " + " ".join(pending)
-        for t, lx in out.items():
-            index.setdefault(t, lx)
-    return index
+                pending.append(row["latex"])
+        orphan.extend(pending)
+        for t, parts in out.items():
+            index.setdefault(t, " ".join(parts))
+        if base:
+            blocks.setdefault(base, " ".join(r["latex"] for r in rows))
+            if orphan:
+                unlabelled.setdefault(base, orphan)
+    return index, blocks, unlabelled
 
 
 def _myst_equations(raw: str) -> dict[str, str]:
@@ -314,25 +362,87 @@ def _myst_equations(raw: str) -> dict[str, str]:
 
 
 @functools.lru_cache(maxsize=8)
-def source_equations(key: str) -> dict[str, str]:
-    """``{equation label -> the authors' own LaTeX}`` -- the source's own numbering."""
+def _source_index(key: str):
     raw = source_raw(key)
-    index = _myst_equations(raw) if key == "gtsam" else _latexml_equations(raw)
-    return {k: " ".join(v.split()) for k, v in index.items()}
+    if key == "gtsam":
+        return _myst_equations(raw), {}, {}
+    return _latexml_equations(raw)
+
+
+@functools.lru_cache(maxsize=8)
+def source_equations(key: str) -> dict[str, str]:
+    """``{equation label -> the authors' own LaTeX}`` -- only labels the source prints."""
+    return {k: " ".join(v.split()) for k, v in _source_index(key)[0].items()}
+
+
+# -- labels the HTML render drops but a cached text excerpt of the PDF prints ------------
+
+#: ``source key -> committed text excerpt of that source's PDF`` (never the PDF itself).
+PDF_EXCERPTS = {"barfoot": "barfoot_2308.12418v2_pdf_p4_cayley.txt"}
+_PDF_TAG = re.compile(r"\((\d+[a-z])\)")
+_UNICODE_SYMBOLS = {"ϕ": "phi", "ξ": "xi", "φ": "varphi"}
+
+
+@functools.lru_cache(maxsize=4)
+def pdf_excerpt(key: str) -> tuple[dict[str, str], str]:
+    """``({printed label -> canonical LHS printed in that label's display}, provenance)``.
+
+    The window of a label is the excerpt text after the previous printed label and up to
+    this one; its LHS is the line ``<lhs>   =`` in that window (pdftotext -layout keeps the
+    display's alignment columns apart)."""
+    text = (_FIXTURES / PDF_EXCERPTS[key]).read_text(encoding="utf-8")
+    header = "\n".join(line for line in text.splitlines() if line.startswith("#"))
+    body = text.split("# ---- excerpt begins ----", 1)[1].split("# ---- excerpt ends ----", 1)[0]
+    found: dict[str, str] = {}
+    prev = 0
+    for m in _PDF_TAG.finditer(body):
+        window = body[prev:m.start()]
+        prev = m.end()
+        lhs = re.findall(r"^\s*(\S+(?:\s?\(\S\))?)\s+=", window, re.M)
+        if not lhs:
+            continue
+        sym = lhs[-1].replace(" ", "")
+        for u, name in _UNICODE_SYMBOLS.items():
+            sym = sym.replace(u, name)
+        found[m.group(1)] = sym
+    return found, header
+
+
+def _pdf_label_latex(key: str, label: str) -> str | None:
+    """The HTML row a PDF-printed label denotes: the UNIQUE row of block ``<n>`` that the
+    HTML prints without a tag and whose LHS is the LHS the PDF prints beside ``(<n><x>)``."""
+    if key not in PDF_EXCERPTS:
+        return None
+    printed, _ = pdf_excerpt(key)
+    if label not in printed:
+        return None
+    base = re.match(r"\d+", label).group(0)
+    rows = _source_index(key)[2].get(base, [])
+    hits = [r for r in rows if canon(r).split("=", 1)[0] == printed[label]]
+    assert len(hits) == 1, (
+        f"{key} ({label}) is printed in the PDF excerpt beside LHS {printed[label]!r}, but block "
+        f"({base}) of the HTML has {len(hits)} untagged rows with that LHS"
+    )
+    return " ".join(hits[0].split())
 
 
 def equation_latex(key: str, label: str) -> str:
-    """The LaTeX printed at ``label``.  A bare base label (``"26"``) for a sub-numbered block
-    (``26a``, ``26b``) denotes the whole block."""
+    """The LaTeX printed at ``label``.  A bare block label (``"26"``) for a sub-numbered block
+    (``26a``, ``26b``) denotes the whole display.  A sub-label the HTML render drops is
+    resolved only through a committed PDF text excerpt that prints it (:data:`PDF_EXCERPTS`)."""
     index = source_equations(key)
     if label in index:
         return index[label]
-    subs = [index[k] for k in index if re.fullmatch(re.escape(label) + r"[a-z]", k)]
-    assert subs, (
+    via_pdf = _pdf_label_latex(key, label)
+    if via_pdf is not None:
+        return via_pdf
+    blocks = _source_index(key)[1]
+    subs = [k for k in index if re.fullmatch(re.escape(label) + r"[a-z]", k)]
+    assert subs and label in blocks, (
         f"{key} has no equation labelled ({label}) -- the archived source "
         f"{SOURCE_FIXTURES[key][1]} numbers {len(index)} equations and this is not one"
     )
-    return " ".join(subs)
+    return " ".join(blocks[label].split())
 
 
 def assert_equation_says(key: str, label: str, require, forbid=()) -> None:
@@ -620,6 +730,24 @@ def test_rai_group_is_so3_only_and_source_text_is_galilean_free():
     )
     assert_equation_says("rai", rai["eq"]["state_set"],
                          require=[r"\\mathbf\{R\}_\{i\},\\mathbf\{v\}_\{i\},\\mathbf\{p\}_\{i\}"])
+    # The group is the one the sentence after the state set declares R_i to live in (M0-F08:
+    # this used to be checked against the claim YAML only).
+    where = re.search(rf"\$ \({re.escape(rai['eq']['state_set'])}\) where \$\\mathbf\{{R\}}_\{{i\}}"
+                      r"\\in\\mathrm\{(\w+)\}\((\d)\)\$ and \$\\mathbf\{v\}_\{i\},\\mathbf\{p\}_\{i\}"
+                      r"\\in\\mathbb\{R\}\^\{(\d)\}\$ are the orientation, velocity, and position",
+                      source_prose("rai"))
+    assert where, f"rai no longer declares the group of R_i after Eq. ({rai['eq']['state_set']})"
+    assert rai["group"] == f"{where.group(1)}({where.group(2)})", (rai["group"], where.groups())
+    assert rai["velocity_space"] == rai["position_space"] == f"R^{where.group(3)}"
+    # No composite group element and no composite tangent: the only matrix Lie group rai ever
+    # names is SO(3), and every hatted vector it uses is declared in R^3.
+    if rai["element_order"] is None:
+        groups = set(re.findall(r"\\math(?:rm|cal|bf)\{(S[OEL]|Gal|GL|U)\}(?:_\{?\d\}?)?\((\d)\)", html))
+        assert groups == {("SO", "3")}, groups
+    if rai["tangent_order"] is None:
+        hatted = set(re.findall(r"\\boldsymbol\{\\(\w+)\}(?:_\{\w+\})?\{\}\^\{\\wedge\}", html))
+        declared = {n: d for n, d in re.findall(r"\\boldsymbol\{\\(\w+)\}(?:_\{\w+\})?\\in\\mathbb\{R\}\^\{(\d+)\}", html)}
+        assert hatted and all(declared.get(n) == "3" for n in hatted), (hatted, declared)
 
     # The absent-term scan.  The terms are the claim's.  The statement writes the LaTeX one
     # YAML-escaped ("\\mathrm{SE}"); it is unescaped once so the scan looks for the spelling
@@ -723,53 +851,102 @@ def test_rai_rotation_residual_signs_and_bias_perturbation():
 # M0-C03
 # ======================================================================================
 
+#: rai symbols, longest first, mapped onto Python names for :func:`run_formula`.
+_RAI_SYMBOLS = (("DeltaRbar_ij", "dRbar"), ("Rbreve_ij", "Rbreve"), ("Gamma_ij", "Gamma"),
+                ("J^R_ij", "JR"), ("bbar_g", "bbar_g"), ("deltab_g", "delta_b_g"),
+                ("b_g", "b_g"), ("Y^'_ij", "Yp"), ("Y_ij", "Y"), ("xi_ij", "xi"),
+                ("R_i", "R_i"), ("R_j", "R_j"), ("I_3", "I_3"))
+
+
+def _rai_expr(text: str) -> str:
+    """A canonical rai formula with every symbol spaced out as a Python name, and
+    ``( ... )^`` (the hat of a bracketed vector) written as a call."""
+    table = dict(_RAI_SYMBOLS)
+    text = re.sub("|".join(re.escape(sym) for sym, _ in _RAI_SYMBOLS),
+                  lambda m: f" {table[m.group(0)]} ", text)
+    prev = None
+    while prev != text:
+        prev, text = text, re.sub(r"\(([^()]*)\)\^", r" HATOF(\1) ", text)
+    return re.sub(r"\s+\^", "^", text)
+
+
+def _batch_hat(a):
+    a = np.asarray(a, dtype=float)
+    if a.ndim >= 2 and a.shape[-1] == 1:
+        a = a[..., 0]
+    return sk(a) if a.ndim == 1 else _skew_batch(a)
+
+
+def _rai_eval(text: str, env: dict) -> np.ndarray:
+    expr = mathify(_rai_expr(text), scalars=("1", "2"), functions=("HATOF",))
+    ns = {**env, "HATOF": _batch_hat, "_hat": _batch_hat, "_inv": _inv, "_norm": _norm, "np": np}
+    try:
+        return np.asarray(eval(expr, {"__builtins__": {}}, ns), dtype=float)   # noqa: S307
+    except Exception as exc:
+        raise AssertionError(f"rai formula {text!r} does not evaluate ({expr!r}): {exc!r}") from exc
+
+
+def _rai_definitions(label: str) -> list[tuple[str, str]]:
+    """``[(name, rhs)]`` for every ``name = rhs`` definition printed at a rai label."""
+    out = []
+    for part in canon(equation_latex("rai", label)).rstrip(".,").split(","):
+        lhs, rhs = part.split("=", 1)
+        out.append((_rai_expr(lhs).strip(), rhs))
+    return out
+
+
 @pytest.mark.claim("M0-C03")
 def test_rai_eq22b_is_algebraically_identical_to_eq19():
     """Eq. (22b) is the SAME map as Eq. (19), not a first-order stand-in for it.
 
-    The bar is RELATIVE (F-3; the claim's domain now says so): at ``J^R`` and ``b`` scaled by
-    1e4 the max *absolute* difference is 4.8e-7, so an absolute bar cannot support "arbitrary
-    3x3 J^R and arbitrary b_g".  The three scales below cover the domain.
+    Both sides, and every auxiliary they use (Gamma, Rbreve from (22a); Y, Y' from (22c);
+    xi from (15); delta_b_g from the paper's "Using delta_b_g = b_g - bbar_g" sentence),
+    are EVALUATED from the source LaTeX printed at the labels the table records (M0-F08:
+    the old loop rebuilt both forms from expressions written in the test and read nothing
+    from the table).  A corrupted label lands on an equation that does not evaluate, or on a
+    different map.  The bar is RELATIVE (F-3): the claim's domain says so.
     """
     rai = CONVENTIONS["rai"]
+    eq = rai["eq"]
     bar = claim_number("M0-C03", "statement", r"to (1e-\d+)")
     n = int(claim_number("M0-C03", "statement", r"for (1e\d+) random draws"))
     assert "relative" in claim("M0-C03")["domain"], "the claim's domain must state a relative bar"
+
+    defs = _rai_definitions(eq["lifting_definitions_Gamma"]) + _rai_definitions(eq["lifting_definitions_Y"])
+    assert [name for name, _ in defs] == ["Gamma", "Rbreve", "Y", "Yp"], defs
+    lifted = canon(equation_latex("rai", eq["lifted_rotation_residual"])).rstrip(".,")
+    raw = canon(equation_latex("rai", eq["rotation_residual"])).rstrip(".,")
+    assert lifted.startswith("r^R_ij=") and raw.startswith("r^R_ij="), (lifted, raw)
+    xi_def = [d for d in canon(equation_latex("rai", eq["xi_definition"])).rstrip(".,").split(",")
+              if d.startswith("xi_ij=")]
+    assert len(xi_def) == 1, eq["xi_definition"]
+    using = re.search(r"Using \$([^$]+)\$", source_prose("rai"))
+    assert using, "the rai source no longer states its delta_b_g definition"
+    d_lhs, d_rhs = canon(using.group(1)).split("=", 1)
+    assert _rai_expr(d_lhs).strip() == "delta_b_g", d_lhs
+
     rng = np.random.default_rng(20260303)
-    I3 = np.eye(3)
-
     for scale in (1.0, 1e-8, 1e4):
-        Ri = Rotation.random(n, rng=rng).as_matrix()
-        Rj = Rotation.random(n, rng=rng).as_matrix()
-        dRbar = Rotation.random(n, rng=rng).as_matrix()
-        JR = rng.standard_normal((n, 3, 3)) * scale
-        b_g = rng.standard_normal((n, 3)) * scale
-        bbar_g = rng.standard_normal((n, 3)) * scale
-
-        Gamma = _skew_batch(np.einsum("nij,nj->ni", JR, bbar_g))          # (J^R bbar_g)^
-        B = _skew_batch(np.einsum("nij,nj->ni", JR, b_g))                 # (J^R b_g)^
-        xi_hat = _skew_batch(np.einsum("nij,nj->ni", JR, b_g - bbar_g))   # (J^R delta_b_g)^
-
-        Rbreve = dRbar @ (I3 - Gamma / 2)
-        Y = Ri @ dRbar @ B
-        Yp = Rj @ B
-
-        lifted = Rj @ (I3 + Gamma / 2) - Ri @ Rbreve - 0.5 * (Y + Yp)     # Eq. (22b)
-        raw = (Rj - Ri @ dRbar) - 0.5 * (Rj + Ri @ dRbar) @ xi_hat        # Eq. (19)
-
-        magnitude = np.maximum(np.abs(raw).max(axis=(1, 2)), 1.0)
-        worst = float((np.abs(lifted - raw).max(axis=(1, 2)) / magnitude).max())
+        env = {"R_i": Rotation.random(n, rng=rng).as_matrix(),
+               "R_j": Rotation.random(n, rng=rng).as_matrix(),
+               "dRbar": Rotation.random(n, rng=rng).as_matrix(),
+               "JR": rng.standard_normal((n, 3, 3)) * scale,
+               "b_g": rng.standard_normal((n, 3, 1)) * scale,
+               "bbar_g": rng.standard_normal((n, 3, 1)) * scale,
+               "I_3": np.eye(3)}
+        for name, rhs in defs:
+            env[name] = _rai_eval(rhs, env)
+        env["delta_b_g"] = _rai_eval(d_rhs, env)
+        env["xi"] = _rai_eval(xi_def[0].split("=", 1)[1], env)
+        lhs22b = _rai_eval(lifted.split("=", 1)[1], env)
+        lhs19 = _rai_eval(raw.split("=", 1)[1], env)
+        assert lhs22b.shape == lhs19.shape == (n, 3, 3), (lhs22b.shape, lhs19.shape)
+        magnitude = np.maximum(np.abs(lhs19).max(axis=(1, 2)), 1.0)
+        worst = float((np.abs(lhs22b - lhs19).max(axis=(1, 2)) / magnitude).max())
         assert worst < bar, (
-            f"Eq. (22b) is not Eq. (19) at scale {scale:g}: relative difference {worst:.3e}"
+            f"rai Eq. ({eq['lifted_rotation_residual']}) is not Eq. ({eq['rotation_residual']}) "
+            f"at scale {scale:g}: relative difference {worst:.3e}"
         )
-
-    # The two forms are the ones the table cites, at the labels the table records.
-    assert_equation_says("rai", rai["eq"]["lifted_rotation_residual"],
-                         require=[r"\\breve\{\\mathbf\{R\}\}_\{ij\}", r"\\mathbf\{Y\}\^\{\\prime\}"])
-    assert_equation_says("rai", rai["eq"]["rotation_residual"],
-                         require=[r"\\mathbf\{r\}\^\{R\}_\{ij\}\\triangleq"])
-    assert_equation_says("rai", rai["eq"]["lifting_definitions_Y"],
-                         require=[r"\\mathbf\{Y\}_\{ij\}\\triangleq", r"\\mathbf\{b\}_\{g\}"])
 
 
 # ======================================================================================
@@ -928,19 +1105,24 @@ def test_rai_isotropic_weighting_is_structurally_forced():
     assert printed.startswith(canon_table(f"{m.group(1)}=={m.group(2)}")), (reason, printed)
     assert printed.rstrip(".,").endswith(f"{m.group(3)}in{m.group(4)}"), printed
     assert rai["isotropy_required"] is ("isotropic weight" in disp.group(2))
+    # ... and the products the reason says the device removes are the ones the paper names.
+    named = re.search(r"removes the (R_i\^T \w_j) and (R_i\^T \w_j) products", reason)
+    printed_products = re.search(r"contain products such as \$([^$]+)\$ and \$([^$]+)\$ \. Rather than "
+                                 r"lifting these products directly, we use", prose)
+    assert named and printed_products, (reason, printed_products)
+    assert [canon_table(x) for x in named.groups()] == [canon(x) for x in printed_products.groups()], (
+        named.groups(), printed_products.groups())
     # It is the display immediately preceding Eq. (23), which defines the scalar precisions.
     after = prose[disp.end():disp.end() + 400]
-    assert canon(equation_latex("rai", rai["eq"]["isotropic_weighting"]))[:20] in canon(after)
-
-    # The recorded identity is RUN: it must hold for every R in SO(3) under an isotropic weight.
-    rng = np.random.default_rng(23)
-    R = Rotation.random(10_000, rng=rng).as_matrix()
-    r = rng.standard_normal((10_000, 3))
-    Rr = np.einsum("nij,nj->ni", R, r)
-    tau = 2.7
-    sides = [tau * np.einsum("ni,ni->n", (Rr if "R_i" in side else r), (Rr if "R_i" in side else r))
-             for side in (m.group(1), m.group(2))]
-    assert (np.abs(sides[0] - sides[1]) / sides[0]).max() < 1e-12
+    eq23 = canon(equation_latex("rai", rai["eq"]["isotropic_weighting"]))
+    assert eq23[:20] in canon(after)
+    # Eq. (23) makes every weight a SCALAR: tau^-1 = (1/3) tr Sigma, one per residual family,
+    # and the identity the table records is written in that same scalar tau.  (M0-F08: the
+    # numeric block that used to follow checked |r| == |R r| for R in SO(3) -- a theorem once
+    # the regex above has fixed the identity's shape -- so it could not fail and was deleted.)
+    weights = re.findall(r"(tau)_(\w),ij\^-1=tfrac13trSigma\^(\w+)_ij", eq23)
+    assert [w[1] for w in weights] == ["R", "v", "p"], eq23
+    assert {w[0] for w in weights} == {m.group(1).split("*")[0]}, (weights, m.group(1))
 
 
 # ======================================================================================
@@ -1153,7 +1335,18 @@ def test_delama_symmetry_group_dim20_and_right_action():
     assert f" {d['action_handedness']} group action" in quoted.group(1)
     assert_equation_says("delama", d["eq"]["state_action"], require=[r"\\phi\(X_\{k\},\\xi_\{k\}\)"])
 
-    # The symmetry group is NOT the manifold.
+    # The symmetry group is NOT the manifold -- both read off the source (M0-F08: they used to
+    # be checked against the claim YAML only), and the claim's domain agrees.
+    dprose = source_prose("delama")
+    sym = re.search(r"symmetry based on the left-trivialized tangent group \$\{?(.+?)\}?\$", dprose)
+    assert sym, "delama Sec. I no longer names its symmetry group"
+    def _grp(latex):
+        latex = re.sub(r"\\mathfrak\{(\w+)\}", r"\1", latex).replace("\\ltimes", " |x ")
+        return canon(latex).replace("|x", " |x ")
+    assert canon_table(d["group"]).replace("|x", " |x ") == _grp(sym.group(1)), (d["group"], sym.group(1))
+    man = re.search(r"Define \$\{?\\mathcal\{M\}\\coloneqq(.+?)\}?\$ and let", dprose)
+    assert man, "delama no longer defines its manifold M"
+    assert canon_table(d["manifold"]) == canon(man.group(1)), (d["manifold"], man.group(1))
     dom = re.search(r"the manifold is M = (.+?)\.?\s*$", claim("M0-C08")["domain"])
     assert dom and d["manifold"] == dom.group(1), (d["manifold"], claim("M0-C08")["domain"])
 
@@ -1203,7 +1396,8 @@ def test_delama_ten_dim_bias_with_four_virtual_channels():
                      if n in d["bias_zero_process_noise"])
     assert zeros and all(z == zero_width for z in zeros), (zeros, d["bias_zero_process_noise"])
     assert d["eq"]["bias_process_noise"] == COULD_NOT_EXTRACT
-    assert not any("Q_{\\scriptscriptstyle{d}}" in lx for lx in source_equations("delama").values())
+    # (M0-F08: a scan asserting Q_d sits in no numbered equation was deleted -- it read no
+    # table value, so its outcome was fixed by the sha-pinned fixture bytes.)
 
     # The virtual inputs: Algorithm 1's input line and the claim's domain both fix them.
     inp = re.search(r"Input: \$\{\\prescript\{\}\{\}\{\\tilde\{\\bm\{w\}\}\}_\{k\}=\\left\((.*?)\\right\)",
@@ -1224,13 +1418,16 @@ def test_delama_ten_dim_bias_with_four_virtual_channels():
 # M0-C10
 # ======================================================================================
 
-#: The equation each row's estimator residual/error actually is.  Whether exp/log is
-#: *essential* is then read off that equation's own LaTeX rather than taken on trust.
+#: The equations each row's estimator is built on: the residual / error / minimised cost.
+#: Each key is pinned by :data:`EQ_SIGNATURES` to the source's own residual definition or
+#: ``\min`` problem (M0-F08: barfoot's used to be the Cayley-map DEFINITION Eq. (14a), a test
+#: author's choice; it is now the two Cayley-based costs the paper minimises).  Whether
+#: exp/log is *essential* is read off those equations' own LaTeX.
 _RESIDUAL_EQ = {
-    "rai": "rotation_residual",
-    "barfoot": "cayley",
-    "delama": "error_local_coords",
-    "gtsam": "residual",
+    "rai": ("rotation_residual",),
+    "barfoot": ("rotation_averaging_cost", "pose_averaging_cost"),
+    "delama": ("error_local_coords",),
+    "gtsam": ("residual",),
 }
 _TRANSCENDENTAL = r"\\log|\\exp|\\operatorname\{Log\}|\\operatorname\{Exp\}|logmap|\\ln"
 
@@ -1245,12 +1442,13 @@ def test_exp_log_essential_column():
     for key, want in expected.items():
         row = CONVENTIONS[key]
         assert row["exp_log_essential"] == want, (key, row["exp_log_essential"], want)
-        latex = equation_latex(key, row["eq"][_RESIDUAL_EQ[key]])
-        found = bool(re.search(_TRANSCENDENTAL, latex))
-        assert found == row["exp_log_essential"], (
-            f"{key} Eq. ({row['eq'][_RESIDUAL_EQ[key]]}) "
-            f"{'contains' if found else 'does not contain'} a transcendental map"
-        )
+        for name in _RESIDUAL_EQ[key]:
+            latex = equation_latex(key, row["eq"][name])
+            found = bool(re.search(_TRANSCENDENTAL, latex))
+            assert found == row["exp_log_essential"], (
+                f"{key} Eq. ({row['eq'][name]}) "
+                f"{'contains' if found else 'does not contain'} a transcendental map"
+            )
 
     d = CONVENTIONS["delama"]
     stmt = claim("M0-C10")["statement"]
@@ -1283,7 +1481,10 @@ def test_exp_log_essential_column():
 #: How an error equation composes the true and estimated element, as LaTeX patterns.
 _ERROR_FORMS = {
     "X Xh^-1": (r"\\mathbf\{\\Upsilon\}_\{\\!k\}\\hat\{\\mathbf\{\\Upsilon\}\}_\{\\!k\}\^\{-1\}",
-                r"\\Upsilon_k\\hat\\Upsilon_k\^\{-1\}"),
+                r"\\Upsilon_k\\hat\\Upsilon_k\^\{-1\}",
+                # barfoot: cay^-1(T Ttilde_m^-1), cay^-1(C Ctilde_m^T) (C^T = C^-1 on SO(3))
+                r"\\mbox\{cay\}\^\{-1\}\\left\(\\mathbf\{T\}\\tilde\{\\mathbf\{T\}\}_\{m\}\^\{-1\}\\right\)",
+                r"\\mbox\{cay\}\^\{-1\}\\left\(\\mathbf\{C\}\\tilde\{\\mathbf\{C\}\}_\{m\}\^\{T\}\\right\)"),
     "Xh^-1 X": (r"\\hat\\Upsilon_k\^\{-1\}\\Upsilon_k",
                 r"\\hat\{\\mathbf\{\\Upsilon\}\}_\{\\!k\}\^\{-1\}\\mathbf\{\\Upsilon\}_\{\\!k\}"),
 }
@@ -1291,6 +1492,88 @@ _ERROR_FN = {
     "X Xh^-1": lambda X, Xh: X @ np.linalg.inv(Xh),
     "Xh^-1 X": lambda X, Xh: np.linalg.inv(Xh) @ X,
 }
+#: The equations each row's group error / residual is defined by (cf. :data:`_RESIDUAL_EQ`).
+_ERROR_EQ = {
+    "rai": ("rotation_residual",),
+    "delama": ("error_local_coords",),
+    "barfoot": ("rotation_averaging_cost", "pose_averaging_cost"),
+    "gtsam": ("error",),
+}
+
+
+def _rand_element(key, rng):
+    if key == "barfoot":                 # SE(3), Eq. (8)
+        T = np.eye(4)
+        T[0:3, 0:3] = Rotation.random(1, rng=rng).as_matrix()[0]
+        T[0:3, 3] = rng.standard_normal(3)
+        return T
+    return _rand_gal(rng)
+
+
+def decide_error_handedness(key: str) -> str:
+    """The handedness of a row's group error, decided from the source equation(s) alone.
+
+    A composition ``X Xh^-1`` / ``Xh^-1 X`` printed in the error equation is EXECUTED on
+    random group elements and its invariance under left and right translation measured.  If
+    the equation composes no group elements (rai's Eq. (19) is a matrix difference), the
+    residual is EVALUATED from the source LaTeX and must be invariant under neither
+    translation: then, and only then, the answer is "none".
+    """
+    row = CONVENTIONS[key]
+    rng = np.random.default_rng(2101)
+    kinds = set()
+    for name in _ERROR_EQ[key]:
+        latex = equation_latex(key, row["eq"][name])
+        forms = [f for f, pats in _ERROR_FORMS.items() if any(re.search(p, latex) for p in pats)]
+        assert len(forms) <= 1, (key, name, forms)
+        if forms:
+            err = _ERROR_FN[forms[0]]
+            X, Xh, S = (_rand_element(key, rng) for _ in range(3))
+            moved = {"left": err(S @ X, S @ Xh), "right": err(X @ S, Xh @ S)}
+            inv = [side for side, val in moved.items() if np.abs(val - err(X, Xh)).max() < 1e-9]
+            assert len(inv) == 1, (key, name, forms[0], inv)
+            kinds.add(f"{inv[0]}-invariant")
+            continue
+        # no group composition: evaluate the printed residual and translate the states
+        assert key == "rai", f"{key} Eq. ({row['eq'][name]}) composes no group elements"
+        text = canon(latex).rstrip(".,").split("=", 1)[1]
+        Ri, Rj, dRbar, S = (Rotation.random(1, rng=rng).as_matrix()[0] for _ in range(4))
+        env = {"dRbar": dRbar, "xi": rng.standard_normal((3, 1)), "I_3": np.eye(3)}
+        base = _rai_eval(text, {**env, "R_i": Ri, "R_j": Rj})
+        moved = {"left": _rai_eval(text, {**env, "R_i": S @ Ri, "R_j": S @ Rj}),
+                 "right": _rai_eval(text, {**env, "R_i": Ri @ S, "R_j": Rj @ S})}
+        assert all(np.abs(v - base).max() > 1e-3 for v in moved.values()), (key, name)
+        kinds.add("none")
+    assert len(kinds) == 1, (key, kinds)
+    return kinds.pop()
+
+
+#: The bias perturbation each row's correction map is applied to (source symbols).
+_BIAS_ARGUMENT = {
+    "rai": r"\\mathrm\{Cay\}\(\\boldsymbol\{\\xi\}_\{ij\}\)",
+    "delama": r"\\exp\(\(\\mathbf\{J_\{\\Upsilon\}\}_\{k\+1\}\\Delta",
+    "gtsam": r"\\operatorname\{Exp\}\(J_k\\delta\\beta\)",
+}
+_NOMINAL = r"\\hat\{\\mathbf\{\\Upsilon\}\}|\\hat\\Upsilon|\\Delta\\bar\{\\mathbf\{R\}\}"
+
+
+def decide_bias_correction_side(key: str) -> str:
+    """Which side of the nominal pre-integrated quantity the first-order bias correction
+    multiplies, read off the source's bias-correction equation; "none" only for a source
+    that has no bias at all."""
+    row = CONVENTIONS[key]
+    if row["bias_order"] is None:
+        assert "bias_correction" not in row["eq"], key
+        return "none"
+    latex = equation_latex(key, row["eq"]["bias_correction"])
+    rhs = re.split(r"\\approx|\\simeq|=", latex, maxsplit=1)[1]
+    corr = re.search(_BIAS_ARGUMENT[key], rhs)
+    nominal = re.search(_NOMINAL, rhs)
+    assert corr and nominal, (key, rhs[:200])
+    if key == "rai":     # the corrected argument IS the gyro-bias perturbation, Eq. (15) itself
+        assert re.search(r"\\boldsymbol\{\\xi\}_\{ij\}\\triangleq\\mathbf\{J\}\^\{R\}_\{ij\}"
+                         r"\\delta\\mathbf\{b\}_\{g\}", latex), latex
+    return "left" if corr.start() < nominal.start() else "right"
 
 
 @pytest.mark.claim("M0-C11")
@@ -1305,37 +1588,15 @@ def test_error_handedness_and_bias_correction_side_disagree_on_both_axes():
     cited = {"delama": re.findall(r'eq "(\d+)"', halves[0]),
              "gtsam": re.findall(r'eq "(\d+)"', halves[1])}
     error_eq = {"delama": "error_local_coords", "gtsam": "error"}
-    rng = np.random.default_rng(34)
     for key in ("delama", "gtsam"):
         row = CONVENTIONS[key]
         assert [row["eq"][error_eq[key]], row["eq"]["bias_correction"]] == cited[key], (
             key, cited[key]
         )
-
-        # -- the ERROR handedness: read the composition off the source equation, then test
-        #    the invariance the table names.
-        latex = equation_latex(key, row["eq"][error_eq[key]])
-        forms = [f for f, pats in _ERROR_FORMS.items() if any(re.search(p, latex) for p in pats)]
-        assert len(forms) == 1, (key, forms, latex[:200])
-        err = _ERROR_FN[forms[0]]
-        kind = row["error_handedness"]
-        assert kind.endswith("-invariant"), kind
-        side = kind.split("-")[0]
-        X, Xh, S = _rand_gal(rng), _rand_gal(rng), _rand_gal(rng)
-        translated = {"left": err(S @ X, S @ Xh), "right": err(X @ S, Xh @ S)}
-        assert np.abs(translated[side] - err(X, Xh)).max() < 1e-9, (
-            f"{key} Eq. ({row['eq'][error_eq[key]]}) is {forms[0]}, which is not {kind}"
-        )
-
-        # -- the bias-correction SIDE, read off the cited equation's own LaTeX.
-        latex = equation_latex(key, row["eq"]["bias_correction"])
-        rhs = re.split(r"\\approx|\\simeq", latex, maxsplit=1)[-1]
-        e = re.search(r"\\exp|\\operatorname\{Exp\}", rhs)
-        h = re.search(r"\\hat\{\\mathbf\{\\Upsilon\}\}|\\hat\\Upsilon", rhs)
-        assert e and h, rhs[:200]
-        assert row["bias_correction_side"] == ("left" if e.start() < h.start() else "right"), (
-            key, row["bias_correction_side"], rhs[:120]
-        )
+        assert row["error_handedness"] == decide_error_handedness(key), key
+        assert row["bias_correction_side"] == decide_bias_correction_side(key), key
+    assert d["error_handedness"] != g["error_handedness"]
+    assert d["bias_correction_side"] != g["bias_correction_side"]
 
     # gtsam's left-invariant error goes with a RIGHT perturbation; the recorded retraction is
     # checked against the installed library.
@@ -1432,7 +1693,6 @@ def test_barfoot_log_svr_and_rai_eigenvalue_rules_are_distinct():
     assert rc["threshold"] == int(eig.group(4)), rc["threshold"]
     assert eig.group(1) in rc["spectrum"] and "Z_hat" in rc["statistic"], rc
     assert b["eq"]["rank1_criterion"] == r["eq"]["rank1_criterion"] == COULD_NOT_EXTRACT
-    assert not any("SVR" in lx for lx in source_equations("barfoot").values())
 
     # Numerical anchor in the direction the claim's test_hint states: a spectrum whose
     # second value sits between the two recorded relative floors splits the two rules.
@@ -1479,7 +1739,10 @@ def test_barfoot_log_svr_and_rai_eigenvalue_rules_are_distinct():
                          require=[r"\\succeq 0"], forbid=[r"\\mbox\{rank\}"])
     assert_equation_says("barfoot", b["eq"]["rank1_sdp"],
                          require=[r"\\mbox\{rank\}\(\\mathbf\{X\}\)=1"])
-    assert b["relaxation"].startswith(f"Shor Eq. ({b['eq']['shor_relaxation']})")
+    rel = re.fullmatch(r"Shor Eq\. \((\d+[a-z]?)\); tightness == rank\((\w)\) == (\d)", b["relaxation"])
+    assert rel and rel.group(1) == b["eq"]["shor_relaxation"], b["relaxation"]
+    assert_equation_says("barfoot", b["eq"]["rank1_sdp"],
+                         require=[rf"\\mbox\{{rank\}}\(\\mathbf\{{{rel.group(2)}\}}\)={rel.group(3)}"])
 
 
 # ======================================================================================
@@ -1550,7 +1813,11 @@ def test_seven_ordering_incompatibilities_against_installed_gtsam():
         assert np.allclose(M[0:3, int(m.group(1))], args[slot]), (o1["a"]["says"], slot)
     sig = re.search(r"Gal3\(([^)]*)\)", o1["b"]["says"])
     assert sig and tuple(x.strip() for x in sig.group(1).split(",")) == g["ctor_order"]
-    for slot, word in re.findall(r"(\w+) (?:is )?the (\w+) argument", o1["b"]["says"]):
+    said_args = re.fullmatch(r"Gal3\(([^)]*)\) -- (\w+) is the (\w+) argument, (\w+) the (\w+)",
+                             o1["b"]["says"])
+    assert said_args, o1["b"]["says"]
+    assert {said_args.group(2), said_args.group(4)} == {"position", "velocity"}, o1["b"]["says"]
+    for slot, word in (said_args.group(2, 3), said_args.group(4, 5)):
         name = next(n for n, s in ctor_slot.items() if s == slot)
         assert g["ctor_order"].index(name) + 1 == _ordinal(word), o1["b"]["says"]
     assert set(o1["blocks"]) == {g["element_order"][1], g["element_order"][2]}
@@ -1645,12 +1912,17 @@ def test_seven_ordering_incompatibilities_against_installed_gtsam():
     assert worst_pn < 1e-3 * eps          # second order: the permutation is right
     assert worst_identity > 1e-1 * eps    # first order: dropping it is wrong
 
-    for side, which in (("a", g["tangent_order"]), ("b", g["navstate_tangent_order"])):
-        said = re.search(r"\(([^)]*)\)", o2[side]["says"])
-        assert said and tuple(x.strip() for x in said.group(1).split(",")) == which
+    for side, which, slots in (("a", g["tangent_order"], g["tangent_slots"]),
+                               ("b", g["navstate_tangent_order"], g["navstate_tangent_slots"])):
+        said = re.fullmatch(r"\w+ tangent \(([^)]*)\) -- (\w+) block before (\w+)", o2[side]["says"])
+        assert said and tuple(x.strip() for x in said.group(1).split(",")) == which, o2[side]["says"]
+        assert slots.index(said.group(2)) < slots.index(said.group(3)), (o2[side]["says"], slots)
+    assert set(o2["blocks"]) == {g["tangent_order"][g["tangent_slots"].index(s)]
+                                 for s in ("velocity", "position")}, o2["blocks"]
 
     # -- O3: imuBias::ConstantBias is (accel, gyro) --------------------------------------
     o3 = INCOMPATIBILITIES["O3"]
+    assert set(o3["blocks"]) == set(CONVENTIONS["rai"]["bias_order"]) == set(g["bias_order"]), o3["blocks"]
     alias = {"b_omega": "b_g"}          # the doc writes the gyro bias b_omega; the table b_g
     eq1 = bmatrices(equation_latex("gtsam", o3["a"]["eq"]))[-1]
     assert tuple(alias.get(n, n) for n in (c[0].split(",")[0] for c in eq1)) == \
@@ -1694,9 +1966,12 @@ def test_seven_ordering_incompatibilities_against_installed_gtsam():
     pim.integrateMeasurement(*[sample[k] for k in order], 0.1)
     assert np.abs(pim.deltaRij().matrix() - np.eye(3)).max() < 1e-12
     assert np.allclose(pim.deltaVij(), sample["acc"] * 0.1)
-    said = re.search(r"u = \[([^]]*)\]", o4["a"]["says"])
+    said = re.fullmatch(r"u = \[([^]]*)\]; integrateMeasurement\(measured(\w+), measured(\w+), "
+                        r"deltaT\)", o4["a"]["says"])
     assert said and tuple(x.strip()[0] for x in said.group(1).split(";")) == \
-        tuple(s[0] for s in order)
+        tuple(s[0] for s in order), o4["a"]["says"]
+    assert tuple(x.lower() for x in said.group(2, 3)) == tuple(order), o4["a"]["says"]
+    assert set(o4["blocks"]) == set(order), o4["blocks"]
     # rai lists the two channels the other way round -- and rai's own equations say so.
     pair = re.search(r"\((\d+[a-z])\)\((\d+[a-z])\)\s*list\s*(\w+)\s*then\s*(\w+)",
                      o4["b"]["says"])
@@ -1770,8 +2045,20 @@ def test_seven_ordering_incompatibilities_against_installed_gtsam():
     assert canon_table(CONVENTIONS["gtsam"]["endpoint_factors"]["W_ij"]).replace(
         "dt_ij", "dt") == f"NavState(I,{said_w.group(1).lstrip('+')}gdt^2,gdt)", o7["b"]["says"]
     assert o7["blocks"] == ("p",)
+    # "applied on the LEFT ... AFTER the coasting map": the factor's place in each endpoint law
+    sa = re.fullmatch(r"Gamma_ij = \[\[.*\]\], applied on the (LEFT|RIGHT) of a Gal\(3\) product",
+                      o7["a"]["says"])
+    sb = re.fullmatch(r"W_ij = NavState\(.*?\), applied on the (LEFT|RIGHT) of an SE_2\(3\) product "
+                      r"AFTER the coasting map (\w+)", o7["b"]["says"])
+    assert sa and sb, (o7["a"]["says"], o7["b"]["says"])
+    d17 = canon(equation_latex("delama", dl["eq"]["endpoint"]))
+    assert {"LEFT": d17.startswith("T_j=Gamma_ijT_i"), "RIGHT": d17.endswith("Gamma_ij,")}[sa.group(1)], d17
+    g_terms = [t.strip() for t in g["endpoint_relation"].split("=", 1)[1].split(" . ")]
+    assert {"LEFT": g_terms[0], "RIGHT": g_terms[-1]}[sb.group(1)] == "W_ij", g_terms
+    assert canon_table(g_terms[1]).startswith(sb.group(2)), (g_terms, sb.group(2))
 
     rng = np.random.default_rng(718)
+    worst_p = worst_v = 0.0
     for _ in range(50):
         dt = float(rng.uniform(0.2, 1.5))
         gv = np.array([0.0, 0.0, -9.81])
@@ -1786,36 +2073,172 @@ def test_seven_ordering_incompatibilities_against_installed_gtsam():
             "O7.a.says is not delama Eq. (18)"
         )
         Xj = Gamma @ gal(Ri, vi, pi, 0.0) @ gal(dR, dv, dp, dt)
-        # the SE_2(3)/NavState route, with gtsam's own coefficient
-        pj = cb_ * gv * dt**2 + (pi + vi * dt) + Ri @ dp
-        vj = gv * dt + vi + Ri @ dv
-        assert np.abs(Xj[0:3, 4] - pj).max() < 1e-9, (
-            "the two recorded gravity coefficients do not describe the same trajectory"
-        )
-        assert np.abs(Xj[0:3, 3] - vj).max() < 1e-9
+        # the SE_2(3)/NavState route, with gtsam's own coefficient, composed BY GTSAM
+        W = gtsam.NavState(gtsam.Rot3.Identity(), cb_ * gv * dt**2, gv * dt)
+        phi = gtsam.NavState(gtsam.Rot3(Ri), pi + vi * dt, vi)
+        nav = W.compose(phi).compose(gtsam.NavState(gtsam.Rot3(dR), dp, dv))
+        worst_p = max(worst_p, float(np.abs(Xj[0:3, 4] - nav.position()).max()))
+        worst_v = max(worst_v, float(np.abs(Xj[0:3, 3] - nav.velocity()).max()))
+    same_trajectory = worst_p < 1e-9 and worst_v < 1e-9
 
-    # The reason: the coefficient gap is the Galilean t2*v1 term of the group product.
+    # The reason, parsed WHOLE (M0-F06: its last sentence used to be unread; M0-F08: "not a
+    # contradiction" used to be a substring test).  Every clause is decided below.
     reason = o7["reason"]
-    coupling = re.search(r"Galilean (\S+) coupling term of the \w+ group product, eq (\d+[a-z]?)",
-                         reason)
-    assert coupling, reason
-    assert coupling.group(2) == g["eq"]["product"]
-    as_latex = re.sub(r"([a-z])(\d)", r"\1_\2", coupling.group(1)).replace("*", "")
-    assert_equation_says("gtsam", coupling.group(2), require=[re.escape(as_latex)])
-    t2, v1 = re.search(r"With t2 = (\S+) and v1 = (\S+) ", reason).groups()
-    contrib = re.search(r"re-contributes ([+-])([\w*.]+?), so the stored entry must be "
-                        r"([+-][\w*.]+?) to land on ([+-][\w*.]+?)\.(?:\s|$)", reason)
-    assert contrib, reason
+    rm = re.fullmatch(
+        r"(?P<verdict>not a contradiction|a contradiction): the sign difference is exactly the "
+        r"Galilean (?P<term>\S+) coupling term of the (?P<who>\w+) group product, eq "
+        r"(?P<eq>\d+[a-z]?)\. With t2 = (?P<t2>\S+) and v1 = (?P<v1>\S+) the left Gal\(3\) factor "
+        r"re-contributes (?P<contrib>[+-][\w*.]+), so the stored entry must be "
+        r"(?P<stored>[+-][\w*.]+) to land on (?P<landed>[+-][\w*.]+)\. (?P<grp>\S+) has no such "
+        r"coupling because it carries no time coordinate\.", reason)
+    assert rm, f"O7.reason no longer has the decidable shape: {reason!r}"
+    # verdict: the two coefficients describe the SAME trajectory (computed above, by gtsam)
+    assert rm.group("verdict") == ("not a contradiction" if same_trajectory else "a contradiction"), (
+        rm.group("verdict"), worst_p, worst_v)
+    assert same_trajectory, ("the two recorded gravity coefficients do not describe the same "
+                             f"trajectory: {worst_p:.3e} / {worst_v:.3e}")
+    assert rm.group("who") == "gtsam" and rm.group("eq") == g["eq"]["product"]
+    as_latex = re.sub(r"([a-z])(\d)", r"\1_\2", rm.group("term")).replace("*", "")
+    assert_equation_says("gtsam", rm.group("eq"), require=[re.escape(as_latex)])
     gs, dts = 9.81, 0.7
     env = {"g": gs, "dt": dts}
-    term = eval(f"({t2})*({v1})", {"__builtins__": {}}, env)                   # noqa: S307
-    assert math.isclose(term, eval(contrib.group(1) + contrib.group(2),        # noqa: S307
-                                   {"__builtins__": {}}, env))
-    stored = eval(contrib.group(3), {"__builtins__": {}}, env)                 # noqa: S307
-    landed = eval(contrib.group(4), {"__builtins__": {}}, env)                 # noqa: S307
+    ev = lambda t: eval(t, {"__builtins__": {}}, env)                          # noqa: E731,S307
+    term = ev(f"({rm.group('t2')})*({rm.group('v1')})")
+    assert math.isclose(term, ev(rm.group("contrib")))
+    stored, landed = ev(rm.group("stored")), ev(rm.group("landed"))
     assert math.isclose(stored + term, landed)
     assert math.isclose(stored, ca * gs * dts**2) and math.isclose(landed, cb_ * gs * dts**2)
-    assert "not a contradiction" in reason
+    # last sentence: the doc's SE_2(3) is gtsam's NavState (X_i, X_j in SE_2(3) are the
+    # NavStates of Eq. (17)); its product has no t2*v1 term and it has no time coordinate.
+    assert rm.group("grp") == "SE_2(3)"
+    assert r"X_i,X_j\in\mathrm{SE}_2(3)" in source_raw("gtsam")
+    A = gtsam.NavState(gtsam.Rot3.Expmap(np.array([0.1, 0.2, 0.3])), np.array([1.0, 2.0, 3.0]),
+                       np.array([4.0, 5.0, 6.0]))
+    B = gtsam.NavState(gtsam.Rot3.Expmap(np.array([0.3, -0.2, 0.1])), np.array([0.5, 0.1, 0.2]),
+                       np.array([0.7, 0.8, 0.9]))
+    assert np.abs(A.compose(B).position()
+                  - (A.position() + A.attitude().matrix() @ B.position())).max() < 1e-12
+    assert A.localCoordinates(B).size == gtsam.Gal3.Dim() - 1
+    assert "time" not in g["navstate_tangent_slots"] and "time" in g["tangent_slots"]
+
+
+@pytest.mark.claim("M0-C13")
+def test_incompatibility_consequences_hold_in_installed_gtsam():
+    """Each ``consequence`` is parsed whole and decided at runtime or from the source (M0-F06:
+    O1, O2, O4 and O6 were never read; O3, O5, O7 neither).  Project policy and pointers to
+    this project's own documents were moved to ``commentary`` and are listed in
+    UNVERIFIED_COMMENTARY instead of being silently unchecked."""
+    from src.conventions import UNVERIFIED_COMMENTARY
+    g, dl, bt = CONVENTIONS["gtsam"], CONVENTIONS["delama"], CONVENTIONS["barfoot"]
+    O = INCOMPATIBILITIES
+
+    # O1 -- arguments written in MATRIX order (R, v, p, t) are read in constructor order.
+    m = re.fullmatch(r"(\w+) and (\w+) swap silently", O["O1"]["consequence"])
+    assert m, O["O1"]["consequence"]
+    meant = {"velocity": np.array([10.0, 20.0, 30.0]), "position": np.array([1.0, 2.0, 3.0])}
+    el_slot = dict(zip(g["element_order"], g["element_slots"]))
+    in_matrix_order = [meant[el_slot[n]] if el_slot[n] in meant else None for n in g["element_order"]]
+    X = gtsam.Gal3(gtsam.Rot3.Identity(), in_matrix_order[1], in_matrix_order[2], 7.0)   # no error
+    got = {"velocity": X.velocity(), "position": X.position()}
+    swapped = {s for s in meant if not np.allclose(got[s], meant[s])}
+    assert swapped == {m.group(1), m.group(2)}, (swapped, m.groups())
+    assert all(np.allclose(got[a], meant[b]) for a, b in (m.groups(), m.groups()[::-1]))
+
+    # O2 -- P_N is a 9-of-10 selection AND a permutation; dropping the permutation swaps blocks.
+    m = re.fullmatch(r"the (\d+)-of-(\d+) map is a selection AND a permutation; dropping the "
+                     r"permutation silently swaps the (\w+) and (\w+) covariance blocks",
+                     O["O2"]["consequence"])
+    assert m, O["O2"]["consequence"]
+    rows = list(O["O2"]["P_N_rows"])
+    assert int(m.group(1)) == len(rows) == gtsam.NavState().localCoordinates(gtsam.NavState()).size
+    assert int(m.group(2)) == gtsam.Gal3.Dim() and len(set(rows)) == len(rows) < gtsam.Gal3.Dim()
+    assert rows != sorted(rows), "P_N is not a permutation"
+    rng = np.random.default_rng(2)
+    L = rng.standard_normal((10, 10))
+    Sigma = L @ L.T
+    right = Sigma[np.ix_(rows, rows)]
+    dropped = Sigma[np.ix_(sorted(rows), sorted(rows))]
+    ns = {slot: slice(3 * i, 3 * i + 3) for i, slot in enumerate(g["navstate_tangent_slots"])}
+    wrong = {slot for slot, blk in ns.items() if not np.allclose(right[blk, blk], dropped[blk, blk])}
+    assert wrong == {m.group(3), m.group(4)}, (wrong, m.groups())
+
+    # O3 -- a [b_g; b_a] vector handed to ConstantBias(acc, gyro) puts b_a on the gyroscope.
+    m = re.fullmatch(r"the two (\d)-blocks swap: (\w+) bias gets applied to the (\w+)",
+                     O["O3"]["consequence"])
+    assert m, O["O3"]["consequence"]
+    proj = {"b_g": np.array([0.1, 0.2, 0.3]), "b_a": np.array([4.0, 5.0, 6.0])}
+    vec = np.concatenate([proj[n] for n in CONVENTIONS["rai"]["bias_order"]])
+    w = int(m.group(1))
+    cb = gtsam.imuBias.ConstantBias(vec[:w], vec[w:])
+    sensor = {"gyroscope": cb.gyroscope(), "accelerometer": cb.accelerometer()}
+    which = {"accelerometer": "b_a", "gyroscope": "b_g"}
+    assert np.allclose(sensor[m.group(3)], proj[which[m.group(2)]]), (m.groups(), sensor)
+    assert w == len(proj["b_g"])
+
+    # O4 -- E (gtsam Eq. 20, R^{10x6}) is exactly the (acc, omega) -> (rotation, velocity) swap.
+    m = re.fullmatch(r"the same swap as (O\d) but on the measurements; the lift matrix E \(gtsam "
+                     r"Eq\. (\d+), R\^\{(\d+)x(\d+)\}\) is exactly this permutation",
+                     O["O4"]["consequence"])
+    assert m, O["O4"]["consequence"]
+    assert m.group(1) == "O3" and len(O["O3"]["blocks"]) == len(O["O4"]["blocks"]) == 2
+    assert m.group(2) == g["eq"]["bias_lift_E"]
+    E_src = canon(equation_latex("gtsam", m.group(2)))
+    assert f"inR^{m.group(3)}x{m.group(4)}" in E_src, E_src
+    cells = bmatrices(equation_latex("gtsam", m.group(2)))[0]
+    blocks10 = _tangent_blocks(g["tangent_slots"])
+    widths = [blocks10[s].stop - blocks10[s].start for s in g["tangent_slots"]]
+    E = np.zeros((int(m.group(3)), int(m.group(4))))
+    for r, (row, h) in enumerate(zip(cells, widths)):
+        for c, cell in enumerate(row):
+            if cell == "I_3":
+                E[sum(widths[:r]):sum(widths[:r]) + h, 3 * c:3 * c + 3] = np.eye(3)
+    u = {"acc": np.array([1.0, 2.0, 3.0]), "omega": np.array([7.0, 8.0, 9.0])}
+    lifted = E @ np.concatenate([u[k] for k in g["imu_sample_order"]])
+    assert np.allclose(lifted[blocks10["rotation"]], u["omega"]) and np.allclose(
+        lifted[blocks10["velocity"]], u["acc"]), lifted
+    assert not lifted[blocks10["position"]].any() and not lifted[blocks10["time"]].any()
+
+    # O5 -- barfoot's tangent order puts a different slot first than every Gal(3) tangent.
+    m = re.fullmatch(r"any constraint template copied from (\w+) into a Gal\(3\) lifting lands "
+                     r"in the wrong block", O["O5"]["consequence"])
+    assert m and m.group(1) == O["O5"]["a"]["source"] == "barfoot", O["O5"]["consequence"]
+    for other in (g, dl):
+        assert [s for s in other["tangent_slots"] if s in bt["tangent_slots"]] != list(bt["tangent_slots"])
+
+    # O6 -- letters: delama's position letter happens to be gtsam's; letters fix no ordering.
+    m = re.fullmatch(r"the letters agree with (\w+) by luck, not by convention\. "
+                     r"Do not infer ordering from a letter", O["O6"]["consequence"])
+    assert m and m.group(1) == "gtsam", O["O6"]["consequence"]
+    pos = lambda row, order: row[order][row[order.replace("order", "slots")].index("position")]  # noqa: E731
+    assert pos(dl, "tangent_order") == pos(g, "ctor_order")              # they agree ...
+    assert pos(dl, "tangent_order") != pos(g, "tangent_order")           # ... not by a convention
+    letters = {}
+    for row in (dl, g, bt):
+        for i, name in enumerate(row["tangent_order"]):
+            letters.setdefault(name, set()).add(i)
+    assert any(len(ix) > 1 for ix in letters.values()), letters        # same letter, other index
+
+    # O7 -- +0.5 inside the Gal(3) left factor lands exactly +g*dt^2 off.
+    m = re.fullmatch(r"using ([+-][\d.]+)\*g\*dt\*\*2 inside a Gal\(3\) left factor is off by "
+                     r"exactly ([+-])g\*dt\*\*2", O["O7"]["consequence"])
+    assert m, O["O7"]["consequence"]
+    gv, dt = np.array([0.3, -0.2, -9.81]), 0.6
+    good = gal_from_rows(O["O7"]["a"]["says"], {"g": gv, "dt": dt})
+    bad = gal_from_rows(O["O7"]["a"]["says"].replace(
+        f"{O['O7']['a']['gravity_position_coefficient']:+g}*g*dt**2".replace("+", ""),
+        f"{float(m.group(1)):+g}*g*dt**2"), {"g": gv, "dt": dt})
+    assert not np.array_equal(good, bad), "the consequence names the coefficient already stored"
+    X0 = gal(Rotation.random(1, rng=rng).as_matrix()[0], rng.standard_normal(3),
+             rng.standard_normal(3), 0.0)
+    off = (bad @ X0)[0:3, 4] - (good @ X0)[0:3, 4]
+    assert np.allclose(off, float(f"{m.group(2)}1") * gv * dt**2), off
+
+    # commentary is present, marked, and nothing else is
+    for path in UNVERIFIED_COMMENTARY:
+        node = INCOMPATIBILITIES if path[0] in INCOMPATIBILITIES else CONVENTIONS
+        for k in path:
+            node = node[k]
+        assert isinstance(node, str) and node, path
 
 
 # ======================================================================================
@@ -1833,7 +2256,8 @@ def test_gtsam_endpoint_relation_is_W_phi_X_U_and_not_H_X_D():
     want_v = claim_number("M0-C14", "domain", r"\|\|v_i\|\|\s*>\s*([\d.]+)")
     bar_ok = claim_number("M0-C14", "statement", r"to <= (1e-\d+)")
     bar_wrong = claim_number("M0-C14", "statement", r"more than (1e-\d+)")
-    assert want_v * want_dt > bar_wrong, "the claim's own regime does not clear its bar"
+    # (M0-F08: "want_v * want_dt > bar_wrong" compared two YAML numbers with each other and
+    # was deleted; the runtime err_wrong > bar_wrong below is what decides the regime.)
 
     # The equation labels the claim cites for each factor.
     for factor, field in (("W_ij", "gravity_left_factor"), ("phi_dt", "gravity_left_factor"),
@@ -1870,7 +2294,9 @@ def test_gtsam_endpoint_relation_is_W_phi_X_U_and_not_H_X_D():
     W = build(factors["W_ij"])
     U = build(factors["U_ij"])
     phi = gtsam.NavState(*build(factors["phi_dt"].split("=", 1)[1].strip()))
-    assert all(isinstance(x, gtsam.NavState) for x in (W, U, phi))
+    # (M0-F08: phi is built with gtsam.NavState(...) above, so isinstance(phi, NavState) held
+    # by construction and was dropped; W and U are evaluated from the recorded strings.)
+    assert all(isinstance(x, gtsam.NavState) for x in (W, U))
     eq15 = canon(equation_latex("gtsam", g["eq"]["gravity_left_factor"]))
     wsrc = re.search(r"W_ij=NavState\(I,([+-]?)\(1/2\)gDeltat_ij\^2,gDeltat_ij\)", eq15)
     assert wsrc, eq15
@@ -1900,10 +2326,24 @@ def test_gtsam_endpoint_relation_is_W_phi_X_U_and_not_H_X_D():
     err_correct = np.linalg.norm(X_j.localCoordinates(correct))
     assert err_correct <= bar_ok, f"{g['endpoint_relation']} misses predict(): {err_correct:.3e}"
 
-    # ... and the coasting-free variant the claim rejects must be visibly WRONG.
+    # ... and the coasting-free variant the claim rejects must be visibly WRONG.  The recorded
+    # rejected form is parsed WHOLE (M0-F06: only a prefix used to be read): the claim's form,
+    # then the name of the factor it drops -- the name the GTSAM doc itself gives that factor
+    # in its sentence on the "W phi(X) U separation" (gravity / coasting / IMU motion).
     rejected = re.search(r"NOT the form (.+?);", stmt)
-    assert rejected and g["endpoint_rejected_form"].startswith(rejected.group(1)), (
-        g["endpoint_rejected_form"]
+    rf = re.fullmatch(re.escape(rejected.group(1)) + r"  \((\w+) map dropped\)",
+                      g["endpoint_rejected_form"]) if rejected else None
+    assert rf, g["endpoint_rejected_form"]
+    sep = re.search(r"separation is important: (\w+) acts in the navigation frame on the left, "
+                    r"autonomous (\w+) advances the existing position, and bias-corrected IMU "
+                    r"(\w+) acts in the body/local frame on the right", source_prose("gtsam"))
+    assert sep, "the GTSAM doc no longer names the three endpoint factors"
+    factor_names = dict(zip(terms, sep.groups()))          # Eq. (17) order: W, phi, U
+    kept = ("W_ij", "U_ij(beta_i)")                         # the variant W . X_i . U below
+    dropped = [t for t in terms if t not in kept]
+    assert len(dropped) == 1 and factor_names[dropped[0]] == rf.group(1), (
+        f"the rejected form drops {dropped} = {[factor_names[t] for t in dropped]}, but the "
+        f"table says the {rf.group(1)!r} map is dropped"
     )
     err_wrong = np.linalg.norm(X_j.localCoordinates(W.compose(X_i).compose(U)))
     assert err_wrong > bar_wrong, f"W . X_i . U is not distinguishable: {err_wrong:.3e}"
@@ -1934,7 +2374,7 @@ def test_delama_eq18_gamma_equals_T_minus_dt_times_Hprime_exactly():
     dt_floor = claim_number("M0-C15", "domain", r"\|dt\|\s*>=\s*([\d.e-]+)")
     g_floor = claim_number("M0-C15", "domain", r"\|\|g\|\|\s*>=\s*([\d.e-]+)")
     bar = claim_number("M0-C15", "test_hint", r"Hp @ T\) > (1e-\d+)")
-    assert g_floor * dt_floor**2 > bar, "the claim's own domain does not clear its bar"
+    # (M0-F08: "g_floor * dt_floor**2 > bar" compared YAML numbers with each other; deleted.)
 
     rng = np.random.default_rng(1815)
     for _ in range(200):
@@ -1951,10 +2391,11 @@ def test_delama_eq18_gamma_equals_T_minus_dt_times_Hprime_exactly():
         T = gal_from_rows(tt.group(1), env)
         assert np.array_equal(Gamma, T @ Hp), f"Eq. (18) is not T(-dt) @ H' at dt={dt:g}"
 
-        # Side placement is load-bearing: on the right, T corrupts the position block by
-        # exactly ||g|| dt^2.
+        # Side placement is load-bearing: the claim's second half, decided against the
+        # source's Gamma (M0-F08: this half reads the CLAIM's H', T and the SOURCE, not the
+        # table -- it is what a DERIVED claim needs; the table is decided by the line above.
+        # The former "== ||g|| dt^2" restatement added nothing a mutation could move: deleted.)
         reversed_err = np.linalg.norm(Gamma - Hp @ T)
-        assert reversed_err == pytest.approx(np.linalg.norm(gv) * dt**2, rel=1e-12)
         assert reversed_err > bar, f"reversed product indistinguishable at dt={dt:g}"
 
 
@@ -1972,6 +2413,11 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("rai", "eq", "sdp"): ((r"f_\{\\mathrm\{SDP\}\}", r"\\mathbb\{S\}\^\{n\}_\{\+\}"), ()),
     ("rai", "eq", "chordal_residual"): ((r"\\mathrm\{Exp\}", r"_\{F\}\^\{2\}"), ()),
     ("rai", "eq", "xi_definition"): ((r"\\boldsymbol\{\\xi\}_\{ij\}\\triangleq",), ()),
+    ("rai", "eq", "bias_correction"): (
+        (r"^\\mathbf\{R\}_\{i\}\^\{\\top\}\\mathbf\{R\}_\{j\}=\\Delta\\bar\{\\mathbf\{R\}\}_\{ij\}\\,"
+         r"\\mathrm\{Cay\}\(\\boldsymbol\{\\xi\}_\{ij\}\)",), ()),
+    ("rai", "eq", "lifting_definitions_Gamma"): (
+        (r"^\\boldsymbol\{\\Gamma\}_\{ij\}\\triangleq", r"\\breve\{\\mathbf\{R\}\}_\{ij\}\\triangleq"), ()),
     ("rai", "eq", "cayley_determinant"): ((r"^\\det", r"1\+\\tfrac\{1\}\{4\}"), ()),
     ("rai", "eq", "denominator_clearing"): (
         (r"^\\mathbf\{R\}_\{j\}\\bigl\(\\mathbf\{I\}_\{3\}-\\tfrac\{1\}\{2\}",), ()),
@@ -1984,9 +2430,12 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("rai", "eq", "lifted_rotation_residual"): ((r"\\breve\{\\mathbf\{R\}\}_\{ij\}-",), ()),
     ("rai", "eq", "lifting_definitions_Y"): ((r"\\mathbf\{Y\}\^\{\\prime\}_\{ij\}\\triangleq",), ()),
     ("rai", "eq", "isotropic_weighting"): ((r"^\\tau_\{R,ij\}\^\{-1\}=",), ()),
+    # BOTH halves (M0-F06: "26a", the velocity half alone, used to pass).
     ("rai", "eq", "u_definitions"): (
         (r"\\mathbf\{W\}\^\{v\}_\{ij\} \\displaystyle\\triangleq",
-         r"\\mathbf\{u\}\^\{v\}_\{ij\} \\displaystyle\\triangleq"), ()),
+         r"\\mathbf\{u\}\^\{v\}_\{ij\} \\displaystyle\\triangleq",
+         r"\\mathbf\{W\}\^\{p\}_\{ij\} \\displaystyle\\triangleq",
+         r"\\mathbf\{u\}\^\{p\}_\{ij\} \\displaystyle\\triangleq"), ()),
     ("rai", "eq", "lifted_vector"): (
         (r"^\\displaystyle\\mathbf\{x\}\\triangleq", r"\\operatorname\{vec\}\(\\mathbf\{R\}_\{i\}\)"), ()),
     ("rai", "eq", "lifting_constraints"): (
@@ -2051,6 +2500,12 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("barfoot", "eq", "nonconvex"): ((r"f\(\\mathbf\{z\}\)", r"g_\{i\}\(\\mathbf\{z\}\)=0"), ()),
     ("barfoot", "eq", "homogeneous_qcqp"): (
         (r"\\mathbf\{x\}\^\{T\}\\mathbf\{A\}_\{0\}\\mathbf\{x\}=1",), (r"\\succeq",)),
+    ("barfoot", "eq", "rotation_averaging_cost"): (
+        (r"\$\\min\$", r"\\mbox\{cay\}\^\{-1\}\\left\(\\mathbf\{C\}\\tilde\{\\mathbf\{C\}\}_\{m\}\^\{T\}\\right\)",
+         r"\\mathbf\{C\}\\in SO\(3\)"), ()),
+    ("barfoot", "eq", "pose_averaging_cost"): (
+        (r"\$\\min\$", r"\\mbox\{cay\}\^\{-1\}\\left\(\\mathbf\{T\}\\tilde\{\\mathbf\{T\}\}_\{m\}\^\{-1\}\\right\)",
+         r"\\mathbf\{T\}\\in SE\(3\)"), ()),
     ("barfoot", "eq", "rank1_sdp"): ((r"\\mbox\{rank\}\(\\mathbf\{X\}\)=1",), ()),
     ("barfoot", "eq", "shor_relaxation"): ((r"\\mathbf\{X\}\\succeq 0",), (r"\\mbox\{rank\}",)),
 
@@ -2074,6 +2529,7 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("gtsam", "eq", "error"): ((r"\\mathsf e_k=\\hat\\xi_k\^\{-1\}\\xi_k",), ()),
     ("gtsam", "eq", "error_vector"): ((r"^\\epsilon_k=\(e_k,\\delta\\beta_k\)",), ()),
     ("gtsam", "eq", "C_matrix"): ((r"C=J_R\(x\)hE",), ()),
+    ("gtsam", "eq", "transition_first_order"): ((r"^V_\{\\mathrm\{true\}\}", r"\\simeq"), ()),
     ("gtsam", "eq", "transition"): ((r"A_\{\\mathrm\{LI\}\}", r"\\operatorname\{Ad\}_\{V\^\{-1\}\}"), ()),
     ("gtsam", "eq", "bias_correction"): ((r"^\\Upsilon_k\(\\hat\\beta\+\\delta\\beta\)",), ()),
     ("gtsam", "eq", "bias_jacobian_recursion"): (
@@ -2101,21 +2557,32 @@ EQ_SIGNATURES: dict[tuple, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ("O7", "b", "eq"): ((r"^W_\{ij\}=\\operatorname\{NavState\}",), ()),
 }
 
-#: Entries recorded as COULD_NOT_EXTRACT, with the source text that states the fact.  The
-#: test requires the fact to be in the source AND to sit in no numbered equation -- which is
-#: exactly what makes "could not extract" the right value rather than a lazy one.
-SENTINEL_EVIDENCE: dict[tuple, tuple[str, str | None]] = {
-    ("rai", "eq", "bias_ordering"): (
-        r"Let \$\\mathbf\{b\}\\triangleq\\begin\{bmatrix\}\\mathbf\{b\}_\{g\}\^\{\\top\}",
-        r"\\mathbf\{b\}\\triangleq\\begin\{bmatrix\}"),
-    ("rai", "eq", "rank1_criterion"): (
-        r"number of eigenvalues larger than \$10\^\{-6\}", r"10\^\{-6\}\\lambda_\{\\max\}"),
-    ("delama", "eq", "bias_process_noise"): (
-        r"Define: .{0,600}Q_\{\\scriptscriptstyle\{d\}\}\}=", r"Q_\{\\scriptscriptstyle\{d\}\}"),
-    ("delama", "eq", "continuous_time_ins"): (r"by extending \( IV-A \) with additional virtual", None),
-    ("barfoot", "eq", "rank1_criterion"): (r"we consider a log SVR of at least \$5\$", r"SVR"),
-    ("barfoot", "eq", "sparsity"): (r"we are now using a sparser set of measurements", r"sparser"),
-    ("barfoot", "eq", "licq_failure"): (r"we do not meet the technical condition of LICQ", r"LICQ"),
+#: Entries recorded as COULD_NOT_EXTRACT, with the source prose that states the fact.  Where
+#: the fact has a value in the table, the pattern is BUILT from that value, so the prose
+#: check reads the table.  (M0-F08: the old second half -- "the fact sits in no numbered
+#: equation" -- read no table value; its outcome was fixed by the sha-pinned fixture bytes,
+#: and for continuous_time_ins it was vacuous.  It was deleted.  What decides the field is
+#: ``value == COULD_NOT_EXTRACT``, which every digit-bearing mutant fails.)
+SENTINEL_EVIDENCE: dict[tuple, object] = {
+    ("rai", "eq", "bias_ordering"): lambda: (
+        r"Let \$\\mathbf\{b\}\\triangleq\\begin\{bmatrix\}" + "&".join(
+            rf"\\mathbf\{{b\}}_\{{{n.split('_', 1)[1]}\}}\^\{{\\top\}}"
+            for n in CONVENTIONS["rai"]["bias_order"]) + r"\\end\{bmatrix\}"),
+    ("rai", "eq", "rank1_criterion"): lambda: (
+        r"number of eigenvalues larger than \$10\^\{%d\}\\lambda_\{\\max\}"
+        % round(math.log10(CONVENTIONS["rai"]["rank1_criterion"]["relative_floor"]))),
+    ("delama", "eq", "bias_process_noise"): lambda: (
+        r"Define: .{0,600}\\mathbf\{Q_\{\\scriptscriptstyle\{d\}\}\}=\\mathrm\{diag\}\(.*?"
+        r"\\mathbf\{0\}_\{%d\\times 1\}" % sum(
+            sl.stop - sl.start for n, sl in zip(CONVENTIONS["delama"]["bias_virtual_names"],
+                                                CONVENTIONS["delama"]["bias_virtual_slices"])
+            if n in CONVENTIONS["delama"]["bias_zero_process_noise"])),
+    ("delama", "eq", "continuous_time_ins"): lambda: r"by extending \( IV-A \) with additional virtual",
+    ("barfoot", "eq", "rank1_criterion"): lambda: (
+        r"we consider a log SVR of at least \$%d\$ to represent rank 1"
+        % CONVENTIONS["barfoot"]["rank1_criterion"]["threshold"]),
+    ("barfoot", "eq", "sparsity"): lambda: r"we are now using a sparser set of measurements",
+    ("barfoot", "eq", "licq_failure"): lambda: r"we do not meet the technical condition of LICQ",
 }
 
 
@@ -2150,7 +2617,7 @@ def _check_eq_entries(prefix: str, root: dict) -> None:
         )
         assert_equation_says(key, value, require, forbid)
         checked.add(path[1:])
-    for path, (stated, numbered) in SENTINEL_EVIDENCE.items():
+    for path, stated in SENTINEL_EVIDENCE.items():
         if path[0] != prefix:
             continue
         key = _source_of(path)
@@ -2158,14 +2625,150 @@ def _check_eq_entries(prefix: str, root: dict) -> None:
             f"{list(path)} == {table_value(path)!r}; the source states this in prose / an "
             f"unnumbered display, so it must be {COULD_NOT_EXTRACT!r}"
         )
-        assert re.search(stated, source_prose(key), re.S), f"{key} no longer states {list(path)}"
-        hits = [lab for lab, lx in source_equations(key).items()
-                if numbered and re.search(numbered, lx)]
-        assert not hits, f"{list(path)} IS in numbered {key} equation(s) {hits}"
+        assert re.search(stated(), source_prose(key), re.S), f"{key} no longer states {list(path)}"
         checked.add(path[1:])
     for path, value in _walk(root):
         if _is_eq_path(path) and value != COULD_NOT_EXTRACT:
             assert path in checked, f"{prefix}{list(path)} == {value!r} is not checked at all"
+
+
+_PROSE_REF = re.compile(r"\bEqs?\.\s*((?:\(\d+[a-z]?\)(?:\s*(?:-|,|and)\s*)?)+)")
+_APPROX = r"\\approx|\\simeq|\\mathcal\{O\}\(|\bO\("
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3}
+
+
+def _overlap(desc: set[str], name: str) -> int:
+    """How many words of a table eq key the description names (shared 4-letter stem)."""
+    return sum(any(w[:4] == k[:4] for w in desc) for k in _words(name.replace("_", " ")))
+
+
+def _cited_labels(run: str, recorded: dict[str, str]) -> list[str]:
+    """``(25)-(29)`` -> both endpoints plus every recorded label between them."""
+    labels = re.findall(r"\d+[a-z]?", run)
+    if "-" in run and len(labels) == 2 and all(x.isdigit() for x in labels):
+        lo, hi = map(int, labels)
+        between = {v for v in recorded.values() if v.isdigit() and lo < int(v) < hi}
+        labels = [labels[0], *sorted(between, key=int), labels[1]]
+    return labels
+
+
+def check_prose_equation_refs(key: str) -> None:
+    """Every "Eq. (n)" inside an ``exact`` / ``linearized`` / ``relaxation`` item must cite an
+    equation the row records under a key the item's own words name -- and no uncited key may
+    be named better (M0-F06: these refs used to be checked only for existing).  The cited
+    equation's own LaTeX decides the class: an ``exact`` item may cite no approximation."""
+    row = CONVENTIONS[key]
+    recorded = {n: v for n, v in row["eq"].items() if v != COULD_NOT_EXTRACT}
+    prose = source_prose(key) if key != "gtsam" else ""
+    fields = [("exact", x) for x in row["exact"]] + [("linearized", x) for x in row["linearized"]]
+    if row.get("relaxation"):
+        fields.append(("exact", row["relaxation"]))
+    for kind, item in fields:
+        runs = _PROSE_REF.findall(item)
+        assert runs, f"{key} {kind} item {item!r} cites no equation"
+        desc = _words(item[:item.index("Eq")])
+        cited: dict[str, set[str]] = {}
+        for run in runs:
+            for label in _cited_labels(run, recorded):
+                names = {n for n, v in recorded.items()
+                         if v == label or re.fullmatch(re.escape(label) + r"[a-z]", v)}
+                assert names, f"{key} {kind} item {item!r} cites Eq. ({label}), which the row does not record"
+                cited[label] = names
+        uncited = [n for n in recorded if not any(n in ns for ns in cited.values())]
+        rival = max((_overlap(desc, n) for n in uncited), default=0)
+        for label, names in cited.items():
+            best = max(_overlap(desc, n) for n in names)
+            assert best >= 1 and best >= rival, (
+                f"{key} {kind} item {item!r}: Eq. ({label}) is recorded as {sorted(names)}, "
+                f"which the item does not name (overlap {best}, an uncited key scores {rival})"
+            )
+        latex = {label: equation_latex(key, label) for label in cited}
+        if kind == "exact":
+            for label, lx in latex.items():
+                assert not re.search(_APPROX, lx), f"{key} exact item cites Eq. ({label}), an approximation"
+        else:
+            def first_order(label, lx):
+                at = prose.find(f"$ ({label})")
+                before = prose[max(0, at - 400):at] if at != -1 else ""
+                return bool(re.search(_APPROX, lx) or re.search(r"approximat|first.order", before)
+                            or re.search(r"\\delta\\mathbf\{b\}", lx))
+            assert any(first_order(lb, lx) for lb, lx in latex.items()), (
+                f"{key} linearized item {item!r} cites no first-order relation")
+
+
+# -- citations --------------------------------------------------------------------------
+
+_ARXIV_CITATION = re.compile(
+    r"arXiv:(?P<id>\d{4}\.\d{4,5}v\d+) \[(?P<cat>[\w.-]+)\], (?P<date>\d{1,2} \w{3} \d{4})"
+    r"(?:; (?P<venue>.+?))? \((?P<authors>[^()]+?) -- (?P<title>[^()]+)\)")
+_GTSAM_CITATION = re.compile(
+    r"GTSAM docs, '(?P<title>[^']+)', (?P<url>\S+); behaviour re-verified against the "
+    r"installed gtsam (?P<version>\S+) wheel")
+CROSSREF = {"10.1177/02783649241269337": "crossref_10.1177_02783649241269337.json"}
+
+
+def _ascii(text: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\W+", "", _ascii(_html.unescape(text))).lower()
+
+
+def check_citation(key: str) -> None:
+    """Every part of the citation string is decided by a cached source (M0-F06/F07): arXiv id,
+    category, date, authors (order included) and title by the archived arXiv render; a journal
+    fragment by the cached Crossref record or the arXiv render's own acceptance note; the GTSAM
+    doc's title by the page itself and the version by the installed package."""
+    row = CONVENTIONS[key]
+    assert row["source_url"] == SOURCE_FIXTURES[key][1]
+    raw = source_raw(key)
+    if key == "gtsam":
+        m = _GTSAM_CITATION.fullmatch(row["citation"])
+        assert m, row["citation"]
+        page = re.search(r"<title>([^<]*?) - GTSAM Docs</title>", raw)
+        assert page and m.group("title") == _html.unescape(page.group(1)), (m.group("title"), page)
+        assert "https://" + m.group("url") == row["source_url"], m.group("url")
+        assert m.group("version") == _installed_gtsam_version() == row["package_version"]
+        return
+    m = _ARXIV_CITATION.fullmatch(row["citation"])
+    assert m, f"CONVENTIONS[{key!r}]['citation'] is not 'arXiv:<id> [<cat>], <date>[; venue] (<authors> -- <title>)'"
+    stamp = f"arXiv:{m.group('id')} [{m.group('cat')}] {m.group('date')}"
+    assert stamp in raw, f"{key}: the archived render does not print {stamp!r}"
+    assert SOURCE_FIXTURES[key][1].endswith(m.group("id")), (m.group("id"), SOURCE_FIXTURES[key][1])
+    printed = [re.sub(r"\\affilnum.*|\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", x))).strip()
+               for x in re.findall(r'class="ltx_personname">(.*?)</span>', raw, re.S)]
+    names = [n for x in printed for n in re.split(r",\s*|\s+and\s+", x) if n.strip()]
+    surnames = [_ascii(n.split()[-1]) for n in names]
+    assert [x.strip() for x in m.group("authors").split(",")] == surnames, (m.group("authors"), surnames)
+    title = re.search(r"<title>(.*?)</title>", raw, re.S)
+    assert title and _squash(m.group("title")) == _squash(title.group(1)), (m.group("title"), title)
+    venue = m.group("venue")
+    if venue is None:
+        return
+    doi = re.fullmatch(r"(?P<head>.+), DOI (?P<doi>10\.\d{4,}/\S+)", venue)
+    assert doi, venue
+    if doi.group("doi") in CROSSREF:
+        record = json.loads((_FIXTURES / CROSSREF[doi.group("doi")]).read_text())["message"]
+        assert record["DOI"].lower() == doi.group("doi").lower()
+        assert _squash(record["title"][0]) == _squash(m.group("title")), record["title"]
+        assert [_ascii(a["family"]) for a in record["author"]] == surnames, record["author"]
+        j = re.fullmatch(r"(?P<abbr>[A-Z]+) (?P<vol>\d+)\((?P<iss>\d+)\):(?P<pages>\d+-\d+), (?P<year>\d{4})",
+                         doi.group("head"))
+        assert j, doi.group("head")
+        assert (j.group("vol"), j.group("iss"), j.group("pages")) == (
+            record["volume"], record["issue"], record["page"]), (j.groups(), record["volume"])
+        assert int(j.group("year")) == record["journal-issue"]["published-print"]["date-parts"][0][0]
+        # the abbreviation is the source's own: its reference list writes "<journal> (IJRR)"
+        journal = re.sub(r"^The ", "", record["container-title"][0])
+        assert f"{journal} ({j.group('abbr')})" in source_prose(key), (journal, j.group("abbr"))
+    else:
+        note = f"for {doi.group('head')}, DOI:{doi.group('doi')}"
+        assert note in source_prose(key), f"{key}: the archived render does not print {note!r}"
 
 
 def _check_source_row(key: str) -> None:
@@ -2174,26 +2777,24 @@ def _check_source_row(key: str) -> None:
     for path, value in _walk(row):
         if _is_eq_path(path) and value == COULD_NOT_EXTRACT:
             assert (key, *path) in SENTINEL_EVIDENCE, (key, path)
-    # Any "Eq. (n)" written into a prose field must be a real equation of this source.
+    # Any "Eq. (n)" written into a prose field must be a real equation of this source ...
     for path, value in _walk(row):
         if _is_eq_path(path):
             continue
         items = (value,) if isinstance(value, str) else (
             value if isinstance(value, tuple) and all(isinstance(x, str) for x in value) else ())
         for item in items:
-            for run in re.findall(r"\bEqs?\.\s*((?:\(\d+[a-z]?\)(?:\s*(?:-|,|and)\s*)?)+)", item):
+            for run in _PROSE_REF.findall(item):
                 for label in re.findall(r"\d+[a-z]?", run):
                     equation_latex(key, label)
-    # Provenance: the URL is the fixture's, and every identifier the citation carries is
-    # printed by the archived document itself (or is the installed package version).
-    assert row["source_url"] == SOURCE_FIXTURES[key][1]
-    tokens = re.findall(r"arXiv:[\d.]+v\d+|10\.\d{4,}/[\w.]+\d|\b\d+\.\d+\.\d+\b", row["citation"])
-    assert tokens, f"CONVENTIONS[{key!r}]['citation'] carries no identifier"
-    for token in tokens:
-        if re.fullmatch(r"\d+\.\d+\.\d+", token):
-            assert token == _installed_gtsam_version() == row.get("package_version"), token
-        else:
-            assert token.removeprefix("arXiv:") in source_prose(key).replace("DOI:", ""), token
+    # ... and in the exact / linearized / relaxation items it must be the RIGHT one.
+    check_prose_equation_refs(key)
+    # Error handedness and bias-correction side, decided from the source for EVERY row
+    # (M0-F06: rai's two were checked only against the enum).
+    assert row["error_handedness"] == decide_error_handedness(key), (key, row["error_handedness"])
+    assert row["bias_correction_side"] == decide_bias_correction_side(key), (
+        key, row["bias_correction_side"])
+    check_citation(key)
 
 
 @pytest.mark.claim("M0-C02")
@@ -2291,3 +2892,62 @@ def test_every_eq_entry_is_a_label_or_the_exact_sentinel():
             assert row[side]["says"]
         assert isinstance(row["blocks"], tuple) and row["blocks"]
         assert row["where"] and row["consequence"]
+
+
+# ======================================================================================
+# The instruments themselves (M0-F07): fixture bytes, and a parser that invents nothing.
+# ======================================================================================
+
+@pytest.mark.claim("M0-F07")
+def test_fixture_provenance():
+    """Every cached source is the document its provenance record says, byte for byte.
+
+    This also settles the rai size discrepancy of pass 1: 462 407 is the byte size, 456 935
+    the number of characters after UTF-8 decoding (the page carries 2 616 non-ASCII
+    characters), so both figures describe the same file."""
+    import hashlib
+    record = json.loads((_FIXTURES / "provenance.json").read_text())
+    listed = {k for k in record if not k.startswith("_")}
+    on_disk = {p.name for p in _FIXTURES.iterdir() if p.name != "provenance.json"}
+    assert listed == on_disk, (listed ^ on_disk)
+    for name in listed:
+        blob = (_FIXTURES / name).read_bytes()
+        raw = gzip.decompress(blob) if name.endswith(".gz") else blob
+        assert len(raw) == record[name]["bytes"], name
+        assert len(raw.decode("utf-8")) == record[name]["utf8_chars"], name
+        assert hashlib.sha256(raw).hexdigest() == record[name]["sha256"], name
+    for key, (name, url) in SOURCE_FIXTURES.items():
+        assert record[name]["url"] == url, key
+    for key, name in PDF_EXCERPTS.items():
+        _, header = pdf_excerpt(key)
+        assert f"# source_url:      {record[name]['url']}" in header
+        assert SOURCE_FIXTURES[key][1].replace("/html/", "/pdf/") == record[name]["url"]
+        assert record[name]["note"].split("PDF sha256 ")[1].split(",")[0] in header
+    assert not list(_ROOT.glob("tests/**/*.pdf")), "a PDF was committed next to the tests"
+
+
+@pytest.mark.claim("M0-F07")
+def test_equation_parser_never_invents_a_label():
+    """The arXiv index holds exactly the tags the HTML prints -- no positional sub-letters --
+    and every label reached through a PDF excerpt is printed verbatim in that excerpt."""
+    for key in ("rai", "delama", "barfoot"):
+        printed = set(_LATEXML_TAG.findall(source_raw(key)))
+        assert set(source_equations(key)) == printed, (key, set(source_equations(key)) ^ printed)
+    for key, name in PDF_EXCERPTS.items():
+        text = (_FIXTURES / name).read_text(encoding="utf-8")
+        labels, _ = pdf_excerpt(key)
+        assert labels and all(f"({lb})" in text for lb in labels), labels
+        # where the HTML does print a label, the PDF puts the same LHS beside it: the two
+        # renders number this block identically
+        for lb, lhs in labels.items():
+            if lb in source_equations(key):
+                assert canon(source_equations(key)[lb]).split("=", 1)[0] == lhs, (lb, lhs)
+    # The rows pass 2 found misfiled (N-1) now sit where the source prints them.
+    r25a, r25b = equation_latex("rai", "25a"), equation_latex("rai", "25b")
+    assert r"\mathbf{R}_{i}\mathbf{r}^{v}_{ij}" in r25a and r"\mathbf{r}^{p}" not in r25a
+    assert r"\mathbf{R}_{i}\mathbf{r}^{p}_{ij}" in r25b and r"\mathbf{r}^{v}" not in r25b
+    assert r"\Delta\bar{\mathbf{v}}" not in equation_latex("rai", "37b")
+    assert r"\mathbf{z}^{p}_{i}" in equation_latex("rai", "37b")
+    for key, invented in (("rai", "25c"), ("barfoot", "30b")):
+        with pytest.raises(AssertionError):
+            equation_latex(key, invented)
