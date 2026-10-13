@@ -492,7 +492,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -685,10 +685,19 @@ milestones:
   - role: implementer
     agent_id: impl-M2-012-remediation
     started: '2026-10-13T22:18:12+00:00'
+    finished: '2026-10-13T22:35:24+00:00'
+    outcome: completed
+    note: '249/249. F26 fixed (Cayley right Jacobian in B2''s covariance); covariance references now complex-step,
+      bound 1e-7 -> 1e-10; FD_EPS 1e-6 -> 3e-5 (measured optimum on high-rate edges); all 9 survivors
+      + F26 killed on reference checks; fragile ulp check removed. I put Exp''s Jacobian back into B2:
+      the F26 test fails.'
+  - role: verifier
+    agent_id: verify-M2-010
+    started: '2026-10-13T22:35:24+00:00'
     finished: null
     outcome: running
-    note: Fix B2 covariance Jacobian (F26); kill the 9 survivors with tighter independent covariance/quadrature/FD
-      references (F27); remove the fragile ulp check; scope the warnings filter.
+    note: Tenth pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
+      floor.
   blocking_findings:
   - id: M2-F01
     resolved: true
