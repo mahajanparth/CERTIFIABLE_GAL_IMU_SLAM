@@ -1309,7 +1309,22 @@ def test_c36_discovered_directions_tighten():
     assert len(disc) == 2 * 27, len(disc)
     base, eta0, _ = _shor("true")
     more, eta1, _ = _shor("true", extra_key="autotight")
+    # A comparison of two solves means something only if each solve is valid: weak duality
+    # requires p* <= the cost of a feasible point (the ground truth, ~1e-22).  Tolerance:
+    # Clarabel's default 1e-8 gap tolerance in the solver's units (cost / max|Q|), mapped back.
+    _assert_weak_duality(base)
+    _assert_weak_duality(more)
     assert more.rank < base.rank or eta1 < eta0, (base.rank, eta0, more.rank, eta1)
+
+
+def _assert_weak_duality(res):
+    f_truth = CO.factored_cost(z_ref(truth_ref(), ref("true"), aniso=res.Z.shape[0] == 136),
+                               terms("true", "aniso" if res.Z.shape[0] == 136 else "iso"))
+    tol = 1e-8 * np.abs(CO.assemble_Q(terms("true"))).max()
+    assert res.dual <= f_truth + tol, (
+        f"invalid solve ({res.status}): dual p* = {res.dual:.4g} exceeds the feasible "
+        f"ground-truth cost {f_truth:.2g} by more than the solver tolerance {tol:.3g}; "
+        f"primal {res.primal:.4g}, sigma1/sigma2 = {res.sv_ratio:.3g}, rank {res.rank}")
 
 
 @pytest.mark.claim("M3-C37")
