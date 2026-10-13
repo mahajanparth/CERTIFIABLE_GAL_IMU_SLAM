@@ -127,8 +127,17 @@ class ForsterPreintegration:
 
     @staticmethod
     def retract(phi) -> np.ndarray:
-        """The rotation retraction.  Baseline 2 overrides exactly this one hook."""
+        """The rotation retraction.  Baseline 2 overrides this hook and, with it,
+        :meth:`retract_right_jacobian`."""
         return so3_exp(phi)
+
+    @staticmethod
+    def retract_right_jacobian(phi) -> np.ndarray:
+        """The right Jacobian of :meth:`retract`: ``retract(phi + d) = retract(phi)
+        Exp(J d) + O(|d|^2)``.  It is the noise-input Jacobian of Eq. (63), so it must
+        belong to the SAME map as :meth:`retract` (M2-F26: Baseline 2 used to inherit
+        ``Exp``'s here while integrating with ``Cay``)."""
+        return so3_right_jacobian(phi)
 
     # -- Eq. (63) ----------------------------------------------------------------------
     def _propagate_covariance(self, w, a, dt: float) -> None:
@@ -141,7 +150,7 @@ class ForsterPreintegration:
         directly (test_c06b).
         """
         dR_step = self.retract(w * dt)
-        Jr = so3_right_jacobian(w * dt)
+        Jr = self.retract_right_jacobian(w * dt)
         dR_ik = self.dR
         A = np.zeros((9, 9))
         A[0:3, 0:3] = dR_step.T

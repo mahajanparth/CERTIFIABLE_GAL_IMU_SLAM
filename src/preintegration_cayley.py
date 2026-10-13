@@ -40,7 +40,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .preintegration_forster import ForsterPreintegration
+from .preintegration_forster import ForsterPreintegration, so3_right_jacobian
 from .trajectory import hat
 
 #: **The** reading, fixed by Rai Sec. IV-A: the raw tangent ``(omega_k - bbar_g) dt`` is
@@ -135,6 +135,19 @@ class CayleyPreintegration(ForsterPreintegration):
         if self.variant == VARIANT_REPARAM:
             phi = cayley_vector(phi)
         return cay(phi)
+
+    def retract_right_jacobian(self, phi) -> np.ndarray:
+        """The right Jacobian of :meth:`retract`, the noise input of Eq. (63) (M2-F26).
+
+        Raw reading: Rai Eq. (4), ``J_Cay(phi)``, because the noisy step is
+        ``Cay((w - n) dt) = Cay(w dt) Exp(-J_Cay(w dt) n dt) + O(n^2)``.  Before pass 9
+        this class inherited ``Exp``'s right Jacobian, which put the rotation block off
+        by 4.6e-7 / 7.2e-7 relative on the fixture edges.  Reparameterized contrast:
+        ``Cay(2 tan(theta/2) a)`` IS ``Exp(theta a)``, so its right Jacobian is ``Exp``'s.
+        """
+        if self.variant == VARIANT_REPARAM:
+            return so3_right_jacobian(phi)
+        return cay_right_jacobian(phi)
 
 
 # --------------------------------------------------------------------------------------

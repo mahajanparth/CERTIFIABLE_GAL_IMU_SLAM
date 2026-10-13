@@ -390,7 +390,12 @@ STATE_B = (iexp([-0.70, 0.25, 0.90]), np.array([-0.60, 0.85, -1.10]), np.array([
 TIER0 = 1e-12
 EULER_PIN = 1e-12          # retyped Euler sums vs src's (same arithmetic up to the retraction)
 JAC_FD_REL = 1e-7          # src's FD (eps 1e-6) vs the reference FD (eps 1e-5), relative
-COV_FD_REL = 1e-7          # Eq. (63) vs the reference FD noise linearisation, relative
+#: Eq. (63) vs the COMPLEX-STEP linearisation of the retyped noisy Euler step, relative.
+#: Pass 9 (M2-F27 a): the old FD reference was good to only ~2.5e-9, so its bound (1e-7)
+#: could not see a 4e-9 Ba error (X31) or a 9.5e-9 transition error in B2 (X24).  The
+#: complex-step reference is exact to rounding; measured agreement 1.9e-15 - 1.8e-12
+#: (block-relative), so 1e-10 keeps a >= 50x margin on the clean code.
+COV_CS_REL = 1e-10
 #: GTSAM's single-source covariance blocks vs sigma^2 Dt I: the reference is first order in
 #: the per-step angle (measured 1.5e-8 at dt 1e-3, 9.8e-7 at dt 5e-3); still 5000x below
 #: the smallest density error it must see (U40, accel variance x1.005)
@@ -591,35 +596,6 @@ def test_b1_so3_right_jacobian():
     _assert_no_failures(failures)
 
 
-def _fd_step_jacobians(state, omega, acc, dt, bias, retract=iexp, eps=1e-6, eps_noise=1e-3):
-    """Linearisation of ONE Euler step in Forster's chart (``dR Exp(d)``, additive v, p):
-    ``A`` (9x9) w.r.t. the state, ``Bg`` / ``Ba`` (9x3) w.r.t. additive measurement noise.
-    The noise step is larger (the noise enters multiplied by dt, and round-off in the
-    rotation chart is absolute)."""
-    R, v, p = state
-
-    def step(dphi, dv, dp, eg, ea):
-        return ieuler([omega + eg], [acc + ea], dt, bias, retract,
-                      start=(R @ iexp(dphi), v + dv, p + dp))
-
-    Rn, vn, pn = step(np.zeros(3), np.zeros(3), np.zeros(3), np.zeros(3), np.zeros(3))
-
-    def chart(out):
-        return np.concatenate([ilog(Rn.T @ out[0]), out[1] - vn, out[2] - pn])
-
-    cols = []
-    for slot in range(5):
-        for i in range(3):
-            args_p = [np.zeros(3) for _ in range(5)]
-            args_m = [np.zeros(3) for _ in range(5)]
-            h = eps if slot < 3 else eps_noise
-            args_p[slot][i] = h
-            args_m[slot][i] = -h
-            cols.append((chart(step(*args_p)) - chart(step(*args_m))) / (2 * h))
-    J = np.column_stack(cols)
-    return J[:, 0:9], J[:, 9:12], J[:, 12:15]
-
-
 @pytest.mark.claim("M2-F17")
 def test_b1_single_step_reads_every_field():
     """One ``integrate_measurement`` from a NON-default starting increment, at two
@@ -627,8 +603,8 @@ def test_b1_single_step_reads_every_field():
     ``sigma_a``, ``dR``, ``dv``, ``dp``, ``dt_total``, ``cov``) and every argument
     (``omega``, ``acc``, ``dt`` = 1e-3 / 4.7e-3) must reach the result.
 
-    The covariance reference is the FD linearisation of the retyped step
-    (:func:`_fd_step_jacobians`), ``A C0 A^T + Bg (sg^2/dt) Bg^T + Ba (sa^2/dt) Ba^T``,
+    The covariance reference is the COMPLEX-STEP linearisation of the retyped step
+    (:func:`_cs_step_jacobians`), ``A C0 A^T + Bg (sg^2/dt) Bg^T + Ba (sa^2/dt) Ba^T``,
     checked with the noise alone (``C0 = 0``, one source at a time, so a density error
     cannot hide behind the other source or behind ``C0``) and with ``C0`` alone at
     EXACTLY zero densities (M2-F23).
@@ -659,7 +635,7 @@ def test_b1_single_step_reads_every_field():
             if not np.array_equal(pim.cov, np.zeros((9, 9))):
                 failures.append(f"{where}: zero densities and zero cov give a nonzero cov")
 
-        A, Bg, Ba = _fd_step_jacobians((R0, v0, p0), omega, acc, dt, bias)
+        A, Bg, Ba = _cs_step_jacobians((R0, v0, p0), omega, acc, dt, bias)
         sgv = np.broadcast_to(np.asarray(sg, float), (3,))
         sav = np.broadcast_to(np.asarray(sa, float), (3,))
         for label, kw, want in (
@@ -671,7 +647,7 @@ def test_b1_single_step_reads_every_field():
                 failures.append(f"has_noise is False with {label}")
             pim.integrate_measurement(omega, acc, dt)
             _check(failures, f"Eq. (63) one step, {label} (sigma_g={sg}, sigma_a={sa}, "
-                   f"dt={dt}, bias={bias})", rel(pim.cov, want), COV_FD_REL)
+                   f"dt={dt}, bias={bias})", rel(pim.cov, want), COV_CS_REL)
         L = rng.normal(size=(9, 9))
         C0 = 1e-4 * (L @ L.T)
         # C0 alone, at EXACTLY zero densities (M2-F23: the old has_noise gate skipped
@@ -680,7 +656,7 @@ def test_b1_single_step_reads_every_field():
                                        dp=p0.copy(), dt_total=t0, cov=C0.copy())
         pim.integrate_measurement(omega, acc, dt)
         _check(failures, f"Eq. (63) one step does not propagate the initial cov at zero "
-               f"densities (dt={dt})", rel(pim.cov, A @ C0 @ A.T), COV_FD_REL)
+               f"densities (dt={dt})", rel(pim.cov, A @ C0 @ A.T), COV_CS_REL)
     _assert_no_failures(failures)
 
 
@@ -701,35 +677,10 @@ def test_b1_noise_covariances():
     _assert_no_failures(failures)
 
 
-def _fd_noise_covariance(gyro, accel, dt, bias, sg, sa, eps=1e-3):
-    """First-order covariance of the retyped Euler sums by central differences in every
-    per-step noise channel (``Q = sigma^2 / dt``), Forster's chart.  No Eq. (63)."""
-    R0, v0, p0 = ieuler(gyro, accel, dt, bias)
-    sgv = np.broadcast_to(np.asarray(sg, float), (3,))
-    sav = np.broadcast_to(np.asarray(sa, float), (3,))
-    q = np.concatenate([sgv**2, sav**2]) / dt
-    S = np.zeros((9, 9))
-    for k in range(len(gyro)):
-        Jk = np.zeros((9, 6))
-        for m in range(6):
-            outs = []
-            for s in (eps, -eps):
-                g, a = gyro.copy(), accel.copy()
-                if m < 3:
-                    g[k, m] += s
-                else:
-                    a[k, m - 3] += s
-                R, v, p = ieuler(g, a, dt, bias)
-                outs.append(np.concatenate([ilog(R0.T @ R), v - v0, p - p0]))
-            Jk[:, m] = (outs[0] - outs[1]) / (2 * eps)
-        S += Jk @ np.diag(q) @ Jk.T
-    return S
-
-
 @pytest.mark.claim("M2-F16")
 def test_b1_covariance_over_a_stream():
     """Eq. (63) over a time-varying stream at two (dt, n, bias, densities), gyro != accel,
-    one noise source at a time, against :func:`_fd_noise_covariance`."""
+    one noise source at a time, against :func:`_cs_covariance` (complex step)."""
     failures = []
     for n, dt, bias, sg, sa in ((14, 1e-3, BIAS_BOTH, 3.1e-4, 7.3e-3),
                                 (11, 4.7e-3, BIAS_GYRO, np.array([2e-4, 5e-4, 9e-4]),
@@ -740,9 +691,9 @@ def test_b1_covariance_over_a_stream():
             pim = B1.ForsterPreintegration(bias_hat=bias.copy(), **kw_src)
             for omega, acc in zip(gyro, accel):
                 pim.integrate_measurement(omega, acc, dt)
-            want = _fd_noise_covariance(gyro, accel, dt, bias, g_, a_)
+            want = _cs_covariance(gyro, accel, dt, bias, g_, a_)
             _check(failures, f"Eq. (63) over {n} steps, dt={dt}, {label} noise alone "
-                   f"(sigma_g={sg}, sigma_a={sa})", rel(pim.cov, want), COV_FD_REL)
+                   f"(sigma_g={sg}, sigma_a={sa})", rel(pim.cov, want), COV_CS_REL)
     _assert_no_failures(failures)
 
 
@@ -1665,7 +1616,7 @@ def test_f18_constructors_do_not_alias():
 def test_f23_initial_covariance_propagates_at_zero_density():
     """``ForsterPreintegration(cov=C0)`` with sigma_g = sigma_a = 0 EXACTLY must carry C0
     through every step: ``C_n = A_n ... A_1 C0 A_1^T ... A_n^T``, each ``A_k`` the FD
-    linearisation of the retyped Euler step (:func:`_fd_step_jacobians`) along the
+    COMPLEX-STEP linearisation of the retyped Euler step (:func:`_cs_step_jacobians`) along the
     retyped trajectory.  Pass 8 measured the shipped gate leaving ``cov`` bit-identical
     to C0 after 200 steps, 92% from the propagated value."""
     failures = []
@@ -1678,18 +1629,19 @@ def test_f23_initial_covariance_propagates_at_zero_density():
     for label, gyro, accel, dt, bias in cases:
         for cls in (B1.ForsterPreintegration, B2.CayleyPreintegration):
             retract = iexp if cls is B1.ForsterPreintegration else icay
+            cretract = _cexp if cls is B1.ForsterPreintegration else _ccay
             pim = cls(bias_hat=bias.copy(), cov=C0.copy())
             state = (np.eye(3), np.zeros(3), np.zeros(3))
             C = C0.copy()
             for omega, acc in zip(gyro, accel):
                 pim.integrate_measurement(omega, acc, dt)
-                A, _, _ = _fd_step_jacobians(state, omega, acc, dt, bias, retract=retract)
+                A, _, _ = _cs_step_jacobians(state, omega, acc, dt, bias, retract=cretract)
                 C = A @ C @ A.T
                 state = ieuler([omega], [acc], dt, bias, retract, start=state)
             moved = rel(C, C0)
             assert moved >= 1e-2, f"{label}: the reference does not move C0 ({moved:.1e})"
             _check(failures, f"{cls.__name__} at zero densities does not propagate the "
-                   f"initial cov over {label}", rel(pim.cov, C), COV_FD_REL)
+                   f"initial cov over {label}", rel(pim.cov, C), COV_CS_REL)
     _assert_no_failures(failures)
 
 
@@ -1999,3 +1951,147 @@ def test_f22_no_outward_aliasing():
         if max(mabs(x, y) for x, y in zip(before, after)) != 0.0:
             failures.append("Baseline 3 predict moves after an in-place edit of bias_hat")
     _assert_no_failures(failures)
+
+
+# ======================================================================================
+# Verification pass 9 (docs/verification/stage-b_m2-baselines_pass9.md): M2-F26, M2-F27
+# ======================================================================================
+#
+# The pass-9 survivors (X15, X21, X22, X24, X31, X41, W12, P23, S21) all moved an output
+# by less than the old references could resolve: the covariance references were
+# finite differences good to ~2.5e-9, and the bias-Jacobian references finite differences
+# good to ~2e-8.  The references below are COMPLEX-STEP derivatives of the retyped
+# discrete integrators: ``f'(x) = Im f(x + i h) / h`` has no subtractive cancellation, so
+# with ``h = 1e-20`` it is exact to rounding (~1e-15 relative), and it needs no derivation
+# of any Jacobian block.  Every map is written so that it is complex-ANALYTIC: no
+# ``abs``/``norm``/``arccos``, the rotation angle enters only through ``phi . phi``.
+
+CS_H = 1e-20
+
+
+def _chat(v):
+    """``hat`` that keeps a complex argument complex (``ihat`` casts to float)."""
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]],
+                    dtype=complex)
+
+
+def _cexp(phi):
+    """``Exp`` as the power series ``I + a(t) K + b(t) K^2``, ``t = phi . phi``,
+    ``a = sum (-t)^n / (2n+1)!``, ``b = sum (-t)^n / (2n+2)!``: analytic in ``phi``, no
+    ``sin(th)/th`` cancellation, and no ``src`` code.  Converges to rounding for
+    ``|phi| <= 2`` with 30 terms (every per-step angle used here is < 0.1)."""
+    phi = np.asarray(phi, dtype=complex)
+    t = phi @ phi
+    assert abs(t) <= 4.0, "series Exp used outside its accuracy range"
+    a = b = 0.0
+    term_a, term_b = 1.0 + 0j, 0.5 + 0j          # 1/1!, 1/2!
+    for n in range(30):
+        a = a + term_a
+        b = b + term_b
+        term_a = term_a * (-t) / ((2 * n + 2) * (2 * n + 3))
+        term_b = term_b * (-t) / ((2 * n + 3) * (2 * n + 4))
+    K = _chat(phi)
+    return np.eye(3) + a * K + b * (K @ K)
+
+
+def _ccay(phi):
+    """Eq. (3) in its closed polynomial form, complex-analytic (cf. :func:`icay`)."""
+    phi = np.asarray(phi, dtype=complex)
+    K = _chat(phi)
+    return np.eye(3) + (4.0 / (4.0 + phi @ phi)) * (K + 0.5 * (K @ K))
+
+
+def _ceuler(gyro, accel, dt, bias, retract=_cexp, start=None):
+    """:func:`ieuler` in complex arithmetic (the same Eq. (9a)-(9c) sums)."""
+    if start is None:
+        R, v, p = np.eye(3, dtype=complex), np.zeros(3, complex), np.zeros(3, complex)
+    else:
+        R, v, p = (np.asarray(x, dtype=complex) for x in start)
+    bias = np.asarray(bias, dtype=complex)
+    for omega, acc in zip(gyro, accel):
+        w = np.asarray(omega, dtype=complex) - bias[0:3]
+        a = np.asarray(acc, dtype=complex) - bias[3:6]
+        p = p + v * dt + 0.5 * (R @ a) * dt**2
+        v = v + (R @ a) * dt
+        R = R @ retract(w * dt)
+    return R, v, p
+
+
+def _cs_chart(R0, out):
+    """Forster-chart derivative ``(vee(R0^T dR), dv, dp)`` of a complex-stepped output."""
+    dR = np.imag(out[0]) / CS_H
+    X = R0.T @ dR
+    return np.concatenate([ivee(0.5 * (X - X.T)), np.imag(out[1]) / CS_H,
+                           np.imag(out[2]) / CS_H])
+
+
+def _cs_step_jacobians(state, omega, acc, dt, bias, retract=_cexp):
+    """``A`` (9x9, w.r.t. ``(dphi, dv, dp)`` in ``R Exp(dphi), v + dv, p + dp``) and
+    ``Bg``, ``Ba`` (9x3, w.r.t. additive measurement noise) of ONE retyped Euler step,
+    by complex step.  Exact to rounding; no Jacobian block is derived."""
+    R, v, p = (np.asarray(x, dtype=float) for x in state)
+    Rn = np.real(_ceuler([omega], [acc], dt, bias, retract, start=(R, v, p))[0])
+    cols = []
+    for slot in range(5):
+        for i in range(3):
+            d = np.zeros(3, complex)
+            d[i] = 1j * CS_H
+            Rs, vs, ps = R.astype(complex), v.astype(complex), p.astype(complex)
+            om, ac = np.asarray(omega, complex), np.asarray(acc, complex)
+            if slot == 0:
+                Rs = Rs @ _cexp(d)
+            elif slot == 1:
+                vs = vs + d
+            elif slot == 2:
+                ps = ps + d
+            elif slot == 3:
+                om = om + d
+            else:
+                ac = ac + d
+            cols.append(_cs_chart(Rn, _ceuler([om], [ac], dt, bias, retract,
+                                              start=(Rs, vs, ps))))
+    J = np.column_stack(cols)
+    return J[:, 0:9], J[:, 9:12], J[:, 12:15]
+
+
+def _cs_covariance(gyro, accel, dt, bias, sg=0.0, sa=0.0, retract=_cexp, C0=None):
+    """First-order covariance of the noisy retyped Euler sums: the product of the
+    complex-step per-step linearisations, ``C <- A C A^T + Bg Qg Bg^T + Ba Qa Ba^T`` with
+    ``Q = diag(sigma^2) / dt`` (per-axis densities allowed, zeros allowed)."""
+    sgv = np.broadcast_to(np.asarray(sg, float), (3,))
+    sav = np.broadcast_to(np.asarray(sa, float), (3,))
+    Qg, Qa = np.diag(sgv**2) / dt, np.diag(sav**2) / dt
+    C = np.zeros((9, 9)) if C0 is None else np.array(C0, dtype=float)
+    state = (np.eye(3), np.zeros(3), np.zeros(3))
+    for omega, acc in zip(gyro, accel):
+        A, Bg, Ba = _cs_step_jacobians(state, omega, acc, dt, bias, retract)
+        C = A @ C @ A.T + Bg @ Qg @ Bg.T + Ba @ Qa @ Ba.T
+        state = tuple(np.real(x) for x in _ceuler([omega], [acc], dt, bias, retract,
+                                                  start=state))
+    return C
+
+
+def _cs_bias_jacobians(gyro, accel, dt, bias, retract=_cexp):
+    """``(J_R, J_vg, J_va, J_pg, J_pa)`` of the retyped Euler sums by complex step in the
+    bias, ``J_R`` in the right chart.  Exact to rounding (the FD references are ~2e-8)."""
+    R0 = np.real(_ceuler(gyro, accel, dt, bias, retract)[0])
+    J = np.zeros((9, 6))
+    for m in range(6):
+        b = np.asarray(bias, complex).copy()
+        b[m] += 1j * CS_H
+        J[:, m] = _cs_chart(R0, _ceuler(gyro, accel, dt, b, retract))
+    return J[0:3, 0:3], J[3:6, 0:3], J[3:6, 3:6], J[6:9, 0:3], J[6:9, 3:6]
+
+
+def _block_rel(A, B_):
+    """max over the six upper 3x3 blocks of ``max|A - B| / max|B|`` (blocks of an
+    all-zero reference are compared absolutely and must be exactly zero)."""
+    worst = 0.0
+    for i in range(3):
+        for j in range(i, 3):
+            a = A[3 * i:3 * i + 3, 3 * j:3 * j + 3]
+            b = B_[3 * i:3 * i + 3, 3 * j:3 * j + 3]
+            scale = float(np.abs(b).max())
+            err = float(np.abs(a - b).max())
+            worst = max(worst, err / scale if scale > 0 else (np.inf if err else 0.0))
+    return worst
