@@ -4,7 +4,7 @@ milestones:
 - id: M0
   title: Literature matrix
   branch: m0-literature-matrix
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M0-S01
@@ -67,10 +67,19 @@ milestones:
   - role: implementer
     agent_id: impl-M0-004-remediation
     started: '2026-10-13T00:07:15+00:00'
+    finished: '2026-10-13T01:40:05+00:00'
+    outcome: completed
+    note: '130 passed, 80/80 mutants killed. Parser rebuilt on LaTeXML row ids, never invents labels;
+      (14a) resolved via a committed pdftotext excerpt with hash provenance. Changed two table values
+      from source: rai.bias_correction_side none->right, barfoot.error_handedness none->right-invariant
+      (sent to the verifier to arbitrate).'
+  - role: verifier
+    agent_id: verify-M0-003
+    started: '2026-10-13T01:40:05+00:00'
     finished: null
     outcome: running
-    note: Kill the 18 surviving table corruptions (F06), make equation labels decidable from archived
-      sources (F07), remove the remaining tests that cannot fail (F08).
+    note: Third pass with a fresh planted claim; rules on F06-F08 and arbitrates the two changed table
+      values.
   blocking_findings:
   - id: M0-F01
     resolved: true
@@ -126,7 +135,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -193,53 +202,88 @@ milestones:
   - role: verifier
     agent_id: verify-M1-002
     started: '2026-10-12T23:54:40+00:00'
+    finished: '2026-10-13T01:40:05+00:00'
+    outcome: completed
+    note: Caught planted M1-C56 (exp position block is w + (alpha/2)u; error exactly |alpha u|/2). 55/55
+      confirmed; F01-F04, F06 fixed, F05 partial. 52 of 57 mutants killed; 5 survive.
+  - role: implementer
+    agent_id: impl-M1-004-remediation
+    started: '2026-10-13T01:40:05+00:00'
     finished: null
     outcome: running
-    note: Second verification pass with a fresh planted claim; rulings on F01-F06 and its own 25+ mutant
-      sweep.
+    note: Kill the 5 survivors (F07), make C41's recorded rule true (F08), bind or delete tests that cannot
+      fail (F09), correct stale figures (F10).
   blocking_findings:
   - id: M1-F01
-    resolved: false
+    resolved: true
     summary: 'CRITICAL: the ''5000-step integrator ground truth'' behind C31/C34/C37/C43 is decorative.
       The endpoint relation is an exact algebraic identity of the discrete recursion for ANY dt (n=1 at
       dt=0.5 gives 1.8e-15), so mutating the fixture to 2 steps at dt=0.25 leaves all four tests passing.
       Meanwhile the 5000-step Euler state is 1.58e-4 from the exact solution -- 10x ABOVE the tests''
       own 1e-5 tolerance. A test that really compared against ODE truth at 1e-5 would FAIL. Validate against
       a stiff ODE solve (DOP853, rtol=atol=1e-13), not the project''s own Euler recursion.'
+    resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
   - id: M1-F02
-    resolved: false
+    resolved: true
     summary: Constant (omega,a) makes swapped accumulation order invisible -- the flagged defect class.
       E is computed once outside the loop so all step factors commute. integrate_truth's dR @ E -> E @
       dR SURVIVES the entire 55-test suite; euler_increment's dR @ W -> W @ dR survives C41 (diff 3.05e-16).
       With time-varying omega the same swap shows at 1.7e-6. Every order-sensitive test needs a time-varying
       stream.
+    resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
   - id: M1-F03
-    resolved: false
+    resolved: true
     summary: 'C40 REFUTED in part: ''a factor fitted on one element fails on a second with residual >
       0.5'' is false universally. N_L = Phi(X)X^-1 is exact at X by construction so the residual has no
       lower bound; Y=X gives 5.55e-16. Across 3 seeds x 5000 pairs, 14.2% of draws fall below 0.5, and
       the test takes a max over 20 draws -- failure probability ~ 0.14^20 ~ 1e-17.'
+    resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
   - id: M1-F04
-    resolved: false
+    resolved: true
     summary: 'Four more tests that cannot fail: C52''s w_loc<=1e-12 compares gtsam against itself (exactly
       0.0 on all 12000 draws); C28''s five tabulated rows never call cay at all and two rows (theta=3.0,
       3.1415) are outside the sampled range entirely; C26''s assert failures==0 is impossible to violate
       since det(I-[phi]x/2)=1+theta^2/4>=1; five vacuous coverage guards assert ''> 0.0'' on continuous
       draws where P(exactly 0)=0.'
+    resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
   - id: M1-F05
-    resolved: false
+    resolved: true
     summary: 'Three recorded measurements wrong. C52''s ''measured 2.8e-17'' is off by ~6 orders (really
       1.4e-13 across 4 seeds; 2.8e-17 is below double precision for O(1) quantities and was never plausible).
       C50''s tolerance and domain are mutually inconsistent: domain says |d| <= 1e-4 but at that magnitude
       the error is 5.35e-8, 54x over the 1e-9 bound -- it holds only for |d| <~ 1e-5. C41''s sample count
       IS load-bearing: 10 configs give 2.16e-6 but 1000 give 7.04e-6 against a 1e-5 bound, margin 1.4x.'
+    resolution: PARTIALLY fixed per verify-M1-002; remainder tracked as M1-F10.
   - id: M1-F06
-    resolved: false
+    resolved: true
     summary: 'C24 framing correction (claim CONFIRMED, substitution legitimate): the binding constraint
       BELOW the Taylor switch is truncation, not 1-cos. kappa1''s 3-term truncation is already 7.75e-13
       at theta=5e-2 and would be 1.30e-11 at theta=8e-2, so THETA_SMALL=5e-2 is load-bearing in a way
       the claim does not state. Real headroom ~13x. Record the switch point as a constraint, not an implementation
       detail.'
+    resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
+  - id: M1-F07
+    resolved: false
+    summary: '5 surviving mutants: navstate_phi sign flip / no-shift (no test calls src.gal3.navstate_phi;
+      C40 defines its own phi); cay_denominator I - xi^/2 -> I + xi^/2 (C26 checks only the determinant,
+      identical for both); integrate_increment updating position with the new velocity (never compared
+      to the ODE); imu_step_element dropping the 1/2 (never called by a test); euler_increment made semi-implicit
+      (still first order).'
+  - id: M1-F08
+    resolved: false
+    summary: C41's recorded rule 'dt <= 5e-6, tolerance 1e-5' FAILS at dt = 5e-6 on the test's own 1000
+      configurations (1.485e-5, 4 over); the test passes only because it uses dt = 2.5e-6. Recorded 'err/dt
+      = 0.2494' does not reproduce (worst 2.97 at the test seed).
+  - id: M1-F09
+    resolved: false
+    summary: 'Tests that cannot fail w.r.t. src: C40 parts (i)/(ii); C26 determinant assertions; math-only
+      checks (C24 trunc_at_8e2, C21 forbidden_worst, C28 transcription, C37 worst_minus, C41 order_gap,
+      C24 rel_k3/rel_c2); C06 witness-is-not-None; no guard that the endpoint fixture''s inputs are non-commuting.'
+  - id: M1-F10
+    resolved: false
+    summary: 'Stale recorded figures (F05 remainder): C06 5.0 vs 16.15, C19 3.9e-14 vs 3.8e-15, C23 7.5e-14
+      vs 1.49e-13 (understated), C51 Expmap/Logmap off ~20-40x, C41 central difference 2.1e-10 vs 8.9e-11,
+      C24 ''<= 1.1e-12'' is 1.106e-12 (1.36e-12 on a denser sweep). None near a tolerance.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
@@ -328,10 +372,16 @@ milestones:
   - role: implementer
     agent_id: impl-M2-005-remediation
     started: '2026-10-13T00:16:54+00:00'
+    finished: '2026-10-13T01:40:05+00:00'
+    outcome: completed
+    note: '96/96. P17, P35, P22 (+P22b), P33, P29 killed; dead code deleted. I re-ran P17: now fails test_c06c.
+      C25 statement reworded per the user''s decision (commit 0a0e66b).'
+  - role: verifier
+    agent_id: verify-M2-004
+    started: '2026-10-13T01:40:05+00:00'
     finished: null
     outcome: running
-    note: Kill P17/P35/P22 with single-density covariance cases, Cayley-Jacobian pin and an explicit dp
-      check; delete or test the dead code (M2-F11).
+    note: Fourth pass with a fresh planted claim; rules on F10/F11 and the reworded C25.
   blocking_findings:
   - id: M2-F01
     resolved: true
