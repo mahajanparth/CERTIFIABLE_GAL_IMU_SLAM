@@ -17,8 +17,8 @@ Python: CERTIFIABLE_GAL_IMU_SLAM/.venv (gtsam 4.3.0). All verifier scripts live 
   all decode to valid states, the algebraic constructions show the same, and there is a short proof (Section 3).
 * **Cost: z^T Q z agrees with my independent Q to 1.1e-16 relative, and with a GTSAM factor graph
   (2*graph.error) to first order** (1.4e-4, 2.9e-6, 2.5e-7 at eps = 1e-2, 1e-3, 1e-4).
-* **Mutation sweep: 68 new mutants. 33 killed, 17 equivalent (each with a proof below), 18 survive and are
-  NON-EQUIVALENT (8 medium, 10 low).**
+* **Mutation sweep: 68 new mutants. 33 killed, 18 equivalent (each with a proof below), 17 survive and are
+  NON-EQUIVALENT (8 medium, 9 low).**
 * **GATE (zero surviving non-equivalent mutants): FAILED.** M3 does not pass as it stands. The survivors sit
   in parts of src/qcqp that tests/test_qcqp.py never checks: the fixture literals, the decoder's v/p
   scaling, `project_so3`, `whitened_residual` weights, the PRIMARY/P1 labelling, and some small helpers. The core
@@ -194,7 +194,7 @@ co-p0-prior-half, co-v0-prior-half, co-gnss-sigma-not-squared, co-R0prior-rowmaj
 co-aniso-rot-weight (C24 aniso), cn-RC1-P-uses-cv, cn-RR-cross-sign, cn-P4-uses-Rj, cn-RS-jside-uses-M-w,
 cn-RH-drop-VP-cols (C14).
 
-### SURVIVORS, non-equivalent (18). Every one is a gate failure.
+### SURVIVORS, non-equivalent (17: 8 medium, 9 low). Every one is a gate failure.
 
 | id | mutation | oracle difference | class | why it matters |
 |---|---|---|---|---|
@@ -215,9 +215,8 @@ cn-RH-drop-VP-cols (C14).
 | cn-family-max-signed | family_max drops abs() | helper | low | untested helper; a feasibility report built on it would understate violations |
 | gb-from-bias-swap | from_gtsam_bias returns (accel, gyro) | converter | low | the documented boundary converter (ordering footgun 1) is untested, and src currently never calls it |
 | co-whiten-noclip | sqrt(w) without clip | none on this instance | low | equivalent for the instance's PD weights, but `W_vp` is caller-supplied: a PSD-singular weight gives eigh values of order -1e-10 and the output is NaN. No claim domain restricts W_vp to PD |
-| (the 18th is counted in the 8 medium + 10 low above: medium = fx-sigma-prior, fx-sigma-gnss, fx-bg-true, lf-decode-v-mul, lf-decode-p-mul, lf-project-nodet, co-whiten-W-not-sqrt, cn-P1-RA1-swap) | | | | |
 
-### Equivalent (17), with proofs
+### Equivalent (18), with proofs
 * **fm-sym-identity** (forms.sym returns Q unsymmetrised). Every quadratic tensor reaches the families only
   through `_mk`, which applies 0.5(Q + Q^T). sym is linear and commutes with `hat`, `cvec`, sums and differences,
   so the final symmetric matrix is mathematically identical. The cost uses only linear forms. Oracle clean, and the
