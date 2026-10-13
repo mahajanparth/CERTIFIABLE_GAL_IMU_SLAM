@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -342,10 +342,19 @@ milestones:
   - role: implementer
     agent_id: impl-M1-007-remediation
     started: '2026-10-13T21:20:02+00:00'
+    finished: '2026-10-13T21:56:54+00:00'
+    outcome: completed
+    note: '139 passed; harness 64/64 killed. F15 fixed (theta^6 term in scalar so3_exp); random gravity
+      and both signs of Dt in every gravity/Dt-facing test; every structural zero probed. Five rounding-level
+      cases (Q03, Q40, N15, Q09, Q12; ~1e-15) left open pending the owner''s threshold ruling -- now the
+      rounding floor. I made gravity_lift ignore g: four tests fail.'
+  - role: verifier
+    agent_id: verify-M1-008
+    started: '2026-10-13T21:56:54+00:00'
     finished: null
     outcome: running
-    note: Fix the so3_exp regression (F15); random gravity and negative Dt in every gravity/Dt-facing
-      test; probe every structural zero (F16).
+    note: Seventh pass with a fresh planted claim, zero-survivor rule with the tolerance-equivalence rule
+      and rounding floor.
   blocking_findings:
   - id: M1-F01
     resolved: true
