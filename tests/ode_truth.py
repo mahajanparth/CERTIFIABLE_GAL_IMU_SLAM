@@ -96,11 +96,13 @@ class Stream:
         return self.omega(t), self.acc(t)
 
 
-def solve_nav(stream: Stream, R0, v0, p0, Dt: float, g):
+def solve_nav(stream: Stream, R0, v0, p0, Dt: float, g, info=None):
     """DOP853 solution of the navigation ODE at t = Dt, batched over the stream.
 
     ``g`` is one gravity vector (3,) or one per instance (m, 3).  ``Dt`` may be
-    negative: solve_ivp then integrates backward from t = 0.
+    negative: solve_ivp then integrates backward from t = 0.  If ``info`` is a dict,
+    the solver's own time grid is stored in ``info["t"]`` (evidence of the direction
+    of integration, for the dataset input guards).
     """
     m = stream.n
     g = np.broadcast_to(np.asarray(g, dtype=float), (m, 3))
@@ -118,15 +120,17 @@ def solve_nav(stream: Stream, R0, v0, p0, Dt: float, g):
 
     sol = solve_ivp(rhs, (0.0, float(Dt)), y0, method="DOP853", rtol=RTOL, atol=ATOL)
     assert sol.success, sol.message
+    if info is not None:
+        info["t"] = np.array(sol.t)
     Y = sol.y[:, -1].reshape(m, 15)
     return Y[:, 0:9].reshape(m, 3, 3), Y[:, 9:12], Y[:, 12:15]
 
 
-def solve_increment(stream: Stream, Dt: float):
+def solve_increment(stream: Stream, Dt: float, info=None):
     """DOP853 solution of Ddot = D xi(t)^ from D(0) = I5: (dR, dv, dp) at Dt."""
     m = stream.n
     return solve_nav(stream, np.broadcast_to(np.eye(3), (m, 3, 3)),
-                     np.zeros((m, 3)), np.zeros((m, 3)), Dt, np.zeros(3))
+                     np.zeros((m, 3)), np.zeros((m, 3)), Dt, np.zeros(3), info=info)
 
 
 def solve_increment_constant(omega, acc, Dt: float):

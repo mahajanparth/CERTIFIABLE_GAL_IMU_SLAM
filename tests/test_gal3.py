@@ -45,6 +45,8 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     rand_xi_bounded_phi,
     rng,
     assert_discrete_converges,
+    assert_gravity_directions_diverse,
+    assert_rand_g_datasets,
     assert_stream_non_commuting,
     assert_term_exercised,
 )
@@ -723,16 +725,11 @@ def test_cayley_closed_form():
     assert_term_exercised(term)     # the (alpha/2) u term is exercised
     assert worst <= 1e-9, worst
 
-    # the MINUS form is wrong, and by a lot
-    r2 = rng(2500)
-    worst_minus = 0.0
-    for _ in range(200):
-        xi = rand_xi_bounded_phi(r2, 0.05, 2.9)
-        phi, u, w, al = xi[0:3], xi[3:6], xi[6:9], xi[9]
-        S = I3 - skew(phi) / 2.0
-        minus = np.linalg.solve(S, w - 0.5 * al * u)
-        worst_minus = max(worst_minus, float(np.abs(cay(xi)[0:3, 4] - minus).max()))
-    assert worst_minus >= 1e-3, worst_minus
+    # (A former check that the MINUS form S^-1 (w - (alpha/2) u) misses cay's position by
+    # >= 1e-3 was deleted -- pass-7 verifier, "tests that cannot fail": once cay matches
+    # the closed form to 1e-9 (above), that miss is |S^-1 alpha u|, a property of the
+    # data, which assert_term_exercised above already guards.  The plus sign is pinned
+    # by `worst` (mutation harness: cay_position_sign_flip).)
 
 
 @pytest.mark.claim("M1-C26")
@@ -1062,6 +1059,7 @@ def test_endpoint_relation(endpoint_dataset, endpoint_datasets_rand_g):
     # (gravity_lift_ignores_g, pass-6 Q49), integrate_truth with g's x/y swapped
     # (integrate_truth_g_permuted, Q52), endpoint reading |Dt| (endpoint_abs_dt, Q28),
     # gravity_lift with velocity g |Dt| (gravity_lift_abs_dt, Q29).
+    assert_rand_g_datasets(endpoint_datasets_rand_g)   # INPUT GUARD (pass-7 F1, F2)
     for d in (endpoint_dataset, *endpoint_datasets_rand_g):
         # ACCURACY: against the continuous truth -- X_j and D_ij from two separate
         # DOP853 solves (rtol = atol = 1e-13) with time-varying inputs.
@@ -1097,7 +1095,10 @@ def test_gravity_element_is_one_exponential():
         other = compose(gal3.gravity_lift(Dt, G), gal3.time_shift(-Dt))
         expect = gal(I3, G * Dt, -1.5 * G * Dt ** 2, -Dt)
         worst_other = max(worst_other, float(np.abs(other - expect).max()))
-        assert float(np.abs(other - G_Dt).max()) >= 1e-6
+        # (A former `|other - G_Dt| >= 1e-6` was deleted -- pass-7 verifier, "tests that
+        # cannot fail": given worst_other and worst_fuse / worst_exp, the difference is
+        # g Dt^2 by data alone.  The two orders differ by the claim's formulas, pinned by
+        # worst_other and worst_fuse.)
     assert worst_fuse <= 1e-12, worst_fuse
     assert worst_exp <= 1e-10, worst_exp
     assert worst_other <= 1e-12, worst_other
@@ -1110,8 +1111,10 @@ def test_gravity_element_is_one_exponential():
     r_g = rng(3200)   # own stream: the recorded draws above keep theirs
     worst_def_rg = worst_fuse_rg = worst_expm_rg = worst_gen_rg = worst_other_rg = 0.0
     n_neg = 0
+    gs = []
     for _ in range(400):
         g = rand_gravity(r_g)
+        gs.append(g)
         Dt = float(r_g.uniform(0.05, 1.0)) * (1.0 if r_g.uniform() < 0.5 else -1.0)
         n_neg += Dt < 0.0
         G_def = gal(I3, g * Dt, -0.5 * g * Dt ** 2, -Dt)
@@ -1131,6 +1134,7 @@ def test_gravity_element_is_one_exponential():
         worst_other_rg = max(worst_other_rg, float(np.abs(
             other - gal(I3, g * Dt, -1.5 * g * Dt ** 2, -Dt)).max()))
     assert n_neg >= 150, n_neg   # INPUT GUARD: both signs of Dt are sampled
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_gen_rg == 0.0, worst_gen_rg
     assert worst_def_rg <= 1e-12, worst_def_rg
     assert worst_fuse_rg <= 1e-12, worst_fuse_rg
@@ -1156,14 +1160,17 @@ def test_gravity_one_parameter_subgroup():
     # gravity_element_g_permuted, pass-6 Q50).
     r_g = rng(3300)   # own stream: the recorded draws above keep theirs
     worst_rg = worst_def_rg = 0.0
+    gs = []
     for _ in range(500):
         g = rand_gravity(r_g)
+        gs.append(g)
         s1, s2 = 2.0 * r_g.normal(), 2.0 * r_g.normal()
         lhs = compose(gal3.gravity_element(s1, g), gal3.gravity_element(s2, g))
         worst_rg = max(worst_rg, float(np.abs(lhs - gal3.gravity_element(s1 + s2, g)).max()))
         for s_ in (s1, s2, s1 + s2):
             worst_def_rg = max(worst_def_rg, float(np.abs(
                 gal3.gravity_element(s_, g) - gal(I3, g * s_, -0.5 * g * s_ ** 2, -s_)).max()))
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_rg <= 1e-10, worst_rg
     assert worst_def_rg <= 1e-10, worst_def_rg
 
@@ -1176,7 +1183,6 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset, endpoint_datasets
     def residuals(d, src):
         Dt = d["Dt"]
         worst_t = worst_p = worst_rv = 0.0
-        least_wrong = np.inf
         for k in range(d["n"]):
             X_i = gal(d["R_i"][k], d["v_i"][k], d["p_i"][k], 0.0)
             D = gal(src["dR"][k], src["dv"][k], src["dp"][k], Dt)
@@ -1186,21 +1192,25 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset, endpoint_datasets
                 rhs[0:3, 4] - (src["p_j"][k] + d["g"][k] * Dt ** 2)).max()))
             worst_rv = max(worst_rv, float(np.abs(rhs[0:3, 0:3] - src["R_j"][k]).max()),
                            float(np.abs(rhs[0:3, 3] - src["v_j"][k]).max()))
-            # and it really is wrong: the position error is O(g Dt^2)
-            least_wrong = min(least_wrong,
-                              float(np.abs(rhs[0:3, 4] - src["p_j"][k]).max()))
-        return worst_t, worst_p, worst_rv, least_wrong
+        return worst_t, worst_p, worst_rv
 
+    assert_rand_g_datasets(endpoint_datasets_rand_g)   # INPUT GUARD (pass-7 F1, F2)
     for d in (endpoint_dataset, *endpoint_datasets_rand_g):
+        # INPUT GUARD (data only, nothing from src): "wrong twice" is a visible defect
+        # only if the data make g Dt^2 large -- min |g|_inf Dt^2 over the instances is
+        # 2.45 / 0.946 / 0.368 on the three datasets.  It replaces a former
+        # `least_wrong >= 1e-3` on |RHS position - p_j|, which, given worst_p <= 1e-9,
+        # equals |g Dt^2| and so could not fail independently (pass-7 verifier).
+        assert float(np.abs(d["g"]).max(axis=1).min()) * d["Dt"] ** 2 >= 1e-3, d["label"]
+
         # ACCURACY: against the DOP853 continuous truth
-        worst_t, worst_p, worst_rv, least_wrong = residuals(d, d)
+        worst_t, worst_p, worst_rv = residuals(d, d)
         assert worst_t <= 1e-12, (d["label"], worst_t)
         assert worst_p <= 1e-9, (d["label"], worst_p)
         assert worst_rv <= 1e-9, (d["label"], worst_rv)
-        assert least_wrong >= 1e-3, (d["label"], least_wrong)
 
         # IDENTITY CHECK on the discrete recursion (not an accuracy check)
-        worst_t, worst_p, worst_rv, _ = residuals(d, d["disc"])
+        worst_t, worst_p, worst_rv = residuals(d, d["disc"])
         assert worst_t <= 1e-12, (d["label"], worst_t)
         assert worst_p <= 1e-12, (d["label"], worst_p)
         assert worst_rv <= 1e-12, (d["label"], worst_rv)
@@ -1239,12 +1249,15 @@ def test_right_time_shift_corrupts_position(algebraic_instances):
     # random g and Dt of either sign, against the component equations written here
     r = rng(3500)
     worst_p_rg = worst_t_rg = 0.0
+    gs = []
     for _ in range(500):
         X_i, D, Dt, g = _random_instance(r)
+        gs.append(g)
         rhs = gal3.endpoint_right_time_shift(X_i, D, g)
         _, v_j, p_j = _forster_by_hand(X_i, D, g)
         worst_p_rg = max(worst_p_rg, float(np.abs(rhs[0:3, 4] - (p_j - v_j * Dt)).max()))
         worst_t_rg = max(worst_t_rg, abs(float(rhs[3, 4])))
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_p_rg <= 1e-10, worst_p_rg
     assert worst_t_rg <= 1e-12, worst_t_rg
 
@@ -1273,8 +1286,10 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
     # position p_j + g Dt t_i, time t_i, R and v unaffected
     r_g = rng(3600)
     worst_p_rg = worst_t_rg = worst_rv_rg = 0.0
+    gs = []
     for _ in range(500):
         X_i, D, Dt, g = _random_instance(r_g)
+        gs.append(g)
         t_i = 2.0 * r_g.normal()
         X_t = X_i.copy()
         X_t[3, 4] = t_i
@@ -1284,6 +1299,7 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
         worst_t_rg = max(worst_t_rg, abs(float(rhs[3, 4]) - t_i))
         worst_rv_rg = max(worst_rv_rg, float(np.abs(rhs[0:3, 0:3] - R_j).max()),
                           float(np.abs(rhs[0:3, 3] - v_j).max()))
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_p_rg <= 1e-10, worst_p_rg
     assert worst_t_rg <= 1e-12, worst_t_rg
     assert worst_rv_rg <= 1e-12, worst_rv_rg
@@ -1369,8 +1385,10 @@ def test_two_endpoint_forms_agree(algebraic_instances):
     # gravity_lift_ignores_g, pass-6 Q49)
     r_g = rng(3800)
     worst_w_rg = worst_u_rg = worst_form_rg = worst_time_rg = 0.0
+    gs = []
     for _ in range(500):
         X_i, D, Dt, g = _random_instance(r_g)
+        gs.append(g)
         W_hand = gal(I3, g * Dt, 0.5 * g * Dt ** 2, 0.0)
         W_g = gal3.lift_navstate(gal3.navstate(I3, 0.5 * g * Dt ** 2, g * Dt))
         conj = compose(compose(gal3.time_shift(-Dt), gal3.gravity_lift(Dt, g)),
@@ -1387,6 +1405,7 @@ def test_two_endpoint_forms_agree(algebraic_instances):
         worst_form_rg = max(worst_form_rg, float(np.abs(form_a - ref).max()),
                             float(np.abs(form_b - ref).max()))
         worst_time_rg = max(worst_time_rg, abs(float(form_a[3, 4])), abs(float(form_b[3, 4])))
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_w_rg <= 1e-12, worst_w_rg
     assert worst_u_rg <= 1e-12, worst_u_rg
     assert worst_form_rg <= 1e-9, worst_form_rg
@@ -1446,7 +1465,7 @@ def test_phi_dt_is_an_automorphism_not_a_translation():
     I_nav = gtsam.NavState()
     assert np.array_equal(gal3.navstate_phi(I_nav.matrix(), Dt), I_nav.matrix())
     worst_shift = 0.0
-    max_gap = 0.0
+    max_vdt = 0.0
     for _ in range(2000):
         R, p, v = rand_rot(r), r.normal(size=3), r.normal(size=3)
         X = gtsam.NavState(gtsam.Rot3(R), p, v)
@@ -1459,9 +1478,13 @@ def test_phi_dt_is_an_automorphism_not_a_translation():
         # the only candidate factor (the identity) misses Phi_Dt(X) by |v| Dt
         gap = float(np.abs(I_nav.compose(X).matrix() - Y).max())
         assert abs(gap - float(np.abs(v).max()) * Dt) <= 1e-12, gap
-        max_gap = max(max_gap, gap)
+        max_vdt = max(max_vdt, float(np.abs(v).max()) * Dt)
     assert worst_shift <= 1e-12, worst_shift
-    assert max_gap >= 0.5, max_gap
+    # INPUT GUARD (data only): the "misses by |v| Dt" equality above is non-trivial only
+    # if the data have |v| Dt well above its 1e-12 tolerance (measured max 2.02).  It
+    # replaces a former `max_gap >= 0.5` on the src-computed gap, which the per-draw
+    # equality reduced to this data property (pass-7 verifier, "tests that cannot fail").
+    assert max_vdt >= 0.5, max_vdt
 
     # (ii) but it IS an automorphism: Phi(N1) Phi(N2) = Phi(N1 N2), products by gtsam
     worst = 0.0

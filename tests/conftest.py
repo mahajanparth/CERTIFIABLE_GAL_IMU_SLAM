@@ -105,8 +105,9 @@ def _build_endpoint_dataset(r, n_inst, n_steps, dt, g, label):
     stream = ode_truth.Stream.random(r, n_inst)
     g_inst = np.broadcast_to(np.asarray(g, dtype=float), (n_inst, 3)).copy()
 
-    R_j, v_j, p_j = ode_truth.solve_nav(stream, R_i, v_i, p_i, Dt, g_inst)
-    dR, dv, dp = ode_truth.solve_increment(stream, Dt)
+    info_nav, info_inc = {}, {}
+    R_j, v_j, p_j = ode_truth.solve_nav(stream, R_i, v_i, p_i, Dt, g_inst, info=info_nav)
+    dR, dv, dp = ode_truth.solve_increment(stream, Dt, info=info_inc)
     groups = [np.flatnonzero((g_inst == gk).all(axis=1)) for gk in np.unique(g_inst, axis=0)]
 
     def discrete(n, h):
@@ -137,12 +138,67 @@ def _build_endpoint_dataset(r, n_inst, n_steps, dt, g, label):
         R_j=R_j, v_j=v_j, p_j=p_j,
         dR=dR, dv=dv, dp=dp,
         stream=stream, disc=disc, disc_half=disc_half, order_gap=order_gap,
+        ode_t_nav=info_nav["t"], ode_t_inc=info_inc["t"],
     )
 
 
 def rand_gravity(r, n=None):
     """Gravity of random DIRECTION and MAGNITUDE: |g| uniform in (2, 20) m/s^2."""
     return r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)
+
+
+def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0):
+    """INPUT GUARD on a block of random-g draws (not evidence about src).
+
+    The random-g checks exist to catch defects that are invisible for g parallel to z,
+    e.g. a src function that swaps g's x and y components (pass-6 Q50..Q53).  A
+    ``rand_gravity`` that silently returned |g| (0, 0, -1) passed every claim test and
+    reopened those mutants (pass-7 F1).  Require, over the block ``gs`` (shape (m, 3)):
+
+    * some draw at >= ``min_angle`` rad from the z axis (``off_z``);
+    * some draw with |g - g[[1, 0, 2]]|_inf >= ``min_perm_gap`` (an x/y swap is visible);
+    * for m > 1, two draws >= ``min_angle`` rad apart as lines (``spread``): the block
+      is not all parallel to ONE direction.
+    """
+    gs = np.atleast_2d(np.asarray(gs, dtype=float))
+    u = gs / np.linalg.norm(gs, axis=1, keepdims=True)
+    off_z = float(np.arccos(np.clip(np.abs(u[:, 2]), 0.0, 1.0)).max())
+    perm_gap = float(np.abs(gs - gs[:, [1, 0, 2]]).max())
+    assert off_z >= min_angle, off_z
+    assert perm_gap >= min_perm_gap, perm_gap
+    spread = None
+    if len(gs) > 1:
+        spread = float(np.arccos(np.clip(np.abs(u @ u.T), 0.0, 1.0)).max())
+        assert spread >= min_angle, spread
+    return off_z, perm_gap, spread
+
+
+def assert_rand_g_datasets(datasets):
+    """INPUT GUARD on ``endpoint_datasets_rand_g`` (not evidence about src).
+
+    * Each dataset's sign of Dt is the one its label states, and exactly one dataset
+      has Dt < 0: they are the endpoint claims' only Dt < 0 coverage, and making the
+      second one forward (dt = +1e-4) passed every claim test (pass-7 F2).
+    * For each dataset the integration ran in the direction of Dt -- for the Dt < 0
+      one, BACKWARD: both DOP853 solves (navigation and increment) have a strictly
+      monotone time grid from 0 to Dt, and the recursion's step dt and its
+      accumulated Dt have the sign of Dt.
+    * Each dataset has 4 distinct g, of diverse direction
+      (``assert_gravity_directions_diverse``; pass-7 F1).
+    """
+    for d in datasets:
+        assert (d["Dt"] < 0) == ("Dt=-" in d["label"]), (d["label"], d["Dt"])
+    n_neg = sum(d["Dt"] < 0 for d in datasets)
+    assert n_neg == 1, n_neg
+    for d in datasets:
+        sgn = np.sign(d["Dt"])
+        assert np.sign(d["dt"]) == sgn and np.sign(d["disc"]["Dt"]) == sgn, d["label"]
+        for t in (d["ode_t_nav"], d["ode_t_inc"]):
+            assert t[0] == 0.0 and t[-1] == d["Dt"], (d["label"], t[0], t[-1])
+            assert bool(np.all(np.sign(np.diff(t)) == sgn)), d["label"]
+        g_distinct = np.unique(d["g"], axis=0)
+        assert len(g_distinct) == 4, len(g_distinct)
+        assert_gravity_directions_diverse(g_distinct)
 
 
 @pytest.fixture(scope="session")

@@ -13,7 +13,8 @@ from src import imu_dynamics as imu
 from src.gal3 import compose, exp, gal, unpack, wedge
 
 from . import ode_truth
-from .conftest import (G, assert_discrete_converges, assert_stream_non_commuting, rand_axis,
+from .conftest import (G, assert_discrete_converges, assert_gravity_directions_diverse,
+                       assert_rand_g_datasets, assert_stream_non_commuting, rand_axis,
                        rand_gravity, rand_rot, rng)
 
 I3 = np.eye(3)
@@ -51,6 +52,7 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g
 
     # g = (0, 0, -9.81) at Dt = +0.5, and random g at Dt = +0.4 and Dt = -0.3
     # (mutation harness: integrate_truth_g_permuted, pass-6 Q52)
+    assert_rand_g_datasets(endpoint_datasets_rand_g)   # INPUT GUARD (pass-7 F1, F2)
     for d in (endpoint_dataset, *endpoint_datasets_rand_g):
         # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
         worst = residual(d, d)
@@ -67,6 +69,7 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g
     # pass-6 Q51; forster_endpoint_abs_dt, Q30)
     r = rng(370)
     worst_alg = 0.0
+    gs = []
     for i_alg in range(4000):
         Dt2 = float(r.uniform(0.05, 1.0))
         R_i, v_i, p_i = rand_rot(r), 2.0 * r.normal(size=3), 5.0 * r.normal(size=3)
@@ -74,6 +77,7 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g
         g_alg = G
         if i_alg >= 2000:
             Dt2, g_alg = Dt2 * np.sign(r.normal()), rand_gravity(r)
+            gs.append(g_alg)
         N = _navstate_form_b(R_i, v_i, p_i, dR, dv, dp, Dt2, g_alg)
         R_f, v_f, p_f = gal3.forster_endpoint(R_i, v_i, p_i, dR, dv, dp, Dt2, g_alg)
         worst_alg = max(worst_alg,
@@ -84,6 +88,7 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g
     # W misses forster_endpoint by >= 1e-3 was deleted: it is a fact about gtsam
     # arithmetic (the two W differ by |g| Dt^2), and no change to src could make it
     # fail.  The sign is pinned by worst_alg above and by the ODE comparisons.
+    assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_alg <= 1e-12, worst_alg
 
 
@@ -307,9 +312,14 @@ def test_increment_closed_form_blocks():
     worst_dp_series = 0.0
     for Dt in (0.37, -0.37, 1.3, -1.3):
         _, _, dp, _ = imu.increment_blocks(omega, acc, Dt)
-        worst_dp_series = max(worst_dp_series, float(np.abs(
-            dp - Dt ** 2 * (gamma2_series(omega * Dt) @ acc)).max()))
-        assert np.abs(dp).max() >= 1e-3
+        dp_series = Dt ** 2 * (gamma2_series(omega * Dt) @ acc)
+        worst_dp_series = max(worst_dp_series, float(np.abs(dp - dp_series).max()))
+        # INPUT GUARD (test-local series only, nothing from src): dp is large enough that
+        # the 1e-15 absolute bound below is a meaningful relative check (measured min
+        # |dp|_inf 0.0736).  It replaces a former `|dp| >= 1e-3` on src's dp, which
+        # the 1e-15 series check reduced to this data property (pass-7 verifier, "tests
+        # that cannot fail").
+        assert float(np.abs(dp_series).max()) >= 1e-3, dp_series
     assert worst_dp_series <= 1e-15, worst_dp_series
 
     # dR = Exp_SO3(omega Dt) as increment_blocks and imu_step_element compute it: the
@@ -480,6 +490,7 @@ def test_forster_component_equations(endpoint_dataset, endpoint_datasets_rand_g)
     # g = (0, 0, -9.81) at Dt = +0.5, and random g at Dt = +0.4 and Dt = -0.3.
     # Mutation harness: forster_endpoint_g_permuted (pass-6 Q51), forster_endpoint_abs_dt
     # (Q30), gravity_lift_ignores_g (Q49), integrate_truth_g_permuted (Q52).
+    assert_rand_g_datasets(endpoint_datasets_rand_g)   # INPUT GUARD (pass-7 F1, F2)
     for d in (endpoint_dataset, *endpoint_datasets_rand_g):
         # ACCURACY: against the DOP853 continuous truth (time-varying inputs)
         worst, worst_block = residuals(d, d)
@@ -637,7 +648,9 @@ def test_preintegration_chaining_is_the_group_product():
     # sign of dt (mutation harness: integrate_truth_g_permuted, pass-6 Q52).
     worst_large = worst_large_nav = 0.0
     r_L2 = rng(4502)
-    for h_L, g_L, r_L in ((0.2, G, r), (-0.2, rand_gravity(r_L2), r_L2)):
+    g_L2 = rand_gravity(r_L2)
+    assert_gravity_directions_diverse(g_L2)   # INPUT GUARD (pass-7 F1): one draw, off z
+    for h_L, g_L, r_L in ((0.2, G, r), (-0.2, g_L2, r_L2)):
         n_L, b_L = 12, 20
         om_L = 3.0 * r_L.normal(size=(n_L, b_L, 3))
         a_L = 3.0 * r_L.normal(size=(n_L, b_L, 3))
