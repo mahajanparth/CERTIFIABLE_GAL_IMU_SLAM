@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -351,10 +351,18 @@ milestones:
   - role: verifier
     agent_id: verify-M1-008
     started: '2026-10-13T21:56:54+00:00'
+    finished: '2026-10-13T22:36:15+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C61 (gravity lifts differ by g Dt1 Dt2). 55/55 confirmed; F15 FIXED, F16
+      partial. All five open rounding-level items ruled equivalent under the rounding floor. 6 survivors:
+      R01, R32 (Rodrigues Taylor perturbations above 8 ulp, killed only by src-vs-src), R03, R05, F1/F2
+      fixture guards.'
+  - role: implementer
+    agent_id: impl-M1-008-remediation
+    started: '2026-10-13T22:36:15+00:00'
     finished: null
     outcome: running
-    note: Seventh pass with a fresh planted claim, zero-survivor rule with the tolerance-equivalence rule
-      and rounding floor.
+    note: Kill R01, R32, R03, R05, F1, F2; bind or delete the six implied assertions (F17).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -472,14 +480,15 @@ milestones:
       sweep 1.60e-12 vs recorded 1.41e-12; C41''s 2.970 coefficient is seed-specific (1.994 on other configurations).'
     resolution: Ruled FIXED by verify-M1-007 (docs/verification/m1-gal3-mechanics_pass6.md).
   - id: M1-F15
-    resolved: false
+    resolved: true
     summary: 'REGRESSION from 59330b2: the theta^6 term went into _so3_exp_batch but not the scalar gal3.so3_exp
       used by imu_step_element, so C45''s ''integrate_increment equals the ordered product of imu_step_element''
       (<= 1e-12) now fails near a 0.05 per-step angle (1.2-1.5e-12 at 60 steps, 5.9e-12 at 1000); tested
       only at dt = 5e-5. Q05 (so3_exp th^4/720 -> /700, 6.2e-13) survives because nothing pins so3_exp
       below 1e-12 and C42 compares so3_exp with itself.'
+    resolution: Ruled FIXED by verify-M1-008 (docs/verification/m1-gal3-mechanics_pass7.md).
   - id: M1-F16
-    resolved: false
+    resolved: true
     summary: 'Every gravity-facing test uses g = (0,0,-9.81) although the claims hold for arbitrary g:
       Q49 gravity_lift ignores g; Q50-Q53 x/y of g swapped in gravity_element, forster_endpoint, integrate_truth,
       gravity_generator; Q54 gravity_lift_uncorrected ignores g. Every test except C41(a'') samples Dt
@@ -489,6 +498,18 @@ milestones:
       dR check. Tolerance-equivalence rule (owner, 2026-10-13): a mutant is equivalent if it changes no
       output by more than 1/10 of the tightest claim tolerance for that quantity, with the measured effect
       written down.'
+    resolution: PARTIALLY fixed per verify-M1-008; remainder is M1-F17.
+  - id: M1-F17
+    resolved: false
+    summary: '6 survivors (verify-M1-008): R01/R32 so3_exp and batch Rodrigues Taylor c + t^4 t^2/10000
+      (error 4.9e-15 vs clean 1.0e-15; killed only by src-vs-src worst_prod_switch) -- pin both against
+      mpmath on [0.04, 0.05) at <= 2e-15; R03 so3_log small branch at n < 1e-5 (190x worse) -- make C22''s
+      small-angle check relative <= 1e-14; R05 c2 Taylor t^4/30240 -> /30200 (3.1e-12 vs 1.6e-13) -- pin
+      all four Taylor coefficients below the switch; F1 rand_gravity direction fixed to -z silently reopens
+      Q50-Q53 -- assert direction diversity; F2 negative-Dt dataset run forward -- assert Dt < 0. Six
+      assertions implied by the preceding equality (C25 worst_minus, C34 least_wrong, C32 other-G_Dt,
+      C22 back-xi, C40 max_gap, C42 |dp|); C24 trunc_at_switch lower bound pins truncation not accuracy;
+      Q12''s test comment is wrong.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
@@ -922,7 +943,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: null
@@ -994,10 +1015,18 @@ milestones:
   - role: verifier
     agent_id: verify-M3-002
     started: '2026-10-13T21:38:27+00:00'
+    finished: '2026-10-13T22:36:15+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C41 (RA1 raises the per-keyframe rank 6 -> 11; PSD witness shows RA1 tightens
+      Shor). 36/36 confirmed; F03 FIXED. 12 non-equivalent survivors (2 medium: project-before-divide
+      wrong at s < 0, truth_state(''zero'').b wrong); M4 rounding path checked independently.'
+  - role: implementer
+    agent_id: impl-M3-004
+    started: '2026-10-13T22:36:15+00:00'
     finished: null
     outcome: running
-    note: Second independent pass with a fresh planted claim, zero-survivor and tolerance-equivalence
-      rules.
+    note: Kill the 12 M3 survivors; guard the rounding path at s <= 0 and degenerate blocks; test or delete
+      unused helpers (F04).
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1019,7 +1048,7 @@ milestones:
     resolution: Resolved by the claim revision ad89dc4 and confirmed by verify-M3-001 (all 36 current
       claims CONFIRMED).
   - id: M3-F03
-    resolved: false
+    resolved: true
     summary: '17 survivors (verify-M3-001). Medium: fx-sigma-prior, fx-sigma-gnss (tests import these
       from src, so the reference moves with the mutant); fx-bg-true (C39 fingerprint at 4 s.f. misses
       it); lf-decode-v-mul, lf-decode-p-mul (decoder multiplies by s instead of dividing); lf-project-nodet
@@ -1031,6 +1060,18 @@ milestones:
       never touch src, c30 rank weight-invariant. Tolerance-equivalence rule (owner, 2026-10-13): a mutant
       is equivalent if it changes no output by more than 1/10 of the tightest claim tolerance for that
       quantity, with the measured effect written down.'
+    resolution: Ruled FIXED by verify-M3-002 (docs/verification/stage-b_m3-qcqp-derivation_pass2.md).
+  - id: M3-F04
+    resolved: false
+    summary: '12 survivors (verify-M3-002). Medium: lf-project-before-divide (project_so3(x*s) gives a
+      wrong rotation, error up to 1.97, at s = -1, -2.5 with project=True -- M4 rounds an eigenvector
+      of arbitrary sign); lf-truth-state-bbar (truth_state(''zero'').b is 0 instead of b_true). Low: lf-project-sign-detA
+      (zero/rank-1 block projects to a non-rotation); cn-family-residuals-abs; lf-bg-slice, lf-ba-slice,
+      in-n_kf-edges, gb-GAL_ROWS-pos-vel (untested helpers/constants); fm-outer-nosym, fm-sym-identity
+      (pass-1 equivalence re-ruled: proof only covered downstream families), fm-cmat-left-transposed,
+      fm-quadT-identity (unused forms helpers -- test or delete). Cannot-fail: c31 ptp(qm), c23 -z assertions,
+      c28/c03 and original c05/c06 never touch src. M4 risks noted: decoder has no s ~ 0 guard and checks
+      no lifting consistency.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
