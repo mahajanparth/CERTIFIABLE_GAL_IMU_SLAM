@@ -287,7 +287,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -379,9 +379,18 @@ milestones:
   - role: verifier
     agent_id: verify-M2-004
     started: '2026-10-13T01:40:05+00:00'
+    finished: '2026-10-13T01:51:17+00:00'
+    outcome: completed
+    note: Caught planted M2-C27 (dv differs by 4.5e-8 / 1.0e-7 vs claimed 1e-12, O(dt^2)). 25/25 confirmed;
+      F10, F11 fixed; derived and measured the reworded C25 argument. 33 of 46 new mutants killed; 3 medium
+      survivors filed as F12.
+  - role: implementer
+    agent_id: impl-M2-006-remediation
+    started: '2026-10-13T01:51:17+00:00'
     finished: null
     outcome: running
-    note: Fourth pass with a fresh planted claim; rules on F10/F11 and the reworded C25.
+    note: Bind the CayleyFactor residual methods to independent references and kill Q25/Q45/Q46 (F12);
+      fix the stale C25 hint.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -445,24 +454,38 @@ milestones:
       The dp-only dR_{i,k+1} fold in Eq. (9c) also survives (5e-6 shift).'
     resolution: Ruled FIXED by verify-M2-003 (docs/verification/stage-b_m2-baselines_pass3.md).
   - id: M2-F10
-    resolved: false
+    resolved: true
     summary: 'REMAINING after pass 3: the M2-C25 statement still says the null directions ''happen to
       be orthogonal''; structurally none can be orthogonal to the bias block. Claim conclusion holds.
       Rewording a claim statement is the user''s call -- awaiting decision. (Hint numbers, fixture pins,
       C23 B2 sweep, C20 swap: fixed per verify-M2-003.)'
+    resolution: Ruled FIXED by verify-M2-004 (docs/verification/stage-b_m2-baselines_pass4.md).
   - id: M2-F11
-    resolved: false
+    resolved: true
     summary: 'Pass-3 survivors of medium severity: P17 has_noise or->and makes the covariance silently
       zero when only one noise density is nonzero (independently reproduced: 88/88 green) -- no single-density
       test; P35 CayleyFactor taking its Jacobians from the Forster (Exp) integrator instead of Cayley
       survives (2.3e-7 relative); P22 increment_error ignoring dp makes c05 blind to dp-correction errors.
       Dead code: REF_R_KF1 unread, predict(bias=) argument unused.'
+    resolution: Ruled FIXED by verify-M2-004 (docs/verification/stage-b_m2-baselines_pass4.md).
+  - id: M2-F12
+    resolved: false
+    summary: 'No test calls the factor-level CayleyFactor.rotation_residual / rotation_residual_affine
+      / rotation_residual_truncated -- the residuals the QCQP/SDP work will consume (independently confirmed:
+      tests call only the module-level functions). Survivors: Q25 affine residual using the accel bias
+      offset for the gyro one (4.2e-2 vs 1e-16 at a consistent state), Q45 rotation_residual with -xi,
+      Q46 with the transposed preintegrated rotation. Also: C25 test_hint still cites the removed ''happens
+      to be orthogonal'' wording; test_c06c accel-only zero check asserts a property of the reference
+      only.'
   advisory_findings:
   - id: M2-A01
     summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
       truncated contrast with (I - xi^) (lower bound only); P33 weighted_square unsquared (c12 invariant);
       P40 corrected increment clock zeroed (trivially J[9,:]=0); P44 bias random-walk covariances swapped
       (rank invariant, equivalent). Tests that cannot fail are listed in pass3 report section 7.'
+  - id: M2-A02
+    summary: 'Pass-4 low/equivalent survivors (non-blocking): dead small-angle branches Q01/Q16/Q39; equivalents
+      Q04, Q36, Q44; FD-accuracy-only Q08, Q32; C25-only rank-invariant noise wiring Q28, Q29.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
