@@ -11,5 +11,5 @@ forms           linear / quadratic form tensors over z
 cost            residual forms, terms {F_t, W_t}, Q
 constraints     every constraint family {A_k, b_k}
 """
-from .instance import instance, build_instance  # noqa: F401
+from .instance import build_instance  # noqa: F401
 from .lifting import BASE, ANISO, Layout, State, z_of_state, state_of_z, truth_state  # noqa: F401
