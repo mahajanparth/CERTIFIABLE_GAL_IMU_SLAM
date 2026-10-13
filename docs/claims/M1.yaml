@@ -9,7 +9,11 @@ conventions:
   bias: b = [b_g ; b_a] (gyro first) throughout this project.
   gravity: g in the world frame; all claims hold for arbitrary g unless they name a numeric value. Tests
     use g = (0, 0, -9.81) and, in every gravity-facing claim test, also random g (uniform random direction,
-    |g| uniform in (2, 20)), except M1-C53, whose domain fixes gtsam's MakeSharedU gravity.
+    |g| uniform in (2, 20)), except M1-C53, whose domain fixes gtsam's MakeSharedU gravity. Every
+    random-g block and dataset carries an input guard (tests/conftest.py assert_gravity_directions_diverse,
+    assert_rand_g_datasets) that the draws are of diverse direction (not all parallel to z or to one
+    line, an x/y swap of g visible) and that the Dt = -0.3 dataset really has Dt < 0 with both DOP853
+    solves run backward.
   rng: 'All sample counts are independent draws from numpy.random.default_rng with a fixed, recorded seed.
     Random rotations: Exp_SO3 of N(0, I3) unless a |phi| range is stated. Random v, p ~ N(0, I3) scaled
     as stated; random t ~ N(0,1).'
@@ -251,9 +255,12 @@ claims:
     test): the theta ~ 0 return 2 qv / qw -> 2 qv (pass-3 V02). SMALL angles: 20000 R = Exp(phi) by
     scipy with theta log-uniform in [1e-10, 1e-2] (seed 20241012+2201), max |so3_log(R) - phi| <= 1e-15
     (measured 3.5e-18); moving the n -> 0 branch to n < 1e-4 gives 6.5e-13 (mutation harness
-    so3_log_small_branch_1e-4, pass-6 Q07). Pass-6 equivalents Q08, Q09, Q12 with measured effects in
-    the test; Q09 (1.1e-15) and Q12 (1.6e-15) exceed 1/10 of the 2.5e-15 band bound and are marked OPEN
-    there.'
+    so3_log_small_branch_1e-4, pass-6 Q07). The same 20000 R, RELATIVE error against a 50-digit mpmath
+    log of the rounded R: <= 1e-14 (measured 4.3e-16); moving the branch to n < 1e-5 is 3.2e-11 relative
+    but only 6.5e-16 absolute (mutation harness so3_log_small_branch_1e-5, pass-7 R03). Pass-6
+    equivalents Q08, Q09, Q12 with measured effects in the test: Q09 by the 8-ulp rounding rule (1.1e-15,
+    no worse than clean); Q12 changes only tr in (-0.5, 0], outside the 2.5e-15 band (tr <= -0.9), so
+    its threshold is 1e-13 from C52 and it is equivalent (1.6e-15).'
   domain: '||phi|| < pi. At ||phi|| = pi the SO(3) log is two-valued; above pi, log returns the wrapped
     branch.'
   verdict: CONFIRMED
@@ -281,7 +288,11 @@ claims:
     1e-2, 5e-2, 1e-1, 1.0, 3.0} (measured 8.2e-13) -- this FAILS if the Taylor branch is absent from src
     (mutation harness: taylor_branch_removed; without the branch the 2 sin^2 closed form has relative
     error 1.0 in kappa2, kappa3 and c2 at theta = 1e-9, and 1.8e-7 / 8.3e-8 in kappa3 / c2 at theta =
-    1e-4).'
+    1e-4). Accuracy of each Taylor coefficient at nextafter(5e-2, 0) against the series reference:
+    kappa1 <= 1e-12, kappa2 <= 5e-13, kappa3 <= 2e-13, c2 <= 3e-13 (measured 7.75e-13, 2.58e-13,
+    1.03e-13, 1.55e-13, the maxima over [0.045, 0.05)); c2 with th^4/30200 gives 3.13e-12 (mutation
+    harness c2_taylor_th4_over_30200, pass-7 R05). A former lower bound 5e-13 <= kappa1 error pinned the
+    truncation, not accuracy, and was removed.'
   domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
     below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just below
     the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the 1 - cos(theta)
@@ -307,7 +318,7 @@ claims:
   kind: DERIVED
   test_hint: 2000 random xi with |phi| in (0.05, 2.9), u, w ~ N(0,I3), alpha ~ N(0,1). max abs err vs
     the explicit 5x5 Cayley <= 1e-9 (measured 8.9e-16). alpha != 0 AND u != 0 are REQUIRED; at alpha =
-    0 the term under test vanishes identically.
+    0 the term under test vanishes identically (input guard, |alpha u / 2| >= 1e-3 on >= 99% of draws).
   domain: Total on gal(3) (see M1-C26).
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -463,7 +474,7 @@ claims:
     of 10 instances each, random g = |g| * (uniform random direction), |g| uniform in (2, 20)): Dt =
     +0.4 (4000 steps of dt = 1e-4, seed 20241012+3101) and Dt = -0.3 (3000 steps of dt = -1e-4, ODEs
     solved BACKWARD from t = 0, seed 20241012+3102): position vs p_j + g Dt^2 measured 5.3e-15 /
-    4.4e-15, R and v 1.7e-14 / 1.2e-14, least position miss 0.946 / 0.368 (>= 1e-3); identity checks
+    4.4e-15, R and v 1.7e-14 / 1.2e-14, input guard (data only) min |g|_inf Dt^2 2.45 / 0.946 / 0.368 (>= 1e-3); identity checks
     7.1e-14 / 1.1e-13. Mutation harness gravity_lift_uncorrected_ignores_g (pass-6 Q54),
     integrate_truth_g_permuted (Q52).'
   domain: t_i = 0.
@@ -563,8 +574,8 @@ claims:
   test_hint: 'All parts go through src.gal3.navstate_phi (seed 20241012+40, Dt = 0.5). (i)
     navstate_phi(I) == I exactly; 2000 random X: navstate_phi(X) has the R and v of X and position p +
     v*Dt, compared with the definition evaluated on gtsam NavState accessors, to 1e-12 (measured 0.0),
-    so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max over draws 2.02
-    >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to a second: N_L =
+    so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; input guard on the data:
+    max |v|_inf Dt 2.02 >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to a second: N_L =
     Phi_Dt(X) X^-1 is exact at X by construction (not asserted -- it holds for any map) and its residual
     goes continuously to 0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs,
     products by gtsam NavState.compose: max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured
@@ -644,7 +655,12 @@ claims:
     (6.20e-13, pass-6 Q05). Batched Rodrigues on [0.025, 0.03) vs mpmath <= 2.5e-15 (measured 1.1e-16);
     mutation harness so3_exp_batch_switch_0.03_no_th6 (4.33e-15, pass-6 Q41). Under the
     tolerance-equivalence rule N15 and pass-6 Q40 (1.1e-15 change each) and Q03 (1.0e-15) sit at the
-    1e-15 threshold of the 1e-14 bounds; marked OPEN in the test.'
+    1e-15 threshold of the 1e-14 bounds; pass-7 rules them EQUIVALENT (Q03 9.99e-16 <= 1e-15; N15 and
+    Q40 at rounding level, <= 8 ulp, no worse than clean). Both Rodrigues on theta in [0.04, 0.05),
+    nextafter(0.05, 0) and [0.05, 0.052] (460 angles, seed 20241012+4201) vs mpmath: <= 2e-15 each
+    (measured 1.0e-15 / 1.0e-15); a th^6/10000 term in (1 - cos th)/th^2 gives 4.9e-15 (mutation
+    harness so3_exp_c_th6_over_10000, pass-7 R01; so3_exp_batch_c_th6_over_10000, R32). Input guard
+    for the dp series check: min |dp|_inf 0.0736 >= 1e-3, from the test-local series.'
   domain: '(omega, a) constant on the interval. Dt is any real number (tested for |Dt| in (0.02, 1.3),
     both signs).'
   verdict: CONFIRMED

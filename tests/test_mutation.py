@@ -65,6 +65,8 @@ C37 = IMU + "test_gtsam_navstate_endpoint_form"
 C38 = G3 + "test_two_endpoint_forms_agree"
 C43 = IMU + "test_forster_component_equations"
 C55 = IMU + "test_bias_convention_swap"
+# every test that draws random g (rand_gravity) or uses endpoint_datasets_rand_g
+RAND_G_TESTS = [C31, C32, C33, C34, C35, C36, C37, C38, C43, C45]
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -516,6 +518,45 @@ MUTATIONS = {
         "    X[0:3, 4] += D_jk[0:3, 3] * D_ij[3, 4] - D_ij[0:3, 3] * D_jk[3, 4]\n"
         "    return X\n",
         [C45], {C45: "assert worst <= 1e-12, worst"},
+    ),
+    # ---- seventh-pass SURVIVORS (M1-F17), killed on the intended assertion ----------
+    "so3_exp_c_th6_over_10000": (                                 # pass-7 R01 (4.9e-15)
+        "src/gal3.py",
+        "        c = 0.5 - t2 / 24.0 + t4 / 720.0         # (1 - cos th)/th^2\n",
+        "        c = 0.5 - t2 / 24.0 + t4 / 720.0 + t4 * t2 / 10000.0  # (1 - cos th)/th^2\n",
+        [C42], {C42: "assert worst_sw_scalar <= 2e-15, worst_sw_scalar"},
+    ),
+    "so3_exp_batch_c_th6_over_10000": (                           # pass-7 R32 (4.9e-15)
+        "src/imu_dynamics.py",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0,",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0 + t2 * t2 * t2 / 10000.0,",
+        [C42], {C42: "assert worst_sw_batch <= 2e-15, worst_sw_batch"},
+    ),
+    "so3_log_small_branch_1e-5": (                                # pass-7 R03 (3.2e-11 rel)
+        "src/gal3.py",
+        "    if n < 1e-10:\n",
+        "    if n < 1e-5:\n",
+        [C22], {C22: "assert worst_small_rel <= 1e-14, worst_small_rel"},
+    ),
+    "c2_taylor_th4_over_30200": (                                 # pass-7 R05 (3.1e-12)
+        "src/gal3.py",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30240.0",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30200.0",
+        [C24], {C24: "assert c2_below <= 3e-13, c2_below"},
+    ),
+    "fixture_rand_gravity_minus_z": (                             # pass-7 F1
+        "tests/conftest.py",
+        "    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)\n",
+        "    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1))"
+        " * np.array([0.0, 0.0, -1.0])\n",
+        RAND_G_TESTS, {n: "assert off_z >= min_angle, off_z" for n in RAND_G_TESTS},
+    ),
+    "fixture_neg_dt_dataset_forward": (                           # pass-7 F2
+        "tests/conftest.py",
+        '(3102, 3000, -1e-4, "random g, Dt=-0.3")',
+        '(3102, 3000, 1e-4, "random g, Dt=-0.3")',
+        ENDPOINT_TESTS,
+        {n: 'assert (d["Dt"] < 0) == ("Dt=-" in d["label"])' for n in ENDPOINT_TESTS},
     ),
 }
 
