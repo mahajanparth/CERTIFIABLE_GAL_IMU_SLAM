@@ -232,3 +232,7 @@ All numbers are mine. `src` was called only as the system under test.
 ## 7. Final state
 
 Report-only commit. The full suite on the clean tree is recorded below.
+
+Full suite on the clean tree at `821349b` (this report only on top of `da672b8`): **125 passed** in 52.3 s.
+`git status` was clean before and after. No `src/`, `tests/` or `docs/claims/` file was changed, and
+every mutant lived in a scratchpad copy.
