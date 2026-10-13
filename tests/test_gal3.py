@@ -508,6 +508,19 @@ def test_log_exp_roundtrip():
     worst_band = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_band, phi_band))
     assert worst_band <= 2.5e-15, worst_band
 
+    # SMALL angles, theta log-uniform in [1e-10, 1e-2], R = Exp(phi) built by scipy and
+    # phi itself the reference: absolute error <= 1e-15 (measured 3.5e-18).  The roundtrip
+    # above starts at theta = 0.05 and bounds error at 1e-9, so it cannot see the n -> 0
+    # branch.  Moving that branch's threshold from n < 1e-10 to n < 1e-4 (mutation
+    # harness: so3_log_small_branch_1e-4, pass-6 Q07) replaces 2 atan2(n, qw)/n by 2/qw,
+    # a RELATIVE error n^2/3: 6.4e-13 absolute (3.2e-9 relative) at theta ~ 2e-4.
+    r_small = rng(2201)
+    th_small = np.exp(r_small.uniform(np.log(1e-10), np.log(1e-2), size=20000))
+    phi_small = th_small[:, None] * rand_axis(r_small, 20000)
+    R_small = Rotation.from_rotvec(phi_small).as_matrix()
+    worst_small = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_small, phi_small))
+    assert worst_small <= 1e-15, worst_small
+
 
 @pytest.mark.claim("M1-C23")
 def test_exp_surjective():

@@ -490,6 +490,18 @@ MUTATIONS = {
         "a * dt, 0.5 * a * dt * abs(dt), dt)",
         [C45], {C45: "assert worst_step_neg <= 1e-12, worst_step_neg"},
     ),
+    "so3_log_small_branch_1e-4": (                                # pass-6 Q07
+        "src/gal3.py",
+        "    if n < 1e-10:\n",
+        "    if n < 1e-4:\n",
+        [C22], {C22: "assert worst_small <= 1e-15, worst_small"},
+    ),
+    "so3_exp_batch_switch_0.03_no_th6": (                         # pass-6 Q41 (two edits)
+        "src/imu_dynamics.py",
+        '    small = th < gal3.THETA_SMALL\n    # sin(th)/th carries its th^6 Taylor term: truncating after th^4 leaves th^7/5040\n    # = 1.5e-13 in the matrix just below the switch (M1-C42), whereas the next omitted\n    # term, th^9/9!, is 5e-18.  (1 - cos th)/th^2 stops at th^4: its first omitted\n    # term th^6/8! enters multiplied by |K K| <= th^2, i.e. <= 1e-15 at the switch.\n    s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0 - t2 * t2 * t2 / 5040.0,',
+        '    small = th < 0.03\n    # sin(th)/th carries its th^6 Taylor term: truncating after th^4 leaves th^7/5040\n    # = 1.5e-13 in the matrix just below the switch (M1-C42), whereas the next omitted\n    # term, th^9/9!, is 5e-18.  (1 - cos th)/th^2 stops at th^4: its first omitted\n    # term th^6/8! enters multiplied by |K K| <= th^2, i.e. <= 1e-15 at the switch.\n    s = np.where(small, 1.0 - t2 / 6.0 + t2 * t2 / 120.0,',
+        [C42], {C42: "assert worst_batch_lo <= 2.5e-15, worst_batch_lo"},
+    ),
     # ---- stand-ins for the checks deleted in pass 6 ("cannot fail independently") ----
     "bias_to_gtsam_naive": (               # replaces C55's gtsam-only worst_naive check
         "src/imu_dynamics.py",

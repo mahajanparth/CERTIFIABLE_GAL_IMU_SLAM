@@ -383,6 +383,20 @@ def test_increment_closed_form_blocks():
     # against scipy): no matrix-level test can separate them, and no claim depends on
     # which branch evaluates s and c.
     assert worst_batch <= 1e-14, worst_batch
+    # Just below a LOWERED switch: on theta in [0.025, 0.03) the Taylor branch must keep
+    # its th^6 term of sin(th)/th.  Against a 40-digit mpmath Rodrigues, <= 2.5e-15
+    # (measured 1.1e-16; the switch at 1e-3, pass-4 N15, also measures 1.1e-16 here).
+    # Moving the switch to 0.03 AND dropping th^6/5040 (pass-6 Q41) leaves th^7/5040 =
+    # 4.3e-15 at theta -> 0.03 -- under the 1e-14 sweep bound above, but a 4x larger change
+    # than the 1e-15 that bound's tolerance-equivalence threshold allows (mutation harness:
+    # so3_exp_batch_switch_0.03_no_th6).
+    # (rodrigues_mp as defined above; own stream r_ex, so the draws below keep theirs)
+    th_lo = np.concatenate([np.linspace(0.025, 0.03, 200, endpoint=False),
+                            [np.nextafter(0.03, 0.0)] * 20])
+    phi_lo = th_lo[:, None] * rand_axis(r_ex, th_lo.size)
+    ref_lo = np.array([rodrigues_mp(p) for p in phi_lo])
+    worst_batch_lo = float(np.abs(imu._so3_exp_batch(phi_lo) - ref_lo).max())
+    assert worst_batch_lo <= 2.5e-15, worst_batch_lo
     # and with extra leading axes, as the integrators call it
     phi3 = 1.5 * r.normal(size=(4, 5, 3))
     worst_batch3 = float(np.abs(imu._so3_exp_batch(phi3) - Rotation.from_rotvec(
