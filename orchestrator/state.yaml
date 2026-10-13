@@ -492,7 +492,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -676,9 +676,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-009
     started: '2026-10-13T21:20:02+00:00'
+    finished: '2026-10-13T22:18:12+00:00'
+    outcome: completed
+    note: Caught planted M2-C32 (antisymmetric-part log off 2.06e-4 at pi - 1e-6). 25/25 confirmed; F21-F24
+      FIXED, F25 partial. 9 non-equivalent low survivors; new latent F26 (B2 covariance uses Exp's Jacobian,
+      not Cayley's). Briefly left a scratch file in /home/parth/Desktop/CertifiableIMUSLAM and moved it
+      out; I confirmed that directory is empty.
+  - role: implementer
+    agent_id: impl-M2-012-remediation
+    started: '2026-10-13T22:18:12+00:00'
     finished: null
     outcome: running
-    note: Ninth pass, fresh planted claim, zero-survivor rule with the tolerance-equivalence rule.
+    note: Fix B2 covariance Jacobian (F26); kill the 9 survivors with tighter independent covariance/quadrature/FD
+      references (F27); remove the fragile ulp check; scope the warnings filter.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -840,7 +850,7 @@ milestones:
       gap 0.384 vs hint 2.1.'
     resolution: Superseded by M2-F21..F25 per verify-M2-008.
   - id: M2-F21
-    resolved: false
+    resolved: true
     summary: 'Inputs still unvaried: W02 corrected_increment_gal3 removes gravity with the caller''s Dt
       not dt_total (dv 11.48 at Dt = 1.37 on a 0.2 s edge; test reads only .time()); W13/W14 dropping
       **kwargs from bias_jacobian_recursion / single_step is NOT equivalent (body_P_sensor moves J 29.6%,
@@ -848,29 +858,33 @@ milestones:
       rotation trace is 4.3e-8 (a 1e-6 clamp mis-weights 23x); W10 Rot3 branch of gal3 never exercised.'
     note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
       rule.
+    resolution: Ruled FIXED by verify-M2-009 (docs/verification/stage-b_m2-baselines_pass9.md).
   - id: M2-F22
-    resolved: false
+    resolved: true
     summary: 'test_f18 reads the field list from src (CayleyFactor._ARRAY_FIELDS), so shrinking the list
       shrinks the check: W07 (A_pa dropped), W08 (only bbar copied) pass all 203; W09 increment() returning
       views survives; b_g/b_a are views into bias_hat; S39 in-place edit of GalileanPreintegration.bias_hat
       desyncs it from GTSAM''s bias (predict moves 4.22e-2).'
     note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
       rule.
+    resolution: Ruled FIXED by verify-M2-009 (docs/verification/stage-b_m2-baselines_pass9.md).
   - id: M2-F23
-    resolved: false
+    resolved: true
     summary: 'REAL DEFECT: ForsterPreintegration(cov=C0) with zero noise densities never propagates C0
       -- bit-identical after 200 steps vs a true value 92% different (independently reproduced). test_b1_single_step_reads_every_field
       dodges it with sigma = 1e-30 and its has_noise-is-False assertion pins the defective gate.'
     note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
       rule.
+    resolution: Ruled FIXED by verify-M2-009 (docs/verification/stage-b_m2-baselines_pass9.md).
   - id: M2-F24
-    resolved: false
+    resolved: true
     summary: 'REAL DEFECT (low): so3_log has no near-pi branch: error 2.7e-3 at pi - 1e-6, 2.6e8 at pi
       - 1e-8; at theta = pi it returns norm ~15 vectors for 36% of axes.'
     note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
       rule.
+    resolution: Ruled FIXED by verify-M2-009 (docs/verification/stage-b_m2-baselines_pass9.md).
   - id: M2-F25
-    resolved: false
+    resolved: true
     summary: 'Remaining pass-8 survivors: kills only by change detectors (test_pass5_replay_is_faithful,
       pass6/pass7 edit anchors) do not count -- R36, R37, S02, S16, S21, S39, W13; low survivors Q01,
       Q39, Q44, W15, W17, W18, W19 (small-angle branches), P23, P46, S21, S31, W11, W12 (FD step choices),
@@ -879,6 +893,23 @@ milestones:
       on a tolerance-equivalence rule.'
     note: Remediated in ee3146e/17bed7a/8f99912; awaiting verifier ruling under the tolerance-equivalence
       rule.
+    resolution: PARTIALLY fixed per verify-M2-009; remainder is M2-F27.
+  - id: M2-F26
+    resolved: false
+    summary: 'LATENT: CayleyPreintegration''s covariance feeds gyro noise through Exp''s right Jacobian
+      instead of the Cayley one (Rai Eq. (4)); rotation block off 4.6e-7 / 7.2e-7 relative vs an FD linearisation
+      of the noisy Cayley integrator (B1 agrees to 2e-11). No claim covers B2''s covariance.'
+  - id: M2-F27
+    resolved: false
+    summary: '9 non-equivalent low survivors (verify-M2-009): X15 M1 K^2 term x(1+1e-13) (breaks C02''s
+      1e-14 at |w| = 5, T = 1); X21 has_noise requiring all gyro axes > 0; X22 accel densities <= 1e-20
+      ignored; X24 B2 covariance transition always Exp (9.5e-9..5.6e-8 rel); X31 Ba velocity block x(1+2e-9)
+      (covariance tests'' 1e-7 bound is 37x looser than C06''s 2.7e-9, FD reference itself ~2.5e-9); X41
+      navstate via Rot3.ClosestTo (2.2e-13 vs C03''s 1e-13); W12 recursion ignores eps; P23 FD_EPS 1e-3
+      and S21 factor FD eps 1e-3 (2.1-2.3e-7 rel on high-rate edges vs 1e-7). Gaps: quadrature checks
+      only on slow edges; navstate never fed a slightly non-orthogonal R. Owner decisions applied by the
+      orchestrator: Q44 is equivalent (2.96e-16 rel) -- remove the fragile 0.75-ulp correct-rounding check;
+      scope f24''s warnings-as-errors filter to src calls only.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
