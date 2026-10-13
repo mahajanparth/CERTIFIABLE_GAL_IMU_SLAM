@@ -59,6 +59,13 @@ fixture bias; S12, S13 corrupt ``bbar[3:6]``) and that Baseline 3's ``sigma_int`
 replayed as REAL FILE EDITS in a scratch copy (``PASS6_F14_SURVIVORS``,
 ``PASS6_F15_SURVIVORS``) against ``test_c13e`` / ``test_c05c`` / ``test_c25b``.
 
+Verification pass 7 (``docs/verification/stage-b_m2-baselines_pass7.md``) found the same
+class a seventh time -- an input no test moves off its fixture value (M2-F16, M2-F17 and
+the fixture-degenerate U-series) -- and that the file-level kill check matched the echoed
+test source (item 15).  ``PASS7_MUTANTS`` replays its survivors, and the same edit at
+every other input ``tests/test_input_dependence.py`` varies, as file edits; every
+file-level kill is now matched on pytest's ``E `` lines only (M2-F19).
+
 Mutations before pass 6 are applied with ``monkeypatch`` against the imported modules
 rather than by editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
