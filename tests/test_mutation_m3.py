@@ -40,13 +40,17 @@ K_C24 = T + "test_c24_cost_equals_direct[iso-500-true]"
 K_C25 = T + "test_c25_Q_psd_and_bias_block[iso]"
 K_C26 = T + "test_c26_truth_cost_and_first_order_agreement_with_gtsam"
 K_C29 = T + "test_c29_half_frobenius_weight"
+K_C24A = T + "test_c24_cost_equals_direct[aniso-300-true]"
+K_C27 = T + "test_c27_truth_discrepancy_per_component"
+K_C34 = T + "test_c34_frame_of_anisotropic_lifting"
+K_C39 = T + "test_c39_instance_fingerprint"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
     ("rR-lifting-sign", "cost.py", "- 0.5 * (Y + Yp))", "+ 0.5 * (Y + Yp))",
      "sign flip on the Y, Y' liftings in r_R", [K_C08, K_C07T]),
     ("rR-gamma-sign", "cost.py", "forms.cmat_right(Rj, I3 + 0.5 * Gam)", "forms.cmat_right(Rj, I3 - 0.5 * Gam)",
-     "sign flip of the nominal-bias Gam term on the R_j side", [K_C07T]),
+     "sign flip of the nominal-bias Gam term on the R_j side", [K_C07T, K_C27]),
     ("rv-gravity-sign", "cost.py", "rv = (vj - vi - np.outer(g * Dt, s)", "rv = (vj - vi + np.outer(g * Dt, s)",
      "gravity sign in r_v", [K_C07Z, K_C26]),
     ("rp-gravity-sign", "cost.py", "np.outer(0.5 * g * Dt**2, s)", "np.outer(-0.5 * g * Dt**2, s)",
@@ -88,6 +92,26 @@ MUTANTS = [
      "preintMeasCov read in Gal3 (rot, vel, pos) order", [K_INSTANCE]),
     ("gravity-left-position-sign", "gtsam_boundary.py", "p=-0.5 * g_w * Dt**2", "p=+0.5 * g_w * Dt**2",
      "G with +1/2 g Dt^2 (the uncorrected contract)", [K_INSTANCE]),
+    ("accel-noise-old-value", "fixture.py", "SIGMA_A = 2.0e-3", "SIGMA_A = 1.0e-2",
+     "the pre-ad89dc4 accelerometer density", [K_C39, K_INSTANCE]),
+    ("integration-noise-old-value", "fixture.py", "SIGMA_INT = 1.0e-5", "SIGMA_INT = 1.0e-6",
+     "integration covariance 1e-12 instead of 1e-10", [K_C39]),
+    ("gyro-noise-variance-not-squared", "gtsam_boundary.py", "setGyroscopeCovariance(sigma_g**2 * np.eye(3))",
+     "setGyroscopeCovariance(sigma_g * np.eye(3))", "density passed where variance is expected", [K_C39]),
+    ("gravity-NED-params", "gtsam_boundary.py", "gtsam.PreintegrationParams.MakeSharedU(", "gtsam.PreintegrationParams.MakeSharedD(",
+     "MakeSharedD (gravity +z) for a z-up world", [K_INSTANCE]),
+    ("tau-without-rai-3", "instance.py", "tau = {k: 3.0 / np.trace(cov[(k, k)])", "tau = {k: 1.0 / np.trace(cov[(k, k)])",
+     "tau^-1 = tr(Sigma) instead of (1/3) tr(Sigma)", [K_C39]),
+    ("rw-dt-one-second", "instance.py", "dtb = F.T_EDGE", "dtb = 1.0",
+     "random-walk Dt taken as 1 s", [K_C39]),
+    ("rv-nominal-bias-jside-dropped", "cost.py", "+ 0.5 * (Rcv(Rj, cv) + Rcv(M, cv)) - 0.5 * (V + Vp))",
+     "+ 1.0 * Rcv(M, cv) - 0.5 * (V + Vp))", "cbar^v applied on the R_i side only", [K_C27, K_C07T]),
+    ("aniso-weight-override-ignored", "cost.py", "edge.W_vp if W_vp is None else np.asarray(W_vp, float)",
+     "edge.W_vp", "caller's W_vp silently ignored", [K_C34]),
+    ("rho-v-p-order-swap", "cost.py",
+     "rho = np.vstack([layout.vec_form(layout.rho_v(e)), layout.vec_form(layout.rho_p(e))])",
+     "rho = np.vstack([layout.vec_form(layout.rho_p(e)), layout.vec_form(layout.rho_v(e))])",
+     "W_vp applied in (pos, vel) order", [K_C24A]),
     ("rw-missing-dt", "instance.py", "np.full(3, 1.0 / (F.SIGMA_BG_RW**2 * dtb))", "np.full(3, 1.0 / F.SIGMA_BG_RW**2)",
      "random-walk precision without Dt_b", [K_C25]),
 ]
