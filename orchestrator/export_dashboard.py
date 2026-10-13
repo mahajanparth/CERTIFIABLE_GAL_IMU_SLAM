@@ -18,7 +18,7 @@ import yaml
 from . import ledger
 
 WORKTREES = pathlib.Path("/home/parth/Desktop/.cgis_worktrees")
-TREE = {"M0": "m0", "M1": "m1", "M2": "m2"}
+TREE = {"M0": "m0", "M1": "m1", "M2": "m2", "M3": "m3"}
 
 
 def _claims(ms):
