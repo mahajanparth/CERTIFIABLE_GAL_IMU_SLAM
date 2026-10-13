@@ -90,11 +90,16 @@ def cb(b):
     return ConstantBias(np.asarray(b[3:6], float), np.asarray(b[0:3], float))
 
 
+#: the claims' stated IMU noise model (domain of M3-C01.., fingerprint M3-C39), written here
+#: as literals rather than read from src
+GYRO_COV, ACC_COV, INT_COV = (1.7e-4)**2, (2.0e-3)**2, 1e-10
+
+
 def make_pim(gyro, acc, dt, bbar):
-    p = gtsam.PreintegrationParams(G_W)
-    p.setGyroscopeCovariance(FX.SIGMA_G**2 * I3)
-    p.setAccelerometerCovariance(FX.SIGMA_A**2 * I3)
-    p.setIntegrationCovariance(FX.SIGMA_INT**2 * I3)
+    p = gtsam.PreintegrationParams.MakeSharedU(9.81)
+    p.setGyroscopeCovariance(GYRO_COV * I3)
+    p.setAccelerometerCovariance(ACC_COV * I3)
+    p.setIntegrationCovariance(INT_COV * I3)
     pim = gtsam.PreintegratedImuMeasurementsG(p, cb(bbar))
     for w, a in zip(gyro, acc):
         pim.integrateMeasurement(np.asarray(a, float), np.asarray(w, float), dt)
@@ -222,7 +227,7 @@ def decode_ref(z):
 RW_PREC = np.diag([1 / (FX.SIGMA_BG_RW**2 * 0.5)] * 3 + [1 / (FX.SIGMA_BA_RW**2 * 0.5)] * 3)
 
 
-def J_direct(state, r, imu="iso", rot_weight=0.5):
+def J_direct(state, r, imu="iso", rot_weight=0.5, W_vp=None):
     """Cost from 5x5 residuals (M3-C24): IMU + chordal R0 + v0/p0 + GNSS + random walk."""
     tr = truth_ref()
     J = 0.0
@@ -242,10 +247,10 @@ def J_direct(state, r, imu="iso", rot_weight=0.5):
             J += ed["tau_v"] * rv @ rv + ed["tau_p"] * rp @ rp
         elif imu == "aniso":
             rho = np.r_[M.T @ rv, M.T @ rp]
-            J += rho @ ed["W_vp"] @ rho
+            J += rho @ (ed["W_vp"] if W_vp is None else W_vp) @ rho
         elif imu == "world":
             q = np.r_[rv, rp]
-            J += q @ ed["W_vp"] @ q
+            J += q @ (ed["W_vp"] if W_vp is None else W_vp) @ q
     sp_ = FX.SIGMA_PRIOR
     J += 0.5 / sp_**2 * np.sum((state.R[0] - tr.R[0])**2)
     J += np.sum((state.v[0] - tr.v[0])**2) / sp_**2 + np.sum((state.p[0] - tr.p[0])**2) / sp_**2
@@ -257,7 +262,7 @@ def J_direct(state, r, imu="iso", rot_weight=0.5):
     return float(J)
 
 
-def imu_info(ed, kind="iso"):
+def imu_info(ed, kind="iso", W_vp=None):
     """9x9 information in the IMU factor's NavState order (rot, pos, vel)."""
     Info = np.zeros((9, 9))
     rot, pos, vel = slice(0, 3), slice(3, 6), slice(6, 9)
@@ -271,21 +276,21 @@ def imu_info(ed, kind="iso"):
         return Info
     if kind == "aniso":
         Info[rot, rot] = ed["tau_R"] * I3
-        W = ed["W_vp"]                                  # (vel, pos) order
+        W = ed["W_vp"] if W_vp is None else W_vp       # (vel, pos) order
         Info[vel, vel], Info[vel, pos] = W[0:3, 0:3], W[0:3, 3:6]
         Info[pos, vel], Info[pos, pos] = W[3:6, 0:3], W[3:6, 3:6]
         return Info
     raise ValueError(kind)
 
 
-def gtsam_cost(state, r, kind="iso"):
+def gtsam_cost(state, r, kind="iso", W_vp=None):
     """2 * graph.error of the GTSAM reference graph (M3-C26)."""
     tr = truth_ref()
     graph = gtsam.NonlinearFactorGraph()
     for ed in r["edges"]:
         f = gtsam.GalileanImuFactor(X(ed["i"]), V(ed["i"]), X(ed["j"]), V(ed["j"]), B(ed["i"]),
                                     ed["pim"])
-        graph.add(f.cloneWithNewNoiseModel(noiseModel.Gaussian.Information(imu_info(ed, kind))))
+        graph.add(f.cloneWithNewNoiseModel(noiseModel.Gaussian.Information(imu_info(ed, kind, W_vp))))
     graph.add(gtsam.PriorFactorPose3(X(0), Pose3(Rot3(tr.R[0]), tr.p[0]),
                                      noiseModel.Isotropic.Sigma(6, FX.SIGMA_PRIOR)))
     graph.add(gtsam.PriorFactorVector(V(0), tr.v[0], noiseModel.Isotropic.Sigma(3, FX.SIGMA_PRIOR)))
@@ -309,6 +314,15 @@ def random_state(rng, R_scale=2.0, b_norm=0.2):
                     [rng.standard_normal(3) for _ in range(3)],
                     [rng.standard_normal(3) for _ in range(3)],
                     [b_norm / np.sqrt(6) * rng.standard_normal(6) for _ in range(3)])
+
+
+def claim_sampler_state(rng):
+    """The C32/C35 sampler: R_k = Exp(2 N(0,I3)), v_k, p_k ~ N(0,I3), b_k ~ 0.3 N(0,I6)."""
+    R = [rexp(2 * rng.standard_normal(3)) for _ in range(3)]
+    v = [rng.standard_normal(3) for _ in range(3)]
+    p = [rng.standard_normal(3) for _ in range(3)]
+    b = [0.3 * rng.standard_normal(6) for _ in range(3)]
+    return LF.State(R, v, p, b)
 
 
 def perturbed(state, eps, rng):
@@ -496,11 +510,55 @@ def test_c04_bias_jacobian_structure():
         # predict's correction is exactly linear in the Log chart, which is why the instance
         # may use a larger step: h = 1e-2 agrees with h = 1e-6 to FD round-off (eps/h ~ 1e-10)
         assert np.abs(fd_J(pim, bb, 1e-2) - J).max() <= 1e-8
+    # proof step: the Gal(3) right Jacobian series has equal diagonal blocks, and agrees with a
+    # finite-difference right Jacobian of Gal3.Expmap
+    rng = np.random.default_rng(404)
+    for _ in range(200):
+        x = rng.standard_normal(10)
+        x *= 0.8 / np.linalg.norm(x)
+        Jr = _right_jacobian_series(x)
+        h = 1e-6
+        E0inv = np.linalg.inv(gexp(x))
+        Jfd = np.zeros((10, 10))
+        for k in range(10):
+            d = np.zeros(10)
+            d[k] = h
+            Jfd[:, k] = (gtsam.Gal3.Logmap(gtsam.Gal3(E0inv @ gexp(x + d)))
+                         - gtsam.Gal3.Logmap(gtsam.Gal3(E0inv @ gexp(x - d)))) / (2 * h)
+        assert np.abs(Jr - Jfd).max() <= 1e-8
+        assert np.array_equal(Jr[0:3, 0:3], Jr[3:6, 3:6])
+        assert np.array_equal(Jr[0:3, 0:3], Jr[6:9, 6:9])
     # the instance's J is this J (project column order)
     for which in ("true", "zero"):
         for e, ed in enumerate(inst(which).edges):
             assert np.abs(ed.J - fd_J(fixture_pim(e, ref(which)["bbar"]), ref(which)["bbar"],
                                       1e-6)).max() <= 1e-8
+
+
+def _vee5(A):
+    return np.r_[A[2, 1], A[0, 2], A[1, 0], A[0:3, 3], A[0:3, 4], A[3, 4]]
+
+
+def _ad(x):
+    """ad_x y = vee([x^, y^]), built column by column from the matrix commutator."""
+    X_ = xhat(x)
+    cols = []
+    for k in range(10):
+        y = np.zeros(10)
+        y[k] = 1.0
+        Y_ = xhat(y)
+        cols.append(_vee5(X_ @ Y_ - Y_ @ X_))
+    return np.array(cols).T
+
+
+def _right_jacobian_series(x, terms_=40):
+    A = -_ad(x)
+    out, P, fact = np.zeros((10, 10)), np.eye(10), 1.0
+    for n in range(terms_):
+        fact *= (n + 1)
+        out = out + P / fact                   # (-ad_x)^n / (n+1)!
+        P = P @ A
+    return out
 
 
 def _random_Xi(rng):
@@ -796,8 +854,8 @@ def _consistency(z, r):
 @pytest.mark.slow
 def test_c18_primary_feasible_set_is_lifted_states():
     fam, r = fams("zero"), ref("zero")
-    rng = np.random.default_rng(18)
     prim = CN.flat(fam, ["P0", "P1", "P2", "P3"])
+    rng = np.random.default_rng(7)
     converged = 0
     for _ in range(200):
         z, res = _solve_feasible(prim, rng.standard_normal(124))
@@ -975,20 +1033,46 @@ def test_c26_truth_cost_and_first_order_agreement_with_gtsam():
         assert worst <= 0.05 * eps, (eps, worst)
 
 
+def _gtsam_unwhitened(state, ed):
+    f = gtsam.GalileanImuFactor(X(0), V(0), X(1), V(1), B(0), ed["pim"])
+    vals = gtsam.Values()
+    i, j = ed["i"], ed["j"]
+    vals.insert(X(0), Pose3(Rot3(state.R[i]), state.p[i]))
+    vals.insert(V(0), np.asarray(state.v[i], float))
+    vals.insert(X(1), Pose3(Rot3(state.R[j]), state.p[j]))
+    vals.insert(V(1), np.asarray(state.v[j], float))
+    vals.insert(B(0), cb(state.b[i]))
+    n = np.asarray(f.unwhitenedError(vals))                 # NavState order (rot, pos, vel)
+    return n[0:3], n[6:9], n[3:6]                           # -> rot, vel, pos
+
+
 @pytest.mark.claim("M3-C27")
-def test_c27_bbar_offset_difference_halves():
-    rel = []
+def test_c27_truth_discrepancy_per_component():
+    st = truth_ref()
+    dev = {"rot": [], "vel": [], "pos": []}
     for lam in (1, 0.5, 0.25, 0.125):
         bbar = tuple((1 - lam) * FX.BIAS_TRUE)
-        I = INST.build_instance(np.array(bbar))
-        z = LF.z_of_state(truth_ref(), I)
-        Jm = CO.factored_cost(z, CO.terms(I, LF.BASE))
-        Jg = gtsam_cost(truth_ref(), ref(bbar))
-        assert Jg > 0
-        rel.append(abs(Jm - Jg) / Jg)
-    assert rel[0] <= 1e-2, rel
-    ratios = [rel[k + 1] / rel[k] for k in range(3)]
-    assert all(0.45 <= q <= 0.55 for q in ratios), (rel, ratios)
+        I = INST.build_instance(np.array(bbar))            # code under test: the M3 residuals
+        z = LF.z_of_state(st, I)
+        m = {"rot": 0.0, "vel": 0.0, "pos": 0.0}
+        g = {"rot": 0.0, "vel": 0.0, "pos": 0.0}
+        for e, ed in enumerate(ref(bbar)["edges"]):          # independent: GTSAM's residuals
+            rR, rv, rp = CO.edge_residual_forms(I, LF.BASE, e)
+            m["rot"] += 0.5 * np.sum(np.einsum("abn,n->ab", rR, z) ** 2)
+            m["vel"] += np.sum((rv @ z) ** 2)
+            m["pos"] += np.sum((rp @ z) ** 2)
+            nr, nv, npos = _gtsam_unwhitened(st, ed)
+            g["rot"] += nr @ nr
+            g["vel"] += nv @ nv
+            g["pos"] += npos @ npos
+        for k in dev:
+            dev[k].append(m[k] / g[k] - 1)
+    for k, d in dev.items():
+        assert max(abs(x) for x in d) <= 3e-2, (k, d)
+    shrink = {k: [abs(d[q + 1]) / abs(d[q]) for q in range(3)] for k, d in dev.items()}
+    assert all(0.2 <= f <= 0.3 for f in shrink["rot"]), (dev, shrink)
+    for k in ("vel", "pos"):
+        assert all(0.45 <= f <= 0.55 for f in shrink[k]), (k, dev, shrink)
 
 
 @pytest.mark.claim("M3-C28")
@@ -1100,18 +1184,19 @@ SUB = np.r_[np.arange(0, 30), np.arange(45, 51), np.arange(63, 93), [S_IDX]]   #
 
 
 @functools.lru_cache(maxsize=None)
-def _samples():
-    """6000 i.i.d. lifted states at bbar = 0: monomial matrix over the edge-0 sub-vector."""
+def _samples(seed):
+    """6000 i.i.d. lifted states at bbar = 0 from the claims' sampler (numpy default_rng(seed)):
+    the degree-2 monomial matrix over the edge-0 sub-vector, and rho_v, rho_p of edge 0."""
     assert len(SUB) == 67
     r = ref("zero")
-    rng = np.random.default_rng(32)
+    rng = np.random.default_rng(seed)
     iu = np.triu_indices(67)
+    ed = r["edges"][0]
     rows, rhov, rhop = [], [], []
     for _ in range(6000):
-        st = random_state(rng)
+        st = claim_sampler_state(rng)
         zs = z_ref(st, r)[SUB]
         rows.append(np.outer(zs, zs)[iu])
-        ed = r["edges"][0]
         rr = resid5(st, ed, r["bbar"])
         M = st.R[0] @ ed["dR"]
         rhov.append(M.T @ rr[0:3, 3])
@@ -1122,7 +1207,7 @@ def _samples():
 @pytest.mark.claim("M3-C32")
 @pytest.mark.slow
 def test_c32_monomial_fit():
-    Phi, rv, rp, iu = _samples()
+    Phi, rv, rp, iu = _samples(2)
     assert Phi.shape == (6000, 2278)
 
     def relres(f):
@@ -1162,21 +1247,24 @@ def test_c33_partial_anisotropy():
         assert worst <= 0.05 * eps, (eps, worst)
 
 
+W_SYN = 1e6 * np.diag([1.0, 2.0, 5.0, 1.0, 2.0, 5.0])     #: M3-C34's synthetic (vel, pos) weight
+
+
 @pytest.mark.claim("M3-C34")
-def test_c34_full_vel_pos_anisotropy_via_rho():
+def test_c34_frame_of_anisotropic_lifting():
     r = ref("true")
+    T = CO.terms(inst("true"), LF.ANISO, "aniso", W_vp=W_SYN)
     rng = np.random.default_rng(34)
     for eps in (1e-2, 1e-3, 1e-4):
-        worst = 0.0
+        body = world = 0.0
         for _ in range(30):
             st = perturbed(truth_ref(), eps, rng)
-            worst = max(worst, abs(m3_cost(st, "true", "aniso") / gtsam_cost(st, r, "aniso") - 1))
-        assert worst <= 0.05 * eps, (eps, worst)
-    worst_world = 0.0
-    for _ in range(30):
-        st = perturbed(truth_ref(), 1e-4, rng)
-        worst_world = max(worst_world, abs(J_direct(st, r, imu="world") / gtsam_cost(st, r, "aniso") - 1))
-    assert worst_world >= 1e-3, worst_world
+            Jg = gtsam_cost(st, r, "aniso", W_vp=W_SYN)
+            Jm = CO.factored_cost(LF.z_of_state(st, inst("true"), LF.ANISO), T)
+            body = max(body, abs(Jm / Jg - 1))
+            world = max(world, abs(J_direct(st, r, imu="world", W_vp=W_SYN) / Jg - 1))
+        assert body <= 1.0 * eps, (eps, body)
+        assert world >= 1e-2, (eps, world)
 
 
 def _mono_coeffs(A):
@@ -1200,9 +1288,12 @@ def _restricted(cs):
 
 @functools.lru_cache(maxsize=None)
 def _nullspace():
-    Phi = _samples()[0]
+    """Cut at the largest relative singular-value gap (claim M3-C35)."""
+    Phi = _samples(4)[0]
     U, sv, Vt = np.linalg.svd(Phi, full_matrices=True)
-    rank = int((sv > 1e-10 * sv[0]).sum())
+    pos = sv[sv > 0]
+    k = int(np.argmax(pos[:-1] / pos[1:]))           # gap between sv[k] and sv[k+1]
+    rank = k + 1
     return Vt[rank:].T, sv, rank
 
 
@@ -1210,7 +1301,9 @@ def _nullspace():
 @pytest.mark.slow
 def test_c35_autotight_cross_check():
     N, sv, rank = _nullspace()
-    assert rank == 2015 and N.shape == (2278, 263)
+    gap_hi, gap_lo = sv[rank - 1] / sv[0], sv[rank] / sv[0]
+    assert rank == 2015 and N.shape == (2278, 263), (rank, gap_hi, gap_lo)
+    Phi = _samples(4)[0]
     fam = fams("zero")
     stages = [("P1", "P2", "P3"), ("RA1", "RB1", "RB2", "RC1"), ("RG",), ("RL",), ("RH",), ("RS",)]
     expected = [60, 92, 106, 136, 226, 236]
@@ -1221,123 +1314,38 @@ def test_c35_autotight_cross_check():
         S = np.vstack(acc)
         s = np.linalg.svd(S, compute_uv=False)
         assert int((s > 1e-10 * s[0]).sum()) == exp, (names, int((s > 1e-10 * s[0]).sum()))
-        # (a) basis-free: every hand form is annihilated by the samples to 1e-10 relative
-        Phi = _samples()[0]
+        # projection onto the computed null space (the claim's "inside it to 1e-10")
+        proj = Cf - (Cf @ N) @ N.T
+        assert (np.linalg.norm(proj, axis=1) / np.linalg.norm(Cf, axis=1)).max() <= 1e-10, names
+        # and basis-free: annihilated by the samples
         ann = np.linalg.norm(Phi @ Cf.T, axis=0) / (sv[0] * np.linalg.norm(Cf, axis=1))
         assert ann.max() <= 1e-10, (names, ann.max())
-        # (b) projection onto the COMPUTED null-space basis.  That basis is only as accurate as
-        # the singular-value gap allows (Wedin: sin(angle) <~ eps * sigma_0 / sigma_{rank-1});
-        # with these samples sigma_{rank-1}/sigma_0 = 1.4e-8, so the bound is ~1.6e-8 and
-        # 1e-10 cannot be resolved (measured up to 4.8e-10).  Tolerance = max(1e-10, bound).
-        tol = max(1e-10, np.finfo(float).eps * sv[0] / sv[rank - 1])
-        proj = Cf - (Cf @ N) @ N.T
-        assert (np.linalg.norm(proj, axis=1) / np.linalg.norm(Cf, axis=1)).max() <= tol, names
 
 
 # ======================================================================================
-# C36 - C38: OPEN-HYPOTHESIS -- the Shor relaxation (the measurement the claims describe)
+# C39: instance fingerprint
 # ======================================================================================
-#
-# These claims say "settle in M4".  The measurement is implemented here exactly as the
-# claims describe it (Clarabel, numerical rank with the 1e-6 relative floor, sigma_1/sigma_2,
-# Rai's eta) and the tests assert only what the claims assert.  A failure is a finding.
 
-from src.qcqp import sdp as SDP  # noqa: E402
+FINGERPRINT = {0: (6.9204e7, 4.8049e5, 5.8906e6), 1: (6.9204e7, 4.8167e5, 5.8972e6)}
 
 
-@functools.lru_cache(maxsize=None)
-def _shor(which, aniso=False, extra_key=None):
-    layout = LF.ANISO if aniso else LF.BASE
-    T = terms(which, "aniso" if aniso else "iso")
-    cs = CN.flat(fams(which, aniso))
-    if extra_key is not None:
-        cs = cs + list(_discovered(which))
-    res = SDP.solve_shor(CO.assemble_Q(T), cs, solver="CLARABEL")
-    eta, f = SDP.relative_gap(res, inst(which), layout, T)
-    return res, eta, f
+def _sig4(a, b):
+    return float(f"{a:.4e}") == float(f"{b:.4e}")
 
 
-def _edge_sub(e):
-    """Edge-e sub-vector: R_i, v_i, p_i, R_j, v_j, p_j, b_i, the 30 liftings, s (67 entries)."""
-    return np.r_[np.arange(15 * e, 15 * e + 30), np.arange(45 + 6 * e, 51 + 6 * e),
-                 np.arange(63 + 30 * e, 93 + 30 * e), [S_IDX]]
-
-
-@functools.lru_cache(maxsize=None)
-def _discovered(which):
-    """Null-space directions per edge not spanned by the hand families, as Constraints."""
-    r = ref(which)
-    rng = np.random.default_rng(36)
-    out = []
+@pytest.mark.claim("M3-C39")
+def test_c39_instance_fingerprint():
+    r = ref("zero")                      # independent PIMs with the stated params, bbar = 0
+    I = inst("zero")
     for e in range(2):
-        sub = _edge_sub(e)
-        iu = np.triu_indices(67)
-        Phi = np.array([np.outer(zs, zs)[iu] for zs in
-                        (z_ref(random_state(rng), r)[sub] for _ in range(6000))])
-        _, sv, Vt = np.linalg.svd(Phi, full_matrices=True)
-        rank = int((sv > 1e-10 * sv[0]).sum())
-        N = Vt[rank:].T
-        keep = np.zeros(124, bool)
-        keep[sub] = True
-        H = []
-        for c in CN.flat(fams(which)):
-            rows, cols = c.A.nonzero()
-            if c.b == 0 and keep[rows].all() and keep[cols].all():
-                A = c.A.toarray()[np.ix_(sub, sub)]
-                C = 2 * A
-                C[np.diag_indices(67)] = np.diag(A)
-                H.append(C[iu])
-        Hn = np.array(H) @ N
-        _, s2, V2 = np.linalg.svd(Hn, full_matrices=True)
-        k = int((s2 > 1e-10 * s2[0]).sum())
-        for u in V2[k:]:
-            d = N @ u
-            Cm = np.zeros((67, 67))
-            Cm[iu] = d
-            Asub = 0.5 * (Cm + Cm.T)                  # off-diagonal coefficient 2 A_ab -> A_ab
-            Asub[np.diag_indices(67)] = np.diag(Cm)
-            A = np.zeros((124, 124))
-            A[np.ix_(sub, sub)] = Asub
-            out.append(CN.Constraint("AT", f"e{e} autotight", sp.csr_matrix(A), 0.0))
-    return tuple(out)
-
-
-@pytest.mark.claim("M3-C36")
-@pytest.mark.slow
-def test_c36_discovered_directions_tighten():
-    disc = _discovered("true")
-    assert len(disc) == 2 * 27, len(disc)
-    base, eta0, _ = _shor("true")
-    more, eta1, _ = _shor("true", extra_key="autotight")
-    # A comparison of two solves means something only if each solve is valid: weak duality
-    # requires p* <= the cost of a feasible point (the ground truth, ~1e-22).  Tolerance:
-    # Clarabel's default 1e-8 gap tolerance in the solver's units (cost / max|Q|), mapped back.
-    _assert_weak_duality(base)
-    _assert_weak_duality(more)
-    assert more.rank < base.rank or eta1 < eta0, (base.rank, eta0, more.rank, eta1)
-
-
-def _assert_weak_duality(res):
-    f_truth = CO.factored_cost(z_ref(truth_ref(), ref("true"), aniso=res.Z.shape[0] == 136),
-                               terms("true", "aniso" if res.Z.shape[0] == 136 else "iso"))
-    tol = 1e-8 * np.abs(CO.assemble_Q(terms("true"))).max()
-    assert res.dual <= f_truth + tol, (
-        f"invalid solve ({res.status}): dual p* = {res.dual:.4g} exceeds the feasible "
-        f"ground-truth cost {f_truth:.2g} by more than the solver tolerance {tol:.3g}; "
-        f"primal {res.primal:.4g}, sigma1/sigma2 = {res.sv_ratio:.3g}, rank {res.rank}")
-
-
-@pytest.mark.claim("M3-C37")
-@pytest.mark.slow
-def test_c37_shor_tight_noise_free():
-    res, eta, f = _shor("true")
-    assert res.sv_ratio >= 1e5 and eta <= 1e-4, (res.status, res.primal, res.dual, res.sv_ratio,
-                                                 res.rank, eta, f)
-
-
-@pytest.mark.claim("M3-C38")
-@pytest.mark.slow
-def test_c38_aniso_keeps_tightness():
-    res, eta, f = _shor("true", aniso=True)
-    assert res.sv_ratio >= 1e5 and eta <= 1e-4, (res.status, res.primal, res.dual, res.sv_ratio,
-                                                 res.rank, eta, f)
+        ed, ei = r["edges"][e], I.edges[e]
+        assert ed["Dt"] == 0.5000000000000003 and ei.Dt == 0.5000000000000003
+        for got_ref, got_src, want in zip((ed["tau_R"], ed["tau_v"], ed["tau_p"]),
+                                          (ei.tau_R, ei.tau_v, ei.tau_p), FINGERPRINT[e]):
+            assert _sig4(got_ref, want), (e, got_ref, want)
+            assert _sig4(got_src, want), (e, got_src, want)
+    d = np.diag(I.rw_precision)
+    assert np.all(I.rw_precision == np.diag(d))
+    assert all(_sig4(x, 5.5402e9) for x in d[0:3]) and all(_sig4(x, 2.2222e5) for x in d[3:6]), d
+    dr = np.diag(RW_PREC)
+    assert all(_sig4(x, 5.5402e9) for x in dr[0:3]) and all(_sig4(x, 2.2222e5) for x in dr[3:6])

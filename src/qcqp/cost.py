@@ -13,7 +13,8 @@ These are the top 3x5 block of the cleared Gal(3) residual
 Weightings (``variant``):
 
 * ``"iso"`` (base, n = 124): 1/2 tau_R ||r_R||_F^2 + tau_v ||r_v||^2 + tau_p ||r_p||^2;
-* ``"aniso"`` (n = 136): 1/2 tau_R ||r_R||_F^2 + [rho_v; rho_p]^T W_vp [rho_v; rho_p];
+* ``"aniso"`` (n = 136): 1/2 tau_R ||r_R||_F^2 + [rho_v; rho_p]^T W_vp [rho_v; rho_p]
+  (W_vp from preintMeasCov, or a caller-supplied weight);
 * ``"partial"`` (n = 124, claim M3-C33): tr(rt G rt^T), G = blkdiag(D, G2).
 
 Plus, in every variant: chordal R_0 prior 1/(2 sigma^2) ||R_0 - R0bar s||_F^2, v_0 / p_0
@@ -69,7 +70,9 @@ def edge_residual_forms(inst, layout: Layout, e: int):
     return rR, rv, rp
 
 
-def terms(inst, layout: Layout = BASE, variant: str = "iso") -> list[Term]:
+def terms(inst, layout: Layout = BASE, variant: str = "iso", W_vp=None) -> list[Term]:
+    """``W_vp`` (aniso only): a 6x6 weight on [rho_v; rho_p] used for every edge instead of
+    the instance's preintMeasCov-derived one (claim M3-C34's synthetic weight)."""
     if variant == "aniso":
         assert layout.aniso, "anisotropic variant needs the n = 136 layout"
     out = []
@@ -85,7 +88,7 @@ def terms(inst, layout: Layout = BASE, variant: str = "iso") -> list[Term]:
             out.append(Term(f"imu{e}.pos", rp, edge.tau_p * np.eye(3)))
         elif variant == "aniso":
             rho = np.vstack([layout.vec_form(layout.rho_v(e)), layout.vec_form(layout.rho_p(e))])
-            out.append(Term(f"imu{e}.rho", rho, edge.W_vp))
+            out.append(Term(f"imu{e}.rho", rho, edge.W_vp if W_vp is None else np.asarray(W_vp, float)))
         else:
             raise ValueError(variant)
     s = layout.s_form()

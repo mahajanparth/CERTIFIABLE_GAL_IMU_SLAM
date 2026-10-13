@@ -32,15 +32,11 @@ ROT_VEC_0 = np.array([0.10, -0.20, 0.30])
 P_0 = np.zeros(3)
 V_0 = np.array([0.50, -0.30, 0.20])
 
-# -- noise model of the M3 instance -------------------------------------------------------
-# The M3 claims fix the prior, GNSS and random-walk sigmas but NOT the IMU white-noise
-# densities.  These three are the M2 baseline values (M2 observability graph); they reproduce
-# the claims' incidental measurements D ~ 3.46e7 I (M3-C33), G2 correlation -0.867 (M3-C33) and
-# max|Q| ~ 1.1e10 (M3-C25, which also fixes the random walk as Rai's 1/(sigma^2 Dt_b)).
-# Isotropic per-axis densities are an implementer's reading, reported as an ambiguity.
-SIGMA_G = 1.7e-4        #: gyro white-noise density (rad/s/sqrt(Hz)); M2 baseline value
-SIGMA_A = 1.0e-2        #: accel white-noise density (m/s^2/sqrt(Hz)); M2 baseline value
-SIGMA_INT = 1.0e-6      #: integration noise density; M2 baseline value
+# -- noise model of the M3 instance (claims M3-C01.. domain, fingerprint M3-C39) ---------
+# GTSAM PreintegrationParams.MakeSharedU(9.81), isotropic densities, all else default.
+SIGMA_G = 1.7e-4        #: gyroscopeCovariance = SIGMA_G^2 I3  [(rad/s)^2/Hz]
+SIGMA_A = 2.0e-3        #: accelerometerCovariance = SIGMA_A^2 I3  [(m/s^2)^2/Hz]
+SIGMA_INT = 1.0e-5      #: integrationCovariance = SIGMA_INT^2 I3 = 1e-10 I3
 SIGMA_PRIOR = 1.0e-3    #: KF0 R / v / p prior sigma (M3 domain)
 SIGMA_GNSS = 0.05       #: GNSS position sigma on KF1, KF2 (M3 domain)
 SIGMA_BG_RW = 1.9e-5    #: gyro-bias random-walk density (M3 domain)
