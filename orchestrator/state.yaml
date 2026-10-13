@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -294,9 +294,18 @@ milestones:
   - role: verifier
     agent_id: verify-M1-004
     started: '2026-10-13T08:34:53+00:00'
+    finished: '2026-10-13T09:00:54+00:00'
+    outcome: completed
+    note: Caught planted M1-C57 (Ad position picks up + alpha v; miss up to 8.28). 55/55 confirmed; F07,
+      F08, F10 fixed, F09 partial. 40 of 50 new mutants killed; 4 medium survivors, incl. the symbolic
+      Cayley constraints M3 depends on (F11).
+  - role: implementer
+    agent_id: impl-M1-005-remediation
+    started: '2026-10-13T09:00:54+00:00'
     finished: null
     outcome: running
-    note: Restart of the third verification pass, same planted claim (never committed).
+    note: Check the symbolic Cayley constraints' content, large-angle batch exp, the keyframe-time guard
+      and label the expm-identity check (M1-F11).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -347,27 +356,46 @@ milestones:
       detail.'
     resolution: Ruled FIXED by verify-M1-002 (docs/verification/m1-gal3-mechanics_pass2.md).
   - id: M1-F07
-    resolved: false
+    resolved: true
     summary: '5 surviving mutants: navstate_phi sign flip / no-shift (no test calls src.gal3.navstate_phi;
       C40 defines its own phi); cay_denominator I - xi^/2 -> I + xi^/2 (C26 checks only the determinant,
       identical for both); integrate_increment updating position with the new velocity (never compared
       to the ODE); imu_step_element dropping the 1/2 (never called by a test); euler_increment made semi-implicit
       (still first order).'
+    resolution: Ruled FIXED by verify-M1-004 (docs/verification/m1-gal3-mechanics_pass3.md).
   - id: M1-F08
-    resolved: false
+    resolved: true
     summary: C41's recorded rule 'dt <= 5e-6, tolerance 1e-5' FAILS at dt = 5e-6 on the test's own 1000
       configurations (1.485e-5, 4 over); the test passes only because it uses dt = 2.5e-6. Recorded 'err/dt
       = 0.2494' does not reproduce (worst 2.97 at the test seed).
+    resolution: Ruled FIXED by verify-M1-004 (docs/verification/m1-gal3-mechanics_pass3.md).
   - id: M1-F09
-    resolved: false
+    resolved: true
     summary: 'Tests that cannot fail w.r.t. src: C40 parts (i)/(ii); C26 determinant assertions; math-only
       checks (C24 trunc_at_8e2, C21 forbidden_worst, C28 transcription, C37 worst_minus, C41 order_gap,
       C24 rel_k3/rel_c2); C06 witness-is-not-None; no guard that the endpoint fixture''s inputs are non-commuting.'
+    resolution: PARTIALLY fixed per verify-M1-004; the remainder is M1-F11.
   - id: M1-F10
-    resolved: false
+    resolved: true
     summary: 'Stale recorded figures (F05 remainder): C06 5.0 vs 16.15, C19 3.9e-14 vs 3.8e-15, C23 7.5e-14
       vs 1.49e-13 (understated), C51 Expmap/Logmap off ~20-40x, C41 central difference 2.1e-10 vs 8.9e-11,
       C24 ''<= 1.1e-12'' is 1.106e-12 (1.36e-12 on a denser sweep). None near a tolerance.'
+    resolution: Ruled FIXED by verify-M1-004 (docs/verification/m1-gal3-mechanics_pass3.md).
+  - id: M1-F11
+    resolved: false
+    summary: 'Medium pass-3 survivors: V22 cayley_constraints_symbolic E3 without the (alpha/2)u term
+      (independently reproduced: 46/46 test_gal3 green) and V23 with S = I + [phi]x/2 -- C30''s symbolic
+      part only counts 15 expressions of degree 2, never their content, and these are the constraints
+      M3''s QCQP consumes; V34 _so3_exp_batch dividing by theta instead of theta^2 (no test steps integrate_*
+      with |omega| dt >= 0.05; one-step error 0.42 at dt 0.2); V26 KEYFRAME_TIME_TOL raised to 1e-3 (guard
+      tested only at t_i = 0.25). Also C41''s central-difference check d/ds expm(sA) = expm(sA)A holds
+      for ANY matrix and is unlabelled.'
+  advisory_findings:
+  - id: M1-A01
+    summary: 'Low/equivalent pass-3 survivors (non-blocking): V06 structural_residual without the det
+      term (C02 det check vacuous), V33 batch Taylor without theta^4 (2.4e-9), V44 so3_log threshold moved;
+      equivalents V02, V18, V39. C41 admissible dt is 3.367e-6 (rounded 3.37e-6 is one configuration over);
+      headroom is seed-specific (worst coefficient 1.72-4.09 over 300 seeds).'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
