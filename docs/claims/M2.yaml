@@ -325,9 +325,9 @@ claims:
 - id: M2-C22
   statement: 'TIER 1 -- same discretization. Baselines 1 and 2 share Rai Eq. (9) and differ only in the
     rotation retraction, so at KF2 on the fixture they agree to 1e-6 in v, p AND R under the raw reading
-    phi_k = (omega_k - bbar_g) dt that Rai Sec. IV-A fixes. The 3.0e-8 rotation gap is a PROPERTY of the
+    phi_k = (omega_k - bbar_g) dt that Rai Sec. IV-A fixes. The 3.0e-8 rotation gap at KF2 (elementwise max-abs of the rotation-matrix difference) is a PROPERTY of the
     Cayley retraction, not an error: Cay(theta a) rotates by 2 arctan(theta/2), losing theta^3/12 per
-    step, so the gap is exactly ||omega||^3 T dt^2 / 12 per edge (2.3257e-8 and 5.5175e-8 rad) and is
+    step, so the gap is exactly ||omega||^3 T dt^2 / 12 per edge (2.3257e-8 and 5.5175e-8 rad, as rotation angles ||Log||_2) and is
     O(dt^2) -- the ratio is 0.25 per halving of dt over n = 100..1600. Substituting Exp for Cay must
     therefore make this claim FAIL, not pass.'
   source: DERIVED
