@@ -88,6 +88,10 @@ def gal3_components(X: Gal3):
 
 
 def navstate(state: NavTriple) -> NavState:
+    """``NavState(R, p, v)`` with ``R`` passed AS GIVEN: ``Rot3(matrix)`` stores the
+    matrix, so a rotation that has drifted off SO(3) by rounding is not re-orthonormalised
+    here, and ``predict`` then applies the endpoint relation (claim M2-C03) to that same
+    ``R`` (pass 9, X41)."""
     return NavState(Rot3(state.R), state.p, state.v)
 
 

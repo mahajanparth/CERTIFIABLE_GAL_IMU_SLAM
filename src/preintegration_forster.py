@@ -208,9 +208,13 @@ def integrate_edge_states(edges_, bias_hat, state0, g_W=G_W,
 # Bias correction -- Forster Eq. (44)
 # --------------------------------------------------------------------------------------
 
-#: finite-difference step for the reference bias Jacobians.  Central differences, so the
-#: truncation is O(eps^2) ~ 1e-12 and does not pollute the quadratic-growth test of C05.
-FD_EPS = 1e-6
+#: finite-difference step for the bias Jacobians (central differences).  The error is
+#: truncation ``O(eps^2)`` plus round-off ``O(1/eps)`` accumulated over the re-integration.
+#: Pass 9 (M2-F27 f) measured both against complex-step Jacobians on high-rate edges
+#: (|omega| = 5 and 2.5 rad/s, T = 1 and 1.5 s): eps = 1e-6 (the old value) is
+#: round-off-limited at up to 5.2e-8 relative, eps = 1e-3 truncation-limited at 1.8e-7,
+#: and eps = 3e-5 sits at the minimum, <= 1.3e-9 on those edges.
+FD_EPS = 3e-5
 
 
 def bias_jacobians_fd(edge, bias_hat, eps: float = FD_EPS,

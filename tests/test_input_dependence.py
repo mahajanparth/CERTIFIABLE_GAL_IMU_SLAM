@@ -177,9 +177,15 @@ Notes.
 * The module constants ``SMALL_ANGLE``, ``FD_EPS``, ``J_FD_EPS``, ``C_FD_EPS``,
   ``GAL3_BLOCK_FOR_NAVSTATE`` and the fixture literals are DEFINITIONS (C01 pins the
   literals); the defaults that read them are covered by passing other values explicitly.
-* ``bias_jacobian_recursion``'s ``eps`` does not change the result measurably: one
-  step's increment is linear in the bias to ~1e-12 at any ``eps <= 0.1`` (W12 in pass 8:
-  4.5e-8 relative at eps 5e-2 -- a sub-tolerance FD-step choice, not pinned here).
+* ``bias_jacobian_recursion``'s ``eps`` DOES change the result outside the fixture
+  regime: at dt = 0.3 s it moves ``J`` by 1.9e-7 (eps 5e-2) and 3.1e-6 (eps 0.2)
+  relative.  The note that stood here ("does not change the result measurably") was
+  false (pass 9, W12); ``test_f27_recursion_reads_eps_at_large_steps`` pins it.
+* Pass 9 (M2-F26, M2-F27) added: complex-step covariance and bias-Jacobian references
+  (``_cs_*``; the covariance bound is now 1e-10, was 1e-7); Baseline 2's covariance with
+  gyro noise on (``test_f26_*``); per-axis-zero and 1e-21 densities; ``M1`` / ``M2`` on
+  fast twists against ``mpmath`` quadrature; ``navstate`` on a drifted ``R``; and the
+  FD-step defaults on high-rate edges (``FD_EPS`` is now 3e-5).
 * The ``**kwargs`` of ``single_step`` / ``bias_jacobian_recursion`` are NOT inert, and
   the note that used to stand here ("gravity does not enter an increment", so dropping
   them is equivalent) was false: ``params`` can carry ``body_P_sensor``, which moves
@@ -389,7 +395,7 @@ STATE_B = (iexp([-0.70, 0.25, 0.90]), np.array([-0.60, 0.85, -1.10]), np.array([
 #: tolerances.  TIER0 for exact arithmetic paths; the others are measured headroom
 TIER0 = 1e-12
 EULER_PIN = 1e-12          # retyped Euler sums vs src's (same arithmetic up to the retraction)
-JAC_FD_REL = 1e-7          # src's FD (eps 1e-6) vs the reference FD (eps 1e-5), relative
+JAC_FD_REL = 1e-7          # src's FD (eps FD_EPS = 3e-5) vs the reference FD (eps 1e-5), relative
 #: Eq. (63) vs the COMPLEX-STEP linearisation of the retyped noisy Euler step, relative.
 #: Pass 9 (M2-F27 a): the old FD reference was good to only ~2.5e-9, so its bound (1e-7)
 #: could not see a 4e-9 Ba error (X31) or a 9.5e-9 transition error in B2 (X24).  The
@@ -2095,3 +2101,246 @@ def _block_rel(A, B_):
             err = float(np.abs(a - b).max())
             worst = max(worst, err / scale if scale > 0 else (np.inf if err else 0.0))
     return worst
+
+
+# --------------------------------------------------------------------------------------
+# M2-F26: Baseline 2's covariance with gyro noise ON
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.claim("M2-F26")
+def test_f26_cayley_covariance_against_complex_step():
+    """``CayleyPreintegration``'s Eq. (63) with gyro noise on, against the complex-step
+    linearisation of the noisy CAYLEY Euler integrator (:func:`_cs_covariance` with
+    :func:`_ccay`), block by block.
+
+    Pass 9 (M2-F26) found the covariance feeding gyro noise through ``Exp``'s right
+    Jacobian while integrating with ``Cay``; the noisy step is ``Cay(w dt) Exp(J_Cay(w dt)
+    n dt)`` (Rai Eq. (4)), so the rotation block was off by 4.6e-7 / 7.2e-7 relative on
+    the fixture edges.  Every earlier B2 covariance check ran at zero densities, where the
+    noise input does not enter.  The reparameterized contrast integrates with
+    ``Cay(2 tan(theta/2) a) = Exp(theta a)``, so its reference retraction is ``Exp``.
+    Measured agreement (clean): <= 1.2e-12 block-relative."""
+    failures = []
+    gyro_tv, accel_tv, _ = T.time_varying_stream(40, 4.7e-3)
+    streams = (("EDGE_A", EDGE_A.gyro_stream(), EDGE_A.accel_stream(), EDGE_A.dt, BIAS_BOTH),
+               ("EDGE_B", EDGE_B.gyro_stream(), EDGE_B.accel_stream(), EDGE_B.dt, BIAS_GYRO),
+               ("time-varying stream", gyro_tv, accel_tv, 4.7e-3, BIAS_BOTH))
+    sg = np.array([2e-4, 5e-4, 9e-4])
+    sa = np.array([4e-3, 1.1e-2, 2.6e-2])
+    for label, gyro, accel, dt, bias in streams:
+        variants = ((B2.VARIANT_RAW, _ccay),) + (
+            ((B2.VARIANT_REPARAM, _cexp),) if label == "EDGE_B" else ())
+        for variant, cretract in variants:
+            for noise, kw in (("gyro noise alone", dict(sigma_g=sg)),
+                              ("gyro and accel noise", dict(sigma_g=sg, sigma_a=sa))):
+                want = _cs_covariance(gyro, accel, dt, bias, kw.get("sigma_g", 0.0),
+                                      kw.get("sigma_a", 0.0), cretract)
+                pim = B2.CayleyPreintegration(bias_hat=bias.copy(), variant=variant, **kw)
+                for omega, acc in zip(gyro, accel):
+                    pim.integrate_measurement(omega, acc, dt)
+                _check(failures, f"CayleyPreintegration({variant}) Eq. (63), {noise}, on "
+                       f"{label} (block-relative)", _block_rel(pim.cov, want), COV_CS_REL)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F27 (c): the noise gate with per-axis zeros and tiny densities
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.claim("M2-F27")
+def test_f27_has_noise_per_axis_and_tiny_densities():
+    """Per-axis densities with ZERO axes, and tiny positive densities (1e-21), for both
+    integrators, against :func:`_cs_covariance`.  ``has_noise`` is "some density is
+    positive": a single positive gyro axis, or an accel density of 1e-21, is noise and
+    must be propagated (pass 9: X21 required every gyro axis to be positive and X22
+    ignored densities <= 1e-20; both returned a ZERO covariance, 100% off)."""
+    failures = []
+    gyro, accel, _ = T.time_varying_stream(14, 1e-3)
+    configs = (("sigma_g = [3e-4, 0, 0] alone", np.array([3e-4, 0.0, 0.0]), 0.0),
+               ("sigma_g = [0, 0, 5e-4], sigma_a = [0, 2e-2, 0]", np.array([0.0, 0.0, 5e-4]),
+                np.array([0.0, 2e-2, 0.0])),
+               ("sigma_a = 1e-21 alone", 0.0, 1e-21),
+               ("sigma_a = [0, 0, 1e-21] alone", 0.0, np.array([0.0, 0.0, 1e-21])),
+               ("sigma_g = 1e-21 alone", 1e-21, 0.0))
+    for cls, cretract in ((B1.ForsterPreintegration, _cexp), (B2.CayleyPreintegration, _ccay)):
+        for label, sg, sa in configs:
+            where = f"{cls.__name__} with {label}"
+            pim = cls(bias_hat=BIAS_BOTH.copy(), sigma_g=sg, sigma_a=sa)
+            if not pim.has_noise:
+                failures.append(f"{where}: has_noise is False")
+            for omega, acc in zip(gyro, accel):
+                pim.integrate_measurement(omega, acc, 1e-3)
+            want = _cs_covariance(gyro, accel, 1e-3, BIAS_BOTH, sg, sa, cretract)
+            _check(failures, f"{where}: Eq. (63) over 14 steps (block-relative)",
+                   _block_rel(pim.cov, want), COV_CS_REL)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F27 (d): M1 / M2 on FAST twists against high-precision quadrature
+# --------------------------------------------------------------------------------------
+
+
+def _mp_quad_M1_M2(w, Tt):
+    """``M1 = int_0^T Exp(w s) ds`` and ``M2 = int_0^T (T - s) Exp(w s) ds`` (Cauchy's
+    repeated-integral formula) by 30-digit ``mpmath.quad`` of the Rodrigues coefficients
+    ``sin(th s)`` and ``1 - cos(th s)`` -- numerical integration, not the closed-form
+    antiderivatives under test."""
+    mpmath = _mp()
+    mpmath.mp.dps = 30
+    w = [mpmath.mpf(float(x)) for x in w]
+    Tt = mpmath.mpf(Tt)
+    th = _mp_norm(mpmath, w)
+    K = _mp_hat(mpmath, [x / th for x in w])
+    I3 = mpmath.eye(3)
+    s1 = mpmath.quad(lambda s: mpmath.sin(th * s), [0, Tt])
+    c1 = mpmath.quad(lambda s: 1 - mpmath.cos(th * s), [0, Tt])
+    s2 = mpmath.quad(lambda s: (Tt - s) * mpmath.sin(th * s), [0, Tt])
+    c2 = mpmath.quad(lambda s: (Tt - s) * (1 - mpmath.cos(th * s)), [0, Tt])
+    out = (_mp_to_np(Tt * I3 + s1 * K + c1 * (K * K)),
+           _mp_to_np(Tt**2 / 2 * I3 + s2 * K + c2 * (K * K)))
+    mpmath.mp.dps = 60
+    return out
+
+
+@pytest.mark.claim("M2-F27")
+def test_f27_M1_M2_fast_twists_against_quadrature():
+    """``M1``, ``M2`` at |w| = 5, 2.55 and 4.05 rad/s, T = 1 and 0.9 s, against
+    :func:`_mp_quad_M1_M2`, at C02's own 1e-14.  On the slow fixture-like twists a
+    1e-13-relative error in the ``K^2`` coefficient is ~5e-16 absolute (pass 9: X15
+    survived); at |w| = 5 it is 1.2e-13.  Measured clean: <= 2.5e-16."""
+    failures = []
+    for w, Tt in ((np.array([3.0, -4.0, 0.0]), 1.0), (np.array([1.5, 0.5, -2.0]), 1.0),
+                  (np.array([-2.2, 3.1, 1.4]), 0.9)):
+        M1w, M2w = _mp_quad_M1_M2(w, Tt)
+        _check(failures, f"M1(w={w}, T={Tt}) vs mpmath quadrature", mabs(T.M1(w, Tt), M1w),
+               1e-14)
+        _check(failures, f"M2(w={w}, T={Tt}) vs mpmath quadrature", mabs(T.M2(w, Tt), M2w),
+               1e-14)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F27 (e): navstate on a rotation carrying orthogonality drift
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.claim("M2-F27")
+def test_f27_navstate_keeps_a_drifted_rotation():
+    """``navstate`` passes ``R`` to GTSAM as given (``Rot3(matrix)`` stores the matrix; no
+    re-orthonormalisation), so Baseline 3's ``predict`` from a state whose ``R`` has
+    drifted off SO(3) -- as chained floating-point states do -- is the component endpoint
+    relation (C03, "holds for any state") applied to THAT ``R``, to 1e-12.  Projecting
+    (pass 9: X41, ``Rot3.ClosestTo``) moves the result by the drift: 3.2e-11 at an
+    orthogonality error of 6e-11.  Measured clean: 5e-15."""
+    rng = _rng(67)
+    failures = []
+    for (R0, v0, p0), edge, bias, g, drift in ((STATE_A, EDGE_A, BIAS_BOTH, G_A, 1e-11),
+                                               (STATE_B, EDGE_B, BIAS_ACCEL, G_B, 3e-11)):
+        R = R0 + drift * rng.normal(size=(3, 3))
+        orth = float(np.abs(R.T @ R - np.eye(3)).max())
+        assert orth >= 1e-11, f"the drift is not visible ({orth:.1e})"
+        where = f"(orthogonality error {orth:.1e})"
+        if not np.array_equal(B3.navstate(T.NavTriple(R=R, v=v0, p=p0)).attitude().matrix(), R):
+            failures.append(f"navstate does not keep a drifted R as given {where}")
+        got = B3.integrate_edge(edge, bias.copy(), g_W=g).predict(T.NavTriple(R=R, v=v0, p=p0))
+        U = izoh_stream(edge.gyro_stream(), edge.accel_stream(), edge.dt, bias)
+        want = ichain((R, v0, p0), (U[0:3, 0:3], U[0:3, 3], U[0:3, 4]),
+                      EDGE_DURATION[edge.index], g)
+        for name, g_, w_ in zip("Rvp", got.as_tuple(), want):
+            _check(failures, f"Baseline 3 predict from a drifted R {where}: {name}",
+                   mabs(g_, w_), TIER0)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F27 (f): FD-step choices, on high-rate edges and at large eps
+# --------------------------------------------------------------------------------------
+
+#: src's default-eps bias Jacobians vs complex step, relative.  Measured clean (FD_EPS =
+#: 3e-5): <= 4.2e-10 on the high-rate edges below; FD_EPS = 1e-3 (P23) / a factor eps of
+#: 1e-3 (S21) give 8.6e-8 and 1.8e-7; the old FD_EPS = 1e-6 gave up to 2.0e-8.
+JAC_CS_REL = 1e-8
+
+#: high-rate edges: |omega| = 5 rad/s over 1 s and |omega| = 2.55 rad/s over 1.5 s
+HIGH_RATE_EDGES = (
+    ("|w| = 5, T = 1 s", T.Edge(index=0, omega_body=np.array([3.0, -4.0, 0.0]),
+                                f_body=np.array([0.4, -1.2, 9.7]), dt=5e-3, n_steps=200)),
+    ("|w| = 2.55, T = 1.5 s", T.Edge(index=1, omega_body=np.array([1.5, 0.5, -2.0]),
+                                     f_body=np.array([-0.6, 0.8, 10.1]), dt=5e-3, n_steps=300)))
+
+
+@pytest.mark.claim("M2-F27")
+def test_f27_bias_jacobians_on_high_rate_edges_against_complex_step():
+    """``bias_jacobians_fd`` (default eps; B1 and B2) and ``CayleyFactor.from_edge`` (both
+    variants) on high-rate edges, against :func:`_cs_bias_jacobians` of the retyped Euler
+    sums.  The old checks ran only on slow edges against FD references good to ~2e-8, so
+    an FD step of 1e-3 (P23, S21: truncation 1.8e-7 here) survived."""
+    failures = []
+    for label, edge in HIGH_RATE_EDGES:
+        gyro, accel, dt = edge.gyro_stream(), edge.accel_stream(), edge.dt
+        refs = {"exp": _cs_bias_jacobians(gyro, accel, dt, BIAS_BOTH, _cexp),
+                "cay": _cs_bias_jacobians(gyro, accel, dt, BIAS_BOTH, _ccay)}
+        for cls, key in ((B1.ForsterPreintegration, "exp"), (B2.CayleyPreintegration, "cay")):
+            got = B1.bias_jacobians_fd(edge, BIAS_BOTH.copy(), cls=cls)
+            for name, g_, r_ in zip(JAC_NAMES, got, refs[key]):
+                _check(failures, f"bias_jacobians_fd({cls.__name__}) {name} at the default "
+                       f"eps on the high-rate edge {label}", rel(g_, r_), JAC_CS_REL)
+        for variant, key in ((B2.VARIANT_RAW, "cay"), (B2.VARIANT_REPARAM, "exp")):
+            f = B2.CayleyFactor.from_edge(edge, BIAS_BOTH.copy(), variant=variant)
+            for name, r_ in zip(FACTOR_JAC_NAMES, refs[key]):
+                _check(failures, f"CayleyFactor.from_edge({variant}) {name} on the high-rate "
+                       f"edge {label}", rel(getattr(f, name), r_), JAC_CS_REL)
+    _assert_no_failures(failures)
+
+
+def _igal3_vee(A):
+    return np.concatenate([ivee(A[0:3, 0:3]), A[0:3, 3], A[0:3, 4], [A[3, 4]]])
+
+
+def _irecursion(gyro, accel, dt, bias, n, eps):
+    """``J_{k+1} = Ad_{V_k^-1} J_k + C_k`` retyped: ``V_k`` from one 5x5 ``expm`` (exact
+    ZOH), ``C_k`` by central differences at step ``eps`` of :func:`igal3_log`, and the
+    adjoint by conjugating :func:`igal3_hat`.  No ``src``, no GTSAM."""
+    def V(k, db):
+        b = bias + iswap(db)
+        dR, dv, dp = izoh(gyro[k] - b[0:3], accel[k] - b[3:6], dt)
+        return igal3(dR, dp, dv, dt)
+
+    J, out = np.zeros((10, 6)), []
+    for k in range(n):
+        V0 = V(k, np.zeros(6))
+        Xinv = np.linalg.inv(V0)
+        C = np.zeros((10, 6))
+        for m in range(6):
+            e = np.zeros(6)
+            e[m] = eps
+            C[:, m] = (igal3_log(Xinv @ V(k, e)) - igal3_log(Xinv @ V(k, -e))) / (2 * eps)
+        Ad = np.column_stack([_igal3_vee(Xinv @ igal3_hat(c) @ V0) for c in np.eye(10)])
+        J = Ad @ J + C
+        out.append(J)
+    return out
+
+
+@pytest.mark.claim("M2-F27")
+def test_f27_recursion_reads_eps_at_large_steps():
+    """``bias_jacobian_recursion(eps=...)`` with LARGE steps (dt = 0.3 s, 10 steps) and
+    large eps (5e-2, 0.2), where one step's increment is visibly nonlinear in the bias,
+    against :func:`_irecursion` at the SAME eps.  The inventory used to say ``eps`` "does
+    not change the result measurably"; at these inputs it moves ``J`` by 1.9e-7 and
+    3.1e-6 relative, so a recursion that drops ``eps`` (pass 9: W12) is wrong.  Measured
+    clean: <= 1.9e-14."""
+    failures = []
+    dt, n = 0.3, 10
+    gyro, accel, _ = T.time_varying_stream(n, dt)
+    small = _irecursion(gyro, accel, dt, BIAS_BOTH, n, 1e-6)
+    for eps in (5e-2, 0.2):
+        want = _irecursion(gyro, accel, dt, BIAS_BOTH, n, eps)
+        visible = max(rel(w_, s_) for w_, s_ in zip(want, small))
+        assert visible >= 1e-7, f"eps = {eps} is not visible ({visible:.1e})"
+        got = B3.bias_jacobian_recursion(gyro, accel, dt, BIAS_BOTH.copy(), n, eps=eps)
+        _check(failures, f"bias_jacobian_recursion at dt = {dt}, eps = {eps}",
+               max(rel(g_, w_) for g_, w_ in zip(got, want)), 1e-9)
+    _assert_no_failures(failures)
