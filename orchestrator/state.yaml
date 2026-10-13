@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -325,10 +325,18 @@ milestones:
   - role: implementer
     agent_id: impl-M1-006-remediation
     started: '2026-10-13T14:46:15+00:00'
+    finished: '2026-10-13T15:13:34+00:00'
+    outcome: completed
+    note: '120 passed; harness 45 mutants all killed on their named assertion, 4 proven equivalent in
+      comments (V02, V18, V39, N15). src: theta^6 Taylor term in _so3_exp_batch (C42 bound tightened 1e-12
+      -> 1e-14) and NaN-refusing keyframe guard. I re-applied P10 (alpha positive=True): C30 fails.'
+  - role: verifier
+    agent_id: verify-M1-007
+    started: '2026-10-13T15:13:34+00:00'
     finished: null
     outcome: running
-    note: Kill P10/P03/P13/P08/P19/P22 and every promoted advisory item, or prove equivalence in place
-      (F13, F14).
+    note: 'Sixth pass, fresh planted claim, zero-survivor rule: rule on F13/F14 and check every equivalence
+      proof.'
   blocking_findings:
   - id: M1-F01
     resolved: true
