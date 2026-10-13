@@ -353,6 +353,17 @@ def test_increment_closed_form_blocks():
     assert worst_so3_scipy <= 1e-14, worst_so3_scipy
     assert worst_so3_mp <= 1e-14, worst_so3_mp
     assert worst_dR <= 1e-14, worst_dR
+    # Pass-6 so3_exp mutants ruled EQUIVALENT, measured change of so3_exp's output
+    # (mutant vs clean) against the threshold 1e-15 (1/10 of the 1e-14 bounds above):
+    # * Q04 ((1 - cos th)/th^2 written with the literal 1 - cos th in the closed-form
+    #   branch): absolute error ~eps/th^2 in c, multiplied by |K K| <= th^2, so O(eps) in
+    #   the matrix.  Measured change 6.7e-16 on 20000 phi with |phi| in [0.05, 12].
+    # * Q03 (Taylor branch for theta <= THETA_SMALL instead of <): changes only theta =
+    #   0.05 exactly, where the Taylor branch's (1 - cos th)/th^2, stopped at th^4, is off
+    #   by th^6/8! times |K K| <= th^2, i.e. <= 0.05^8/8! = 9.7e-16, plus rounding.
+    #   Measured change 1.0e-15 on 2000 axes.  OPEN under the strict rule: that is AT the
+    #   1e-15 threshold (it can exceed it by an ulp), and the mutant is as accurate as
+    #   the clean code there, so no independent-reference check can kill it.
 
     # dR = Exp(omega Dt) as the integrators compute it: the batched Rodrigues used by
     # integrate_truth / integrate_increment, against scipy Rotation, ACROSS the
@@ -382,6 +393,14 @@ def test_increment_closed_form_blocks():
     # that interval (this check measures 5.6e-16 with the mutant, 1.1e-15 clean, both
     # against scipy): no matrix-level test can separate them, and no claim depends on
     # which branch evaluates s and c.
+    # Under the tolerance-equivalence rule (threshold 1/10 of this 1e-14 bound = 1e-15),
+    # N15's measured CHANGE of the batch output, mutant vs clean, on 250000 angles in
+    # [1e-3, 0.05) is 1.1e-15 (the th^8/8! = 9.7e-16 truncation of the clean Taylor c,
+    # plus rounding); pass-6 Q40 (batch Taylor branch for th <= THETA_SMALL, i.e. at
+    # th = 0.05 exactly) measures the same 1.1e-15 on 200000 axes.  OPEN: both sit AT the
+    # threshold, and both mutants are at least as accurate as the clean code, so no
+    # independent-reference check can kill them.  (Just below 0.03, where the clean
+    # truncation is 1.6e-17, N15's change is 1.1e-16 -- see worst_batch_lo below.)
     assert worst_batch <= 1e-14, worst_batch
     # Just below a LOWERED switch: on theta in [0.025, 0.03) the Taylor branch must keep
     # its th^6 term of sin(th)/th.  Against a 40-digit mpmath Rodrigues, <= 2.5e-15
@@ -632,6 +651,13 @@ def test_preintegration_chaining_is_the_group_product():
         worst_ode = max(worst_ode, float(np.abs(C - gal(gR[k], gv[k], gp[k], T1 + T2)).max()))
     assert worst_ode <= 1e-10, worst_ode
 
+    # EQUIVALENT MUTANTS (pass-6), measured effect 0.0 on every output:
+    # * Q38 (integrate_increment uses D0's arrays without copying): the loop only REBINDS
+    #   dR, dv, dp (dp = dp + ..., dR = dR @ E); nothing is mutated in place, so neither
+    #   the caller's D0 nor any result changes (bit-identical).
+    # * Q39 (the per-step stream length check in _inputs removed): it only raises on
+    #   malformed streams; every claim input has leading length n, and outputs on valid
+    #   input are bit-identical.
     # 4000 purely algebraic triples against the hand-written component formulas: the
     # first 2000 with positive durations (the recorded draws), the appended 2000 with
     # durations of either sign (the claim is total; a backward segment chains by the

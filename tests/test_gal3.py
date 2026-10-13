@@ -205,6 +205,10 @@ def test_wedge_vee_inverse():
     assert np.array_equal(wedge(e[6])[0:3, 4], np.array([1.0, 0.0, 0.0]))
     assert np.abs(wedge(e[3])[0:3, 4]).max() == 0.0
     assert np.abs(wedge(e[6])[0:3, 3]).max() == 0.0
+    # EQUIVALENT MUTANT (pass-6 Q23: unskew reads -A[1, 2] instead of A[2, 1]), proof:
+    # on the claim's domain gal(3) the rotation block is skew, A[2, 1] = -A[1, 2]
+    # exactly (negation is exact in IEEE arithmetic).  Measured effect on every vee /
+    # unskew output over skew input: 0.0 (bit-identical), so below any tolerance / 10.
 
 
 @pytest.mark.claim("M1-C09")
@@ -520,6 +524,25 @@ def test_log_exp_roundtrip():
     R_small = Rotation.from_rotvec(phi_small).as_matrix()
     worst_small = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_small, phi_small))
     assert worst_small <= 1e-15, worst_small
+    # Pass-6 so3_log mutants ruled EQUIVALENT by the verifier, with their measured effect
+    # (change of so3_log's output, mutant vs clean) against the tolerance-equivalence
+    # threshold (1/10 of the tightest bound on so3_log's output in the affected region):
+    # * Q08 (qw < 0 -> qw <= 0): changes the output only at qw = 0 exactly, i.e. theta =
+    #   pi, where it returns -phi instead of phi.  Both are principal logs (|phi| = pi) and
+    #   Exp maps both to R; C22 excludes theta = pi from its roundtrip and C23's
+    #   exp(log X) = X holds for either: on 20003 exact-pi rotations R = 2 a a^T - I (all
+    #   have qw = 0, so all flip) the change of exp(log R) is 1.7e-15 (C23 bound 1e-9 ->
+    #   threshold 1e-10).
+    # * Q09 (first diagonal branch with >=): changes the output only on exact ties
+    #   R00 == R11 or R00 == R22; there the two branches evaluate algebraically equal
+    #   quaternions.  Measured change 1.1e-15 at |phi| in (1.6, pi] (8000 tied rotations).
+    # * Q12 (trace branch for tr > -0.5 instead of tr > 0): exact algebra; s >= sqrt(2)
+    #   so rounding is not amplified.  Measured change 1.6e-15 on 20000 R with tr in
+    #   (-0.5, 0]; error vs phi 8.9e-16 for mutant AND clean code.
+    # OPEN under the strict rule: for |phi| ~ 1 .. pi the tightest log bound is this test's
+    # 2.5e-15 band bound, so the threshold is 2.5e-16 -- about half an ulp of pi.  Q09's and
+    # Q12's measured changes (1.1e-15, 1.6e-15) exceed it although neither mutant is less
+    # accurate than the clean code (no independent-reference check can separate them).
 
 
 @pytest.mark.claim("M1-C23")
@@ -622,6 +645,17 @@ def test_gamma1_invertibility_and_taylor_branch():
     trunc_at_switch = float(abs(mp.mpf(gal3.gamma_coefficients(below)[0])
                                 - series_ref(below)[0]) / series_ref(below)[0])
     assert 5e-13 <= trunc_at_switch <= 1e-12, trunc_at_switch
+    # EQUIVALENT MUTANTS (tolerance-equivalence rule: no output moves by more than 1/10
+    # of the tightest tolerance any claim states for it):
+    # * pass-6 Q17, kappa2 = (1 - s/theta)/theta^2 instead of (theta - s)/(theta^3):
+    #   algebraically identical; the extra division rounds to <= 12 eps/theta^2 relative.
+    #   Measured on 40001 theta in [0.05, 2 pi): max |kappa2 change| 2.2e-14 (1.3e-13
+    #   relative; C24's tightest coefficient bound is 1e-11 relative -> threshold 1e-12),
+    #   and max change of the Gamma1 / Gamma2 MATRICES 8.2e-16 (tightest matrix bound,
+    #   C21's 1e-13 -> threshold 1e-14).
+    # * pass-6 Q18, the theta < 0 ValueError removed: every caller passes a norm
+    #   (gamma1/gamma2/gamma1_inv use np.linalg.norm), and C24's statement covers
+    #   theta >= 0 only.  Measured effect on every claim output: 0.0 (code not reached).
 
 
 # ==========================================================================
@@ -712,6 +746,11 @@ def test_cayley_denominator_never_vanishes():
                         / max(1.0, float(np.abs(xi).max())))
         min_det = min(min_det, float(np.linalg.det(Den)))
     assert worst_rel <= 1e-12, worst_rel
+    # EQUIVALENT MUTANT (pass-6 Q26: cay_matrix as (I5 + A/2)(I5 - A/2)^-1), proof:
+    # polynomials (and inverses of polynomials) in the same A commute, so the product is
+    # algebraically identical; only rounding differs.  Measured on these 20000 draws'
+    # distribution (seed 7): max relative change of cay_matrix 3.4e-15 (tightest bound on
+    # it, worst_rel <= 1e-12 relative -> threshold 1e-13).
     assert worst_den <= 1e-12, worst_den
     assert worst_struct <= 1e-12, worst_struct
     assert min_det >= 1.0 - 1e-12, min_det
