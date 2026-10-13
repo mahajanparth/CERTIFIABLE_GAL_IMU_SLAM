@@ -71,9 +71,16 @@ self-referential F18 field list (W07, W08), unpinned outward aliasing (W09, S39)
 still unvaried (W02, W13, W14, W46, U47, W10), small-angle branches no reference could
 resolve (Q01, Q39, W15, W17-W20, Q44), and two latent ``src`` defects: a Forster
 covariance frozen at zero densities (M2-F23) and ``so3_log`` near ``pi`` (M2-F24).
-``PASS8_MUTANTS`` replays all of them -- and both defects -- as file edits, each killed
+``PASS8_MUTANTS`` replays them -- and both defects -- as file edits, each killed
 by a check against an INDEPENDENT reference on its intended ``E `` line; none relies on
-a change detector (``test_pass5_replay_is_faithful`` or a pass-6/7 edit anchor).
+a change detector (``test_pass5_replay_is_faithful`` or a pass-6/7 edit anchor).  Q44 is
+no longer replayed: pass 9 ruled it equivalent and its ulp check was removed.
+
+Verification pass 9 (``docs/verification/stage-b_m2-baselines_pass9.md``) found Baseline
+2's covariance using Exp's right Jacobian (M2-F26) and nine survivors no reference could
+resolve (M2-F27: X15, X21, X22, X24, X31, X41, W12, P23, S21).  ``PASS9_MUTANTS``
+replays all of them and the defect as file edits, killed by complex-step, ``mpmath``
+quadrature and retyped-recursion references.
 
 Mutations before pass 6 are applied with ``monkeypatch`` against the imported modules
 rather than by editing files, so each one is undone automatically and the mutants cannot leak into
@@ -1555,14 +1562,16 @@ PASS8_MUTANTS = [
     ("W20", "trajectory.py",
      [("    c = min(1.0, max(-1.0, c_raw))\n", "    c = min(1.0, c_raw)\n")],
      (_P8_F24,), ("so3_log at pi - 0e+00 raises",)),
-    ("Q44", "trajectory.py",
-     [("    c = min(1.0, max(-1.0, c_raw))\n", "    c = min(1.0 - 1e-15, max(-1.0, c_raw))\n")],
-     (_P8_LOG,), ("so3_log series branch, |phi| < 1e-8",)),
+    # Q44 (``arccos`` clamped at ``1 - 1e-15``) is no longer replayed here: it is
+    # EQUIVALENT under the tolerance rule (pass 9: 3.3e-24 absolute, 2.96e-16 relative on
+    # so3_log, against a 2.3e-12 threshold), and the 0.75-ulp correct-rounding check that
+    # used to kill it was removed by orchestrator decision (it pinned unclaimed behaviour
+    # with a 1.18x margin on the clean code).
 ]
 
 #: the pass-8 survivors this file must kill on a reference check, plus the two defects
 PASS8_REQUIRED = {"F23", "F24", "W02", "W07", "W08", "W09", "W10", "W13", "W14", "W46",
-                  "U47", "Q01", "Q39", "W15", "W17", "W18", "W19", "W20", "Q44"}
+                  "U47", "Q01", "Q39", "W15", "W17", "W18", "W19", "W20"}
 
 
 @pytest.fixture(scope="module")
@@ -1609,3 +1618,132 @@ def test_pass8_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS8_REQUIRED <= {m[0] for m in PASS8_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-9 sweep (docs/verification/stage-b_m2-baselines_pass9.md
+# Sec. 5.4, findings M2-F26, M2-F27) and the latent defect M2-F26, replayed as REAL FILE
+# EDITS.  Every killer is a check against an INDEPENDENT reference -- complex-step
+# linearisations of the retyped integrators, 30-digit ``mpmath`` quadrature, the retyped
+# endpoint relation with a 5x5 ``expm`` increment, a retyped Gal(3) recursion -- never a
+# change detector, and every kill must land on the intended assertion's ``E `` line.
+# ======================================================================================
+
+_P9_F26 = _ID + "test_f26_cayley_covariance_against_complex_step"
+_P9_NOISE = _ID + "test_f27_has_noise_per_axis_and_tiny_densities"
+_P9_M1 = _ID + "test_f27_M1_M2_fast_twists_against_quadrature"
+_P9_NAV = _ID + "test_f27_navstate_keeps_a_drifted_rotation"
+_P9_JAC = _ID + "test_f27_bias_jacobians_on_high_rate_edges_against_complex_step"
+_P9_REC = _ID + "test_f27_recursion_reads_eps_at_large_steps"
+_P9_STREAM = _ID + "test_b1_covariance_over_a_stream"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``.
+#: The measured effect of each mutant on its killer, against the bound, is in the comment.
+PASS9_MUTANTS = [
+    # M2-F26 re-introduced: B2's noise input through Exp's right Jacobian.
+    # f26: 1.1e-7 (EDGE_A) .. 6.2e-6 (EDGE_B) block-relative vs 1e-10.
+    ("F26", "preintegration_cayley.py",
+     [("        return cay_right_jacobian(phi)\n", "        return so3_right_jacobian(phi)\n")],
+     (_P9_F26,), ("CayleyPreintegration(raw) Eq. (63), gyro noise alone",)),
+    # M1 closed-form K^2 coefficient x (1 + 1e-13): 1.19e-13 at |w| = 5 vs C02's 1e-14.
+    ("X15", "trajectory.py",
+     [("            + (T - np.sin(th * T) / th) * (K @ K))",
+       "            + (T - np.sin(th * T) / th) * (K @ K) * (1.0 + 1e-13))")],
+     (_P9_M1,), ("vs mpmath quadrature", "M1(w=")),
+    # has_noise requires EVERY gyro axis > 0: covariance 0 (100% off) vs 1e-10.
+    ("X21", "preintegration_forster.py",
+     [("return bool(np.any(np.asarray(self.sigma_g) > 0.0)",
+       "return bool(np.all(np.asarray(self.sigma_g) > 0.0)")],
+     (_P9_NOISE,), ("with sigma_g = [3e-4, 0, 0] alone: has_noise is False",
+                    "with sigma_g = [3e-4, 0, 0] alone: Eq. (63) over 14 steps")),
+    # accel densities <= 1e-20 ignored: covariance 0 (100% off) vs 1e-10.
+    ("X22", "preintegration_forster.py",
+     [("or np.any(np.asarray(self.sigma_a) > 0.0))", "or np.any(np.asarray(self.sigma_a) > 1e-20))")],
+     (_P9_NOISE,), ("with sigma_a = 1e-21 alone: has_noise is False",
+                    "with sigma_a = 1e-21 alone: Eq. (63) over 14 steps")),
+    # rotation transition always Exp (B2 integrates with Cay): f26 2.0e-9 (EDGE_A) ..
+    # 4.2e-7 (EDGE_B) vs 1e-10.
+    ("X24", "preintegration_forster.py",
+     [("        A[0:3, 0:3] = dR_step.T\n", "        A[0:3, 0:3] = so3_exp(-w * dt)\n")],
+     (_P9_F26,), ("CayleyPreintegration(raw) Eq. (63), gyro noise alone",)),
+    # Ba velocity block x (1 + 2e-9): 4.0e-9 relative vs 1e-10.
+    ("X31", "preintegration_forster.py",
+     [("        Ba[3:6, :] = dR_ik * dt\n", "        Ba[3:6, :] = dR_ik * dt * (1.0 + 2e-9)\n")],
+     (_P8_SINGLE, _P9_STREAM), ("Eq. (63) one step, accel noise alone",
+                                "accel noise alone (sigma_g=")),
+    # navstate re-orthonormalises R: 2.4e-12 .. 2.4e-10 at drifts 2.9e-11 / 1.1e-10 vs 1e-12.
+    ("X41", "preintegration_galilean.py",
+     [("    return NavState(Rot3(state.R), state.p, state.v)",
+       "    return NavState(Rot3.ClosestTo(state.R), state.p, state.v)")],
+     (_P9_NAV,), ("navstate does not keep a drifted R as given",
+                  "Baseline 3 predict from a drifted R")),
+    # the recursion drops eps: 1.9e-7 (eps 5e-2) and 3.1e-6 (eps 0.2) vs 1e-9.
+    ("W12", "preintegration_galilean.py",
+     [("C = bias_jacobian_fd(step_increment, eps=eps)",
+       "C = bias_jacobian_fd(step_increment, eps=C_FD_EPS)")],
+     (_P9_REC,), ("bias_jacobian_recursion at dt = 0.3, eps = 0.2",
+                  "bias_jacobian_recursion at dt = 0.3, eps = 0.05")),
+    # Forster FD_EPS = 1e-3: 8.6e-8 / 1.8e-7 relative vs 1e-8.
+    ("P23", "preintegration_forster.py",
+     [("FD_EPS = 3e-5\n", "FD_EPS = 1e-3\n")],
+     (_P9_JAC,), ("at the default eps on the high-rate edge |w| = 2.55",
+                  "CayleyFactor.from_edge(raw)")),
+    # the pre-pass-9 default FD_EPS = 1e-6 (round-off-limited): 1.1e-8 .. 1.9e-8 vs 1e-8
+    # (thin, 1.9x; not one of the pass-9 survivors, kept to show the old default fails).
+    ("P23-old", "preintegration_forster.py",
+     [("FD_EPS = 3e-5\n", "FD_EPS = 1e-6\n")],
+     (_P9_JAC,), ("at the default eps on the high-rate edge",)),
+    # CayleyFactor.from_edge with an FD eps of 1e-3: 8.6e-8 / 1.8e-7 vs 1e-8.
+    ("S21", "preintegration_cayley.py",
+     [("            edge, bbar, cls=CayleyPreintegration, variant=variant)",
+       "            edge, bbar, eps=1e-3, cls=CayleyPreintegration, variant=variant)")],
+     (_P9_JAC,), ("CayleyFactor.from_edge(raw)", "CayleyFactor.from_edge(reparam)")),
+]
+
+PASS9_REQUIRED = {"F26", "X15", "X21", "X22", "X24", "X31", "X41", "W12", "P23", "S21"}
+
+
+@pytest.fixture(scope="module")
+def pass9_runs(tmp_path_factory):
+    """The unmutated control and every PASS9 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS9_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass9_control"), killers)
+    assert code == 0, f"control copy fails a pass-9 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass9_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS9_MUTANTS))
+
+
+@pytest.mark.claim("M2-F27")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS9_MUTANTS,
+                         ids=[m[0] for m in PASS9_MUTANTS])
+def test_pass9_mutant_is_killed_as_a_file_edit(pass9_runs, mutant_id, src_file, edit,
+                                               killers, messages):
+    """Each pass-9 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass9_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F27")
+def test_pass9_killers_are_reference_checks():
+    """No pass-9 killer is a change detector: every one lives in the input-dependence
+    module (never this file)."""
+    for m in PASS9_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS9_REQUIRED <= {m[0] for m in PASS9_MUTANTS}

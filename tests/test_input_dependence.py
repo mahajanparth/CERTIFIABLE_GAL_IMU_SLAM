@@ -1664,26 +1664,29 @@ def test_f24_so3_log_near_pi():
 
     rng = _rng(53)
     failures = []
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        for gap in (1e-1, 1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 0.0):
-            th = np.pi - gap
-            worst = 0.0
-            for _ in range(300):
-                a = _unit(rng.normal(size=3))
-                R = Rotation.from_rotvec(th * a).as_matrix()
+    for gap in (1e-1, 1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 0.0):
+        th = np.pi - gap
+        worst = 0.0
+        for _ in range(300):
+            a = _unit(rng.normal(size=3))
+            R = Rotation.from_rotvec(th * a).as_matrix()
+            # warnings-as-errors around the src call ONLY (pass 9): the scipy reference
+            # calls stay outside the filter, so a scipy deprecation warning cannot turn
+            # this test into an error attributed to nothing in src
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
                 try:
                     got = np.asarray(T.so3_log(R), dtype=float)
-                except Warning as w:                         # pragma: no cover
+                except Warning as w:
                     failures.append(f"so3_log at pi - {gap:.0e} raises {w!r}")
                     break
-                if gap == 0.0:
-                    err = max(mabs(Rotation.from_rotvec(got).as_matrix(), R),
-                              abs(float(np.linalg.norm(got)) - np.pi))
-                else:
-                    err = mabs(got, Rotation.from_matrix(R).as_rotvec())
-                worst = max(worst, err if np.isfinite(err) else np.inf)
-            _check(failures, f"so3_log at theta = pi - {gap:.0e}", worst, 1e-13)
+            if gap == 0.0:
+                err = max(mabs(Rotation.from_rotvec(got).as_matrix(), R),
+                          abs(float(np.linalg.norm(got)) - np.pi))
+            else:
+                err = mabs(got, Rotation.from_matrix(R).as_rotvec())
+            worst = max(worst, err if np.isfinite(err) else np.inf)
+        _check(failures, f"so3_log at theta = pi - {gap:.0e}", worst, 1e-13)
     _assert_no_failures(failures)
 
 
@@ -1793,12 +1796,16 @@ def test_f25_so3_log_small_angles_against_mpmath():
     * 1e-8 < |phi| < 1e-6 (9e-7, 3e-7), RELATIVE 1e-14.  This is the GENERIC branch,
       whose ``theta / (2 sin theta)`` is insensitive to the rounding of ``arccos``; the
       series value ``vee((R - R^T)/2)`` is low by ``theta^2/6`` = 1.35e-13 at 9e-7 (W19:
-      ``SMALL_ANGLE = 1e-6``);
-    * |phi| < 1e-8, 400 random vectors, per component within 0.75 ulp of the 60-digit
-      log of the double matrix.  The series branch rounds once (``R21 - R12``) and its
-      truncation ``theta^2/6 < 1.7e-17`` is 0.15 ulp, so it is inside 0.65 ulp; Q44
-      (``arccos`` clamped at ``1 - 1e-15``) forces the generic branch at a wrong angle,
-      a ``(1 + 3.3e-16)`` factor that lands 1-2 ulp off."""
+      ``SMALL_ANGLE = 1e-6``).
+
+    The series branch itself (|phi| < 1e-8) stays exercised by :func:`test_traj_so3_helpers`
+    and by every right-chart FD Jacobian (removing it gives NaN there).  A per-component 0.75-ulp check of
+    it against the 60-digit log stood here until pass 9 and was REMOVED by orchestrator
+    decision: it pinned correct rounding, which no claim states, with a 1.18x margin on
+    the clean code (0.633-0.639 ulp), so an evaluation-order or BLAS change could fail it.
+    The one mutant it killed, Q44 (``arccos`` clamped at ``1 - 1e-15``), is EQUIVALENT
+    under the tolerance rule: 3.3e-24 absolute / 2.96e-16 relative on ``so3_log``
+    (theta 1e-12 .. 1), against C22's 2.3e-11 per-edge gap / 10 = 2.3e-12."""
     mpmath = _mp()
     failures = []
     for d in _SMALL_DIRS:
@@ -1808,22 +1815,6 @@ def test_f25_so3_log_small_angles_against_mpmath():
             R = _mp_to_np(_mp_exp(mpmath, mphi))
             _check(failures, f"so3_log at |phi| = {nrm:.0e} (generic branch, rel)",
                    rel(T.so3_log(R), phi), 1e-14)
-    rng = _rng(59)
-    worst = 0.0
-    for _ in range(400):
-        phi = rng.uniform(1e-10, 9.9e-9) * _unit(rng.normal(size=3))
-        R = _mp_to_np(_mp_exp(mpmath, [mpmath.mpf(float(x)) for x in phi]))
-        Rm = mpmath.matrix(R.tolist())
-        s = [(Rm[2, 1] - Rm[1, 2]) / 2, (Rm[0, 2] - Rm[2, 0]) / 2, (Rm[1, 0] - Rm[0, 1]) / 2]
-        sn = _mp_norm(mpmath, s)
-        want = [x * mpmath.asin(sn) / sn for x in s]
-        got = T.so3_log(R)
-        for i in range(3):
-            ulps = abs(mpmath.mpf(float(got[i])) - want[i]) / np.spacing(abs(float(want[i])))
-            worst = max(worst, float(ulps))
-    _check(failures, "so3_log series branch, |phi| < 1e-8 (ulp of the 60-digit log; bound "
-           "0.75 ulp)",
-           worst, 0.75)
     _assert_no_failures(failures)
 
 
@@ -2120,7 +2111,8 @@ def test_f26_cayley_covariance_against_complex_step():
     the fixture edges.  Every earlier B2 covariance check ran at zero densities, where the
     noise input does not enter.  The reparameterized contrast integrates with
     ``Cay(2 tan(theta/2) a) = Exp(theta a)``, so its reference retraction is ``Exp``.
-    Measured agreement (clean): <= 1.2e-12 block-relative."""
+    Measured agreement (clean): <= 7.6e-13 block-relative; with Exp's right Jacobian
+    (F26) 1.1e-7 .. 6.2e-6; with an Exp transition (X24) 2.0e-9 .. 4.2e-7."""
     failures = []
     gyro_tv, accel_tv, _ = T.time_varying_stream(40, 4.7e-3)
     streams = (("EDGE_A", EDGE_A.gyro_stream(), EDGE_A.accel_stream(), EDGE_A.dt, BIAS_BOTH),
@@ -2233,8 +2225,8 @@ def test_f27_navstate_keeps_a_drifted_rotation():
     re-orthonormalisation), so Baseline 3's ``predict`` from a state whose ``R`` has
     drifted off SO(3) -- as chained floating-point states do -- is the component endpoint
     relation (C03, "holds for any state") applied to THAT ``R``, to 1e-12.  Projecting
-    (pass 9: X41, ``Rot3.ClosestTo``) moves the result by the drift: 3.2e-11 at an
-    orthogonality error of 6e-11.  Measured clean: 5e-15."""
+    (pass 9: X41, ``Rot3.ClosestTo``) moves the result by about the drift: 1.4e-11 /
+    5.0e-11 in R at orthogonality errors 2.9e-11 / 1.1e-10.  Measured clean: 5.2e-15."""
     rng = _rng(67)
     failures = []
     for (R0, v0, p0), edge, bias, g, drift in ((STATE_A, EDGE_A, BIAS_BOTH, G_A, 1e-11),
