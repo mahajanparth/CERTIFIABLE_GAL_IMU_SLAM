@@ -407,7 +407,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -547,10 +547,19 @@ milestones:
   - role: implementer
     agent_id: impl-M2-009-remediation
     started: '2026-10-13T09:03:00+00:00'
+    finished: '2026-10-13T09:13:28+00:00'
+    outcome: completed
+    note: '125/125. Every CayleyFactor field pinned as a function of bbar at four non-true biases; bbar[3:6]
+      observed through the Eq. (21b)/(21c) residuals; Forster and Galilean constructors given the same
+      treatment; Baseline 3 noise blocks checked against the stated densities with distinct gyro/accel
+      values. 9 file-level mutants killed. I re-applied the ignore-bbar mutant: c13e fails.'
+  - role: verifier
+    agent_id: verify-M2-007
+    started: '2026-10-13T09:13:28+00:00'
     finished: null
     outcome: running
-    note: Exercise from_edge at biases other than BIAS_TRUE and pin every field as a function of bbar
-      (F14); check Baseline 3's noise parameters against an independent covariance (F15).
+    note: 'Seventh pass with a fresh planted claim: rule on F14/F15; search for any remaining input-independent
+      field.'
   blocking_findings:
   - id: M2-F01
     resolved: true
