@@ -943,7 +943,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: null
@@ -1023,10 +1023,19 @@ milestones:
   - role: implementer
     agent_id: impl-M3-004
     started: '2026-10-13T22:36:15+00:00'
+    finished: '2026-10-13T22:44:19+00:00'
+    outcome: completed
+    note: '141 passed; harness 56/56 killed. Rounding path correct at any s (tested s = 1, -1, -2.5, 0.3),
+      degenerate blocks always give SO(3), s ~ 0 guard raises; truth bias pinned; signed family_residuals;
+      forms helpers tested directly; six unused helpers deleted. I made the decoder project before dividing
+      by s: the rounding test fails.'
+  - role: verifier
+    agent_id: verify-M3-003
+    started: '2026-10-13T22:44:19+00:00'
     finished: null
     outcome: running
-    note: Kill the 12 M3 survivors; guard the rounding path at s <= 0 and degenerate blocks; test or delete
-      unused helpers (F04).
+    note: Third pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
+      floor.
   blocking_findings:
   - id: M3-F01
     resolved: true
