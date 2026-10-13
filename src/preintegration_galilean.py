@@ -294,6 +294,11 @@ def corrected_increment_gal3(pim: GalileanPreintegration, db_gtsam, Dt=None) -> 
     pass 8 they were not: the function was correct only for a zero-gravity PIM -- every
     caller in the suite built one -- and off by ``|g| Dt`` in velocity otherwise.)
     ``db_gtsam`` is in GTSAM's ``[b_a; b_g]`` column order.
+
+    ``Dt`` overrides the returned CLOCK component only.  The gravity terms removed are
+    always ``g dt_total`` and ``g dt_total^2 / 2`` -- the PIM's own duration, which is
+    what ``predict`` added -- so ``R``, ``v`` and ``p`` do not depend on ``Dt``
+    (pass 8, M2-F21 / W02).
     """
     b = pim.bias_hat + swap_bias_blocks(db_gtsam)
     ns = pim.pim.predict(NavState(), to_gtsam_bias(b))
