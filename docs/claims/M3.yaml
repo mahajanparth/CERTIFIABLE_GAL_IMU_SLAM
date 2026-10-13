@@ -1,0 +1,387 @@
+milestone: M3
+claims:
+- id: M3-C01
+  statement: 'The base lifted vector z has n = 124 with 0-based half-open index map: vec(R_k) column-major at [15k,15k+9),
+    v_k at [15k+9,15k+12), p_k at [15k+12,15k+15) for k=0,1,2; b_k=[b_g;b_a] at [45+6k,51+6k); for edge e=0,1 with o=63+30e:
+    vec(Y) [o,o+9), vec(Y'') [o+9,o+18), V [o+18,o+21), V'' [o+21,o+24), P [o+24,o+27), P'' [o+27,o+30); s at 123. The anisotropic
+    variant has n = 136 with rho_v,e at [124+6e,127+6e) and rho_p,e at [127+6e,130+6e).'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Build z(state) for a random state; assert len(z)==124 (136 aniso), decode each block from its range and compare
+    with the defining expression (R_k flattened order='F'; Y = R_i dRbar [J_R b_g]_x; Y' = R_j [J_R b_g]_x; V = R_i dRbar
+    J_nu b; V' = R_j J_nu b; P, P' likewise with J_rho; rho = (R_i dRbar)^T r) to 1e-14; assert z[123]==1.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Edge (i,i+1) uses b_i.'
+- id: M3-C02
+  statement: Counting Rai Eq. (28) for this instance (3 KF, 2 edges, 3 bias blocks) gives 15*3 + 6*3 + 24*2 + 1 = 112; the
+    M3 base lifting has 124 = 112 + 12, the 12 being the R_j-side vector liftings V', P' (3+3 per edge) required by the right-composed
+    Galilean bias correction.
+  source: Rai et al. arXiv:2609.38048v1 Eq. (28); DERIVED
+  kind: DERIVED
+  test_hint: 'Arithmetic: assert 15*3+6*3+24*2+1 == 112 and 124-112 == 2*(3+3). Also assert the M3 cost''s velocity residual
+    linear form has nonzero (-1/2 I3) coefficients on the V'' columns, so V'' cannot be dropped.'
+  domain: Per-keyframe bias (3 blocks).
+- id: M3-C03
+  statement: 'Rai et al.''s seven published (K, M, n) triples (Sec. VII-B: (8,2,340), (16,2,652); Table II: (8,1,334), (16,1,646),
+    (16,2,652), (24,1,958), (24,3,970)) all satisfy n = 39K + 6M + 16, whereas a direct count of Eq. (28) with K keyframes
+    and K-1 edges gives 39K + 6M - 23.'
+  source: Rai et al. arXiv:2609.38048v1 Sec. VII-B and Table II; arithmetic DERIVED
+  kind: DERIVED
+  test_hint: For each triple assert n == 39K+6M+16 and n - (15K + 24(K-1) + 6M + 1) == 39. The offset itself could not be
+    extracted from the paper's text.
+  domain: Arithmetic on published numbers only; no claim about why the offset arises.
+- id: M3-C04
+  statement: GTSAM's Galilean right-chart bias Jacobian J (10x6, rows (omega,nu,rho,alpha), columns [b_g;b_a] in project order)
+    satisfies J[0:3,3:6] = 0, J[9,:] = 0 and J[3:6,3:6] = J[0:3,0:3] (velocity/accel block equals rotation/gyro block).
+  source: GTSAM doc Eq. (34)-(36); equality of blocks DERIVED from Eq. (35) and measured
+  kind: DERIVED
+  test_hint: Finite-difference J (central, h=1e-6) of Log(Ubar^-1 U(b)) from pim.predict on both fixture edges and on >= 5
+    random time-varying streams (150 samples, dt 2.5e-3); expect |J[0:3,3:6]| = 0, |J[9]| = 0 exactly and |J[3:6,3:6]-J[0:3,0:3]|
+    <= 1e-8 (measured <= 2.7e-10 with |J_R| ~ 0.4-0.5).
+  domain: PreintegratedImuMeasurementsG, GTSAM 4.3.0. FD tolerance bounds the equality test; the third identity is not proven
+    for the Gal(3) right Jacobian here.
+- id: M3-C05
+  statement: With A = G^-1 X_j, B = X_i Ubar, G = X(I, g Dt, -1/2 g Dt^2, -Dt) and x = J(b - bbar), the cleared residual r
+    = A(I5 - x^/2) - B(I5 + x^/2) vanishes iff X_j = G X_i Ubar Cay(x); its bottom two rows are identically zero for every
+    lifted state; and A[3,4] = B[3,4] = Dt.
+  source: DERIVED (Galilean analogue of Rai Eq. (18)-(19); denominator det(I5 - x^/2) = 1 + |omega_x|^2/4 > 0, pre-flight
+    F8)
+  kind: DERIVED
+  test_hint: For 2000 random (R_i, v_i, p_i, b), set X_j := G X_i Ubar Cay(x) and assert max|r| <= 1e-12 and |t_j| <= 1e-12;
+    for random (X_i, X_j, b) assert r[3:,:] == 0 exactly; conversely, for random X_j not of that form assert |r| > 1e-6. Measured
+    1.8e-15.
+  domain: X_i, X_j carry time coordinate 0 (NavState lift); F2's relation is valid only at t_i = 0, and z has no time variable.
+- id: M3-C06
+  statement: If X_i^-1 G^-1 X_j = Ubar Cay(x) Exp(eps^) with eps in gal(3) (eps_alpha = 0), then the cleared residual equals
+    X_i Ubar Cay(x) (Exp(eps^) - I5)(I5 - x^/2) exactly.
+  source: DERIVED (uses Cay(x)(I - x^/2) = I + x^/2)
+  kind: DERIVED
+  test_hint: 2000 random (X_i, b, eps) with |eps| ~ 0.3; construct X_j accordingly; assert max|r - X_i Ubar Cay(x)(Exp(eps^)-I)(I
+    - x^/2)| <= 1e-12 (measured 2.7e-15).
+  domain: Any x (Cayley total on gal(3), pre-flight F8). This is what makes the residual a first-order-faithful image of GTSAM's
+    local error with an O(|x|) metric distortion from the right factor.
+- id: M3-C07
+  statement: The affine residual forms r_R = R_j(I + Gam/2) - R_i dRbar (I - Gam/2) - 1/2(Y + Y'), r_v = v_j - v_i - g Dt
+    s - R_i dvbar + 1/2(R_j + R_i dRbar) cbar^v - 1/2(V + V'), r_p = p_j - p_i - Dt v_i - 1/2 g Dt^2 s - R_i dpbar + 1/2(R_j
+    + R_i dRbar) cbar^p - 1/2(P + P'), with Gam = [J_R bbar_g]_x, cbar^v = J_nu bbar, cbar^p = J_rho bbar, evaluated on z(state),
+    equal the top 3x5 block of the 5x5 cleared residual computed directly from Gal(3) matrices.
+  source: DERIVED; r_R form identical to Rai et al. Eq. (22a)-(22c)
+  kind: DERIVED
+  test_hint: '500 random lifted states (R ~ Exp(N(0,4I)), |b| ~ 0.2): compare the three blocks against the direct 5x5 residual;
+    expect <= 1e-12 absolute.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Both bbar = b_true and bbar = 0.'
+- id: M3-C08
+  statement: 'Lifted form: in the IMU cost the rotation-residual linear forms (9 x n) have coefficient exactly -1/2 I9 on
+    the vec(Y) columns and on the vec(Y'') columns and exactly 0 on every bias column; the velocity (position) residual forms
+    have -1/2 I3 on V and V'' (P and P'') and 0 on every bias column; the cost depends on z''s own lifted entries (perturbing
+    only the Y_0 entries of z_truth by 1e-6 at bbar = b_true raises the cost from ~1e-20 to >= 1e-6).'
+  source: 'DERIVED (M2 verifier note: Rai Eq. (22b) with definitions substituted equals Eq. (19), so only z-level tests detect
+    a dropped lifting)'
+  kind: DERIVED
+  test_hint: Extract the linear forms F of each IMU term; assert the stated coefficient blocks with max deviation 0 (exact);
+    perturb z_truth[63:72] by 1e-6*N(0,I) and assert the factored cost >= 1e-6 (measured 1.5e-4 from 1.2e-20).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C09
+  statement: The primary families P0 (s^2=1), P1 (R_k^T R_k = s^2 I), P2 (cyclic column cross products R^(a) x R^(b) = s R^(c))
+    and P3 (M^T Y = [w]_x s, R_j^T Y' = [w]_x s, M^T V = c^v s, R_j^T V' = c^v s, M^T P = c^p s, R_j^T P' = c^p s, M = R_i
+    dRbar, w = J_R b_g, c^v = J_nu b, c^p = J_rho b) vanish at the ground-truth lifted state and at 200 random lifted states.
+  source: Rai et al. Eq. (30a)-(30c), (31); V', P' rows DERIVED
+  kind: DERIVED
+  test_hint: Evaluate z^T A_k z - b_k for every primary constraint at z_truth (bbar in {b_true, 0}) and at 200 random z(state);
+    expect max <= 1e-12 (measured 8.3e-16 at truth, 1.9e-14 random).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C10
+  statement: The redundant families that are analogues of Rai's Table I -- RA1 (R_k R_k^T = s^2 I), RB1 (Y w = 0, Y' w = 0),
+    RB2 (Y^T Y = |w|^2 I - w w^T and for Y'), RC1 (|V|^2 = |c^v|^2, |P|^2 = |c^p|^2, both lifting sides) -- vanish at the
+    ground-truth lifted state and at 200 random lifted states.
+  source: Rai et al. Eq. (32)-(35), Table I; R_j-side C1 DERIVED
+  kind: DERIVED
+  test_hint: As for the primary families; expect max <= 1e-12 (measured <= 5.7e-17 at truth, <= 1.9e-14 random).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C11
+  statement: The Galilean redundant families RG (Y^T V = [w]_x^T c^v, Y^T P = [w]_x^T c^p, V.P = c^v.c^p, both sides), RL
+    (s Y = M[w]_x, s V = M c^v, s P = M c^p, both sides), RH ((M e_a) x L_k = M (e_a x E_k) for each lifted column L_k = M
+    E_k, both sides) and RS (Y M^T = [M w]_x, Y' R_j^T = [R_j w]_x) vanish at the ground-truth lifted state and at 200 random
+    lifted states.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: As for the primary families; expect max <= 1e-12 (measured <= 7.2e-16 at truth, <= 1.6e-14 random).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. RH and RS use det(M) = +1.'
+- id: M3-C12
+  statement: In the anisotropic variant (n=136), P4 (M rho_v = s r_v, M rho_p = s r_p) and RR (|rho_v|^2 = |r_v|^2, |rho_p|^2
+    = |r_p|^2, rho_v.rho_p = r_v.r_p) vanish at the ground-truth lifted state and at 200 random lifted states.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Expect max <= 1e-10 (measured 1.5e-15 / 9.4e-15 at truth, 2.6e-13 / 5.7e-12 random; RR scales with |r|^2).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C13
+  statement: 'Every constraint family is non-trivial off the variety: at z_truth + 1e-3 N(0, I_n) each family''s max |z^T
+    A_k z - b_k| exceeds 1e-7.'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 20 perturbations per family; take the minimum over draws of the family max; expect > 1e-7 (smallest measured
+    3.3e-6, P0).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C14
+  statement: 'Family sizes on the 3-KF instance (base): P0 1, P1 18, P2 27, P3 60 (primary 106, rank 106); RA1 18, RB1 12,
+    RB2 24, RC1 8, RG 28, RL 60, RH 180, RS 36 (redundant 366); each family has full rank as vech vectors and the joint rank
+    of all 472 is 453. Anisotropic: +P4 12, +RR 6, primary 118, joint rank 471.'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Stack upper-triangular parts of all A_k; numpy matrix_rank with tol 1e-9; compare counts and ranks.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Ranks depend on the instance''s Jacobians only through genericity.'
+- id: M3-C15
+  statement: 'Row handedness R_(a) x R_(b) = s R_(c) (rows, cyclic) is not an additional constraint family: its 9 quadratic
+    forms per rotation are identical to the 9 column-handedness forms P2 (both are cof(R)_ij - s R_ij).'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Build both sets as symmetric matrices and match (comp, c) of the column form to (c, comp) of the row form; expect
+    max |difference| = 0 exactly.
+  domain: Any rotation block.
+- id: M3-C16
+  statement: P1 and RA1 together have rank 11 (not 12) per keyframe, the single dependency being tr(R^T R) = tr(R R^T).
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Rank of the 12 vech vectors of P1 u RA1 for each KF; expect 11; check that sum_a P1[a,a] - sum_a RA1[a,a] = 0
+    as matrices.
+  domain: Any rotation block.
+- id: M3-C17
+  statement: 'Every constraint is a homogeneous quadratic form in z: each A_k is symmetric n x n, g_k(lam z) + b_k = lam^2
+    (g_k(z) + b_k) for all z, lam, and exactly one constraint (s^2 = 1) has b_k != 0 (b_k = 1).'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'For every A_k: assert A_k == A_k.T exactly; random z, lam = 1.7: |lam^2 z^T A z - (lam z)^T A (lam z)| <= 1e-12
+    * |z|^2 |A|; count b_k != 0 == 1.'
+  domain: Base and anisotropic variants.
+- id: M3-C18
+  statement: 'Primary feasibility is equivalent to being a lifted state: every z satisfying P0-P3 (found by trust-region least
+    squares from 200 random z_0 ~ N(0, I_124)) equals s * z(state(z)) with det R_k = +1; dropping P2 admits det R = -1, dropping
+    P3 admits liftings off their definitions, dropping P1 admits det R ~ 0.'
+  source: DERIVED (proof in docs/03_qcqp_derivation.md Sec. (e))
+  kind: DERIVED
+  test_hint: 'scipy least_squares (trf, tol 1e-15) on stacked z^T A_k z - b_k; among solutions with residual < 1e-10 assert
+    |z - s z(state(z))|_inf <= 1e-9 and |det R_k - 1| <= 1e-9 (measured 200/200 converged, 3.2e-13). Repeat with each of P2,
+    P3, P1 removed (60 starts): expect some det = -1 solution, some consistency error > 1e-3, some |det| < 1e-6 respectively.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar, bbar = 0. Sampling-based: a property test, not a proof.'
+- id: M3-C19
+  statement: With s = 1, the column-handedness equations P2 alone imply R in SO(3) union {0}.
+  source: DERIVED (columns mutually orthogonal, |a|=|b||c| cyclically, so prod of norms in {0,1})
+  kind: DERIVED
+  test_hint: TRF least squares on the 9 P2 equations from 300 random R_0 ~ 2 N(0, I9); every converged solution (residual
+    < 1e-10) is either orthogonal with det +1 (to 1e-8) or zero (to 1e-6); none other (measured 238 SO(3), 62 zero, 0 other).
+  domain: Single 3x3 block.
+- id: M3-C20
+  statement: An improper rotation at KF0 (R_0 -> R_0 diag(1,1,-1)) with all liftings computed consistently from it satisfies
+    P0, P1, P3, RA1, RB1, RB2, RC1, RG and RL and violates P2, RH and RS.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'Build z_of_state with the reflected R_0 at bbar = 0; per family max |g|: expect <= 1e-12 for the satisfied list
+    and >= 1e-3 for the violated list.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C21
+  statement: The point R_0 = 0, b_0 = 0 (all other blocks from ground truth, liftings recomputed) satisfies P0, P2, P3 and
+    every lifting family and violates only P1 and RA1.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'Per family max |g|: <= 1e-12 for P0, P2, P3, RB1, RB2, RC1, RG, RL, RH, RS; >= 0.5 for P1 and RA1.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C22
+  statement: Edge-0 i-side liftings replaced by Q[w]_x, Q c^v, Q c^p with a rotation Q != M (and, separately, by their negatives)
+    satisfy RB1, RB2, RC1 and RG but violate P3, RL, RH and RS; i.e. the Gram/kernel identities do not pin a lifting.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'Q = Exp([0.4,-0.3,0.9]); per family max |g|: <= 1e-12 for P0-P2, RA1, RB1, RB2, RC1, RG; >= 1e-6 for P3, RL,
+    RH, RS. Same pattern for the sign-flipped liftings.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar, bbar = 0.'
+- id: M3-C23
+  statement: The global sign flip z -> -z preserves every constraint and the cost exactly and decodes (dividing by s) to the
+    same state; it is not a spurious point.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'At z_truth: all constraint residuals of -z equal those of z; (-z)^T Q (-z) - z^T Q z == 0; state_of_z(-z) ==
+    state_of_z(z).'
+  domain: Any z.
+- id: M3-C24
+  statement: For every lifted state z(state), z^T Q z equals the cost evaluated independently from 5x5 Gal(3) matrices (cleared
+    residual weighted 1/2 tau_R ||r_R||_F^2 + tau_v ||r_v||^2 + tau_p ||r_p||^2, plus GNSS, chordal R_0 prior, v_0/p_0 priors,
+    bias random walk); in the anisotropic variant the same holds with [rho_v; rho_p]^T W_vp [rho_v; rho_p], rho = (R_i dRbar)^T
+    r.
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 500 (base) / 300 (aniso) random lifted states; expect |zQz - J_direct| / max(1, J_direct) <= 1e-12 (measured
+    1.1e-15, 7.1e-16).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. bbar in {b_true, 0}. Q may be dense-evaluated here; see M3-C26 for cancellation at truth.'
+- id: M3-C25
+  statement: Q = sum_t F_t^T W_t F_t is symmetric PSD (min eig / max eig >= -1e-12), has Q[b, non-b] = 0 exactly, and its
+    bias-bias block equals the random-walk contribution alone.
+  source: DERIVED (Rai et al. Eq. (29) states Q_ij PSD for their factor)
+  kind: DERIVED
+  test_hint: Assemble Q; eigvalsh; check the bias rows/columns 45..62 against non-bias columns (exact 0) and against sum of
+    rw terms (exact).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. max|Q| ~ 1.1e10 on this instance.'
+- id: M3-C26
+  statement: At bbar = b_true the factored cost sum_t (F_t z)^T W_t (F_t z) at the ground-truth lifted state is <= 1e-15,
+    and for 50 perturbed states (R Exp(eps N), v, p + eps N, b + 0.1 eps N) it matches the GTSAM factor-graph cost (GalileanImuFactor
+    unwhitened error weighted by the same tau_R, tau_p, tau_v; GPSFactor; PriorFactorPose3; PriorFactorVector; BetweenFactorConstantBias;
+    summed as 2*graph.error) with max |cost/J_gtsam - 1| <= 0.05*eps for eps in {1e-2, 1e-3, 1e-4}.
+  source: DERIVED; GTSAM doc Eq. (36), (42)
+  kind: DERIVED
+  test_hint: 'Measured: truth 1.2e-20 (the dense z^T Q z gives -5.6e-8 from cancellation -- evaluate factored); ratios 1.2e-4,
+    3.7e-6, 2.5e-7 at eps 1e-2, 1e-3, 1e-4.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar, bbar = b_true (noise-free, model-consistent nominal bias). Agreement is first order in the state error,
+    not equality.'
+- id: M3-C27
+  statement: At bbar = 0 the M3 cost and the GTSAM-weighted reference cost differ at ground truth, with relative difference
+    <= 1e-2 that halves (ratio in [0.45, 0.55]) each time the bias offset |b_true - bbar| is halved (bbar = (1 - lam) b_true,
+    lam in {1, 1/2, 1/4, 1/8}).
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 'Measured rel. diff 5.72e-3, 2.94e-3, 1.48e-3, 7.49e-4 (ratios 0.514, 0.503, 0.506). Sources: Cay vs Exp (see
+    M3-C28) and the (I - x^/2) metric distortion.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C28
+  statement: 'The Cayley surrogate deviates from GTSAM''s right-Exp correction cubically: max |Ubar (Cay(x) - Exp(x))| with
+    x = J(s b_true) drops by a factor in [7.5, 8.5] each time s is halved (s in {1, 1/2, 1/4, 1/8}).'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Edge 0, bbar = 0; measured 2.088e-7, 2.605e-8, 3.253e-9, 4.064e-10 (factor 8.0).
+  domain: 'Small |x| (here |x| <= 0.06). Note Cay(a u)Cay(b u) != Cay((a+b) u): no additivity is assumed anywhere.'
+- id: M3-C29
+  statement: 'Rotation weighting: with 1/2 tau_R ||r_R||_F^2 the cost matches the GTSAM tau_R |r_rot|^2 reference near truth
+    (max |ratio - 1| <= 5e-6 at eps = 1e-4), whereas the literal Rai Eq. (20) weight tau_R ||r_R||_F^2 misses it by >= 0.1.'
+  source: Rai et al. Eq. (20) (deviation stated); DERIVED
+  kind: DERIVED
+  test_hint: bbar = b_true, 30 perturbations at eps 1e-4; measured 6.1e-7 vs 7.9e-1.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C30
+  statement: 'The whitened residual Jacobian of the M3 cost with respect to the 45-dim local state (per KF: R Exp(dtheta),
+    v + dv, p + dp, b + db) at ground truth has rank 45.'
+  source: DERIVED; reproduces the pattern of pre-flight F9 and M2 Sec. 5 on this cost
+  kind: DERIVED
+  test_hint: Central differences h = 1e-6 of the stacked sqrt(W_t) F_t z(state); singular values with relative cut 1e-12;
+    expect rank 45 for bbar in {b_true, 0} (condition measured 3.95e7 / 4.53e7, not claimed).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
+- id: M3-C31
+  statement: 'Isotropy obstruction: for a body-frame weight W on rho_v = (R_i dRbar)^T r_v (or rho_p), rho^T W rho equals
+    a quadratic form in the base z (n = 124) on the feasible set only if W = cI. Concretely, the lam^2 coefficient of rho_v^T
+    W rho_v under v_j -> v_j + lam d is constant over R_0 for W = 3I and varies by more than 1.0 over 200 random R_0 for W
+    = diag(1,2,5).'
+  source: 'DERIVED (proof: v_j enters z only as itself, so the lam^2 coefficient of z^T Q z is d^T Q_vv d, rotation-independent)'
+  kind: DERIVED
+  test_hint: d = [0.3,-1,0.5]; second difference at lam in {0,1,2}; measured constant 4.020000 for 3I, range [1.348, 6.693]
+    for diag(1,2,5).
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Holds for any rotation-dependent frame change of the weight.'
+- id: M3-C32
+  statement: 'Least-squares fit of f over all 2278 degree-<=2 monomials of the 67-entry edge-0 sub-vector of base z, on 6000
+    random lifted states: relative residual <= 1e-12 for f = 3|rho_v|^2 and for f = rho_v.rho_p, and >= 1e-4 for f = rho_v^T
+    diag(1,2,5) rho_v and for f = rho_v^T W rho_v with a random SPD W.'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: Measured 2.4e-15, 3.1e-15 vs 7.9e-2, 1.6e-1 (and 8.7e-4 for diag(1,1,1.01)); sample-matrix rank 2015.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar, bbar = 0. Numerical evidence for M3-C31, restricted to the edge-0 sub-vector.'
+- id: M3-C33
+  statement: 'Free partial anisotropy: the right-multiplied weight tr(rt G rt^T) on the 3x5 top block rt = [r_R | r_v | r_p]
+    with G = blkdiag(D, G2), D = tr(W_R)/2 I - W_R >= 0, W_R = Sigma_rot^-1, G2 = (trace-reduced 2x2 vel/pos covariance)^-1,
+    is quadratic in base z and matches GTSAM weighted by r_rot^T W_R r_rot + [r_vel; r_pos]^T (G2 kron I3) [r_vel; r_pos]
+    with max |ratio - 1| <= 0.05*eps for eps in {1e-2, 1e-3, 1e-4}.'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: bbar = b_true, 30 perturbations per eps; measured 1.4e-4, 3.7e-6, 2.0e-7; D eigenvalues ~3.46e7 >= 0; G2 correlation
+    -0.867.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Requires lambda_max(W_R) <= tr(W_R)/2. Directional vel/pos anisotropy is not available this way (M3-C31).'
+- id: M3-C34
+  statement: 'Full vel/pos anisotropy with residual lifting (n = 136): with W_vp the inverse of GTSAM''s (vel,pos) 6x6 preintMeasCov
+    block, the lifted cost [rho_v; rho_p]^T W_vp [rho_v; rho_p] matches GTSAM weighted by the same W_vp on [r_vel; r_pos]
+    with max |ratio - 1| <= 0.05*eps for eps in {1e-2, 1e-3, 1e-4} at bbar = b_true, whereas applying W_vp to the world-frame
+    [r_v; r_p] leaves max |ratio - 1| >= 1e-3 at eps = 1e-4.'
+  source: DERIVED
+  kind: DERIVED
+  test_hint: 30 perturbations per eps; measured 1.0e-4, 5.2e-6, 4.2e-7 (body frame) vs 1.4e-2 (world frame) at eps 1e-4.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Rotation-translation cross-covariance would need a further rho_R lifting (not built).'
+- id: M3-C35
+  statement: 'AutoTight-style cross-check on the 67-entry edge-0 sub-vector (2278 monomials, 6000 i.i.d. lifted samples):
+    the null space of the sample matrix has dimension 263; the hand-derived families restricted to the sub-vector span 236
+    of it (primary 60, +Rai Table I analogues 92, +RG 106, +RL 136, +RH 226, +RS 236) and every hand-derived form lies inside
+    it to 1e-10.'
+  source: 'DERIVED (method: AutoTight as cited by Rai et al. Sec. V)'
+  kind: DERIVED
+  test_hint: SVD of the sample matrix with relative cut 1e-10 (gap 6.0e-5 -> 1.4e-13); projection of each hand form onto the
+    null space.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar, bbar = 0. Basis-dependent: identities outside the 2278 monomials are not seen.'
+- id: M3-C36
+  statement: The 27 null-space directions on the edge-0 sub-vector not spanned by the hand-derived families contain at least
+    one quadratic identity that, added to the full redundant set, strictly lowers the SDP relaxation's rank or optimality
+    gap on the 3-KF instance.
+  source: OPEN-HYPOTHESIS
+  kind: OPEN-HYPOTHESIS
+  test_hint: 'Settle in M4: solve the Shor relaxation (Clarabel) with all M3 families, then with the 27 discovered directions
+    appended (per edge); compare numerical rank (eigenvalues > 1e-6 lambda_max) and the gap eta of Rai Sec. VII-A.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Noise level to be stated by M4.'
+- id: M3-C37
+  statement: 'The Shor SDP relaxation of the base M3 QCQP with all primary and redundant families of this document is tight
+    on the noise-free 3-KF instance at bbar = b_true: rank-one by sigma_1/sigma_2 >= 1e5 and relative gap eta <= 1e-4.'
+  source: OPEN-HYPOTHESIS
+  kind: OPEN-HYPOTHESIS
+  test_hint: Settle in M4 with Clarabel (not SCS); also report the Rai Table I-only ablation. A failure is a finding, not
+    a bug.
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar. Certifies only the frozen-weight Cayley surrogate (docs/03 Sec. (f)).'
+- id: M3-C38
+  statement: Adding the anisotropic residual liftings (n = 136, P4 + RR) does not destroy tightness of the relaxation on the
+    same instance.
+  source: OPEN-HYPOTHESIS
+  kind: OPEN-HYPOTHESIS
+  test_hint: 'Settle in M4: same solve and criteria as the base case with W_vp from preintMeasCov; compare rank and gap.'
+  domain: 'M3 instance: M2 fixture M2_TRAJ_V1, 3 KF / 2 edges, per-KF bias, KF0 R/v/p prior (sigma 1e-3), GNSS position on
+    KF1, KF2 (sigma 0.05), bias random walk (sigma_bg 1.9e-5, sigma_ba 3.0e-3), no bias prior; GTSAM 4.3.0 PreintegratedImuMeasurementsG
+    at nominal bbar.'
