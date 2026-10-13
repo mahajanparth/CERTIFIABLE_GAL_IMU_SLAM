@@ -669,10 +669,25 @@ def test_gamma1_invertibility_and_taylor_branch():
     # would be 1.30e-11 at 8e-2 was asserted on a test-local Taylor polynomial, which
     # no change to src could affect; the assertion was deleted.  Moving the switch to
     # 8e-2 in src is caught by the sweep above -- mutation harness: theta_small_8e-2.)
+    #
+    # ACCURACY of EACH of the four Taylor coefficients at the double just below the
+    # switch (where their truncation is largest), against the series reference: within
+    # ~2x of the clean error -- measured relative errors kappa1 7.75e-13, kappa2 2.58e-13,
+    # kappa3 1.03e-13, c2 1.55e-13 (the max over [0.045, 0.05) is attained there).  The
+    # 1e-11 sweep leaves a band of 13x .. 100x: c2's th^4/30240 -> th^4/30200 (pass-7 R05,
+    # mutation harness c2_taylor_th4_over_30200) gives 3.13e-12.  (This replaces a former
+    # `5e-13 <= trunc_at_switch`, which pinned kappa1's truncation rather than its accuracy
+    # and failed for a MORE accurate kappa1, e.g. one carrying its -th^6/40320 term:
+    # 5.8e-17 -- pass-7 verifier, "over-specified".)
     below = float(np.nextafter(gal3.THETA_SMALL, 0.0))
-    trunc_at_switch = float(abs(mp.mpf(gal3.gamma_coefficients(below)[0])
-                                - series_ref(below)[0]) / series_ref(below)[0])
-    assert 5e-13 <= trunc_at_switch <= 1e-12, trunc_at_switch
+    got_below = gal3.gamma_coefficients(below)
+    ref_below = series_ref(below)
+    k1_below, k2_below, k3_below, c2_below = (
+        float(abs(mp.mpf(got_below[i]) - ref_below[i]) / abs(ref_below[i])) for i in range(4))
+    assert k1_below <= 1e-12, k1_below
+    assert k2_below <= 5e-13, k2_below
+    assert k3_below <= 2e-13, k3_below
+    assert c2_below <= 3e-13, c2_below
     # EQUIVALENT MUTANTS (tolerance-equivalence rule: no output moves by more than 1/10
     # of the tightest tolerance any claim states for it):
     # * pass-6 Q17, kappa2 = (1 - s/theta)/theta^2 instead of (theta - s)/(theta^3):
