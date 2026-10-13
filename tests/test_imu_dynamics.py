@@ -571,35 +571,40 @@ def test_preintegration_chaining_is_the_group_product():
     # here from scipy expm and scipy Rotation, and integrate_truth = the stated
     # recursion (p += v dt + f dt^2/2, v += f dt, R <- R Exp(omega dt), f = g + R a)
     # stepped here with scipy Rotation (mutation harness: so3_exp_batch_c_over_theta).
-    h_L, n_L, b_L = 0.2, 12, 20
-    om_L = 3.0 * r.normal(size=(n_L, b_L, 3))
-    a_L = 3.0 * r.normal(size=(n_L, b_L, 3))
-    rot_L = Rotation.from_rotvec((om_L * h_L).reshape(-1, 3)).as_matrix().reshape(n_L, b_L, 3, 3)
-    assert float(np.linalg.norm(om_L * h_L, axis=-1).min()) >= gal3.THETA_SMALL  # INPUT GUARD
-    DL = imu.integrate_increment(om_L, a_L, h_L, n_L, per_step=True)
-    R0_L = rand_rot(r, n=b_L)
-    v0_L, p0_L = r.normal(size=(b_L, 3)), r.normal(size=(b_L, 3))
-    (RL, vL, pL), _ = imu.integrate_truth(R0_L, v0_L, p0_L, om_L, a_L, h_L, n_L, G,
-                                          per_step=True)
+    # Run twice: the recorded draws (dt = +0.2, g = G_DEFAULT, from r), then dt = -0.2
+    # with a RANDOM g (own stream): integrate_truth holds for arbitrary g and either
+    # sign of dt (mutation harness: integrate_truth_g_permuted, pass-6 Q52).
     worst_large = worst_large_nav = 0.0
-    for k in range(b_L):
-        P = np.eye(5)
-        R_, v_, p_ = R0_L[k].copy(), v0_L[k].copy(), p0_L[k].copy()
-        for j in range(n_L):
-            A = np.zeros((5, 5))
-            A[0:3, 3] = h_L * a_L[j, k]
-            A[3, 4] = h_L
-            Rk = np.eye(5)
-            Rk[0:3, 0:3] = rot_L[j, k]
-            P = P @ sla.expm(A) @ Rk
-            f_ = G + R_ @ a_L[j, k]
-            p_ = p_ + v_ * h_L + 0.5 * h_L * h_L * f_
-            v_ = v_ + f_ * h_L
-            R_ = R_ @ rot_L[j, k]
-        worst_large = max(worst_large,
-                          float(np.abs(gal(DL[0][k], DL[1][k], DL[2][k], DL[3]) - P).max()))
-        worst_large_nav = max(worst_large_nav, float(np.abs(RL[k] - R_).max()),
-                              float(np.abs(vL[k] - v_).max()), float(np.abs(pL[k] - p_).max()))
+    r_L2 = rng(4502)
+    for h_L, g_L, r_L in ((0.2, G, r), (-0.2, rand_gravity(r_L2), r_L2)):
+        n_L, b_L = 12, 20
+        om_L = 3.0 * r_L.normal(size=(n_L, b_L, 3))
+        a_L = 3.0 * r_L.normal(size=(n_L, b_L, 3))
+        rot_L = Rotation.from_rotvec((om_L * h_L).reshape(-1, 3)).as_matrix().reshape(n_L, b_L, 3, 3)
+        assert float(np.linalg.norm(om_L * h_L, axis=-1).min()) >= gal3.THETA_SMALL  # INPUT GUARD
+        DL = imu.integrate_increment(om_L, a_L, h_L, n_L, per_step=True)
+        R0_L = rand_rot(r_L, n=b_L)
+        v0_L, p0_L = r_L.normal(size=(b_L, 3)), r_L.normal(size=(b_L, 3))
+        (RL, vL, pL), _ = imu.integrate_truth(R0_L, v0_L, p0_L, om_L, a_L, h_L, n_L, g_L,
+                                              per_step=True)
+        for k in range(b_L):
+            P = np.eye(5)
+            R_, v_, p_ = R0_L[k].copy(), v0_L[k].copy(), p0_L[k].copy()
+            for j in range(n_L):
+                A = np.zeros((5, 5))
+                A[0:3, 3] = h_L * a_L[j, k]
+                A[3, 4] = h_L
+                Rk = np.eye(5)
+                Rk[0:3, 0:3] = rot_L[j, k]
+                P = P @ sla.expm(A) @ Rk
+                f_ = g_L + R_ @ a_L[j, k]
+                p_ = p_ + v_ * h_L + 0.5 * h_L * h_L * f_
+                v_ = v_ + f_ * h_L
+                R_ = R_ @ rot_L[j, k]
+            worst_large = max(worst_large,
+                              float(np.abs(gal(DL[0][k], DL[1][k], DL[2][k], DL[3]) - P).max()))
+            worst_large_nav = max(worst_large_nav, float(np.abs(RL[k] - R_).max()),
+                                  float(np.abs(vL[k] - v_).max()), float(np.abs(pL[k] - p_).max()))
     assert worst_large <= 1e-12, worst_large
     assert worst_large_nav <= 1e-12, worst_large_nav
 
