@@ -46,6 +46,12 @@ Verification pass 4 (``docs/verification/stage-b_m2-baselines_pass4.md``, findin
 found that no test called ``CayleyFactor``'s own rotation-residual methods.
 ``PASS4_SURVIVORS`` replays Q25, Q45 and Q46 against ``test_c13c``.
 
+Verification pass 5 (``docs/verification/stage-b_m2-baselines_pass5.md`` Sec. 3, finding
+M2-F13) found the factor's frozen rotation ``dRbar`` pinned by nothing.
+``PASS5_SURVIVORS`` replays R01, R02, R04, R05 and R10 against ``test_c13d``, twice: once
+as written (killed by the direct ``dRbar`` pin) and once with that pin disabled (killed by
+the end-to-end Eq. (19) residual at ground truth).
+
 Mutations are applied with ``monkeypatch`` against the imported modules rather than by
 editing files, so each one is undone automatically and the mutants cannot leak into
 another test.  Every mutation patches a *module-level* name or a *class attribute*, which
@@ -939,6 +945,24 @@ PASS5_SURVIVORS = [
     ("R10", _r10_dRbar_times_small_cay,      "c13d",
      "CayleyFactor.dRbar is not the Cayley increment"),
 ]
+
+
+@pytest.mark.claim("M2-F13")
+def test_pass5_replay_is_faithful(monkeypatch):
+    """The replayed ``from_edge`` with the CORRECT ``dRbar`` must be src's ``from_edge``
+    field for field, and must pass c13d -- otherwise the pass-5 kills below could be
+    killing a difference in the replay rather than in ``dRbar``."""
+    fields = ("bbar", "dRbar", "dvbar", "dpbar", "Dt", "J_R", "A_vg", "A_va", "A_pg", "A_pa")
+    src_factors = [B2.CayleyFactor.from_edge(e, T.BIAS_TRUE) for e in T.edges()]
+    monkeypatch.setattr(B2.CayleyFactor, "from_edge", _from_edge_with_dRbar(
+        lambda edge, bbar, pim: pim.dR))
+    for edge, ref in zip(T.edges(), src_factors):
+        got = B2.CayleyFactor.from_edge(edge, T.BIAS_TRUE)
+        for f in fields:
+            assert np.array_equal(getattr(got, f), getattr(ref, f)), \
+                f"edge {edge.index}: replayed from_edge differs from src's in {f}"
+        assert got.variant == ref.variant
+    assert _outcome("c13d") is None, "the faithful replay fails c13d"
 
 
 @pytest.mark.claim("M2-F13")

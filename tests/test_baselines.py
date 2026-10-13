@@ -1317,14 +1317,17 @@ def test_c13d_cayley_factor_frozen_rotation_is_the_cayley_increment():
 
     (a) ``from_edge(edge, BIAS_TRUE).dRbar`` equals the retyped Cayley Eq. (9) product
         :func:`_indep_cayley_increment` (no ``src``) to ``1e-12`` in the matrix
-        inf-norm.  Measured 2.209e-14 / 2.154e-14 (edge 0 / 1).  The nearest mutant,
-        R10 (``dRbar Cay(1e-6 e1)``), is 9.8e-7; R02/R05 (Exp integrator) 1.9e-8 / 4.0e-8.
+        inf-norm (elementwise max-abs).  Measured 2.209e-14 / 2.154e-14 (edge 0 / 1), 45x
+        inside the bound.  The nearest mutants, R02/R05 (Exp integrator), sit at
+        1.87e-8 / 4.05e-8, 1.9e4x outside it; R10 (``dRbar Cay(1e-6 e1)``) at 9.8e-7.
     (b) end-to-end: at the closed-form ground-truth keyframes (Rodrigues, retyped) and
         ``b_g = bbar_g`` (so ``xi = 0``), the factor's Eq. (19) and Eq. (22b) residuals
         are the Cayley deficit and nothing else.  With ``R_err = dRbar^T Exp(omega T)``,
         ``|r|_F / sqrt(2) = |I - R_err|_F / sqrt(2) = 2 sin(theta/2)``, and theta is the
         per-edge deficit ``||omega||^3 T dt^2 / 12`` (M2-C22).  Two-sided, relative
-        ``1e-4``; measured -1.88e-7 / -3.33e-7.  The value must be NONZERO: an Exp
+        ``1e-4``; measured -1.88e-7 / -3.33e-7 (Eq. (22b): -1.87e-7 / -3.33e-7), 300x inside
+        the band, and the leading-order prediction alone explains the residual to that
+        level.  The value must be NONZERO: an Exp
         integrator erases it (R02/R05: relative -1.0), a perturbed one inflates it
         (R10: +41 / +18; R04 (``b_g = 0``): +4e5; R01 (transpose): +1e7).
     """
@@ -1883,6 +1886,8 @@ def test_c22b_baseline2_retraction_really_is_cayley():
             f"edge {edge.index}: deficit is not anti-parallel to omega ({cosine:.9f})"
 
     # -- (c) the accumulated KF2 gap, two-sided ----------------------------------------
+    # metric: elementwise max|R_B2 - R_B1| (2.996e-8).  The band is metric-specific: the
+    # same gap is 2.81e-8 in ||Log||_inf and 3.51e-8 in ||Log||_2 (M2-C22 test_hint).
     states = _kf2_states()
     gap = _max_abs(states["B2-raw"].R, states["B1"].R)
     assert abs(gap - 2.9965e-8) <= 0.10 * 2.9965e-8, (
