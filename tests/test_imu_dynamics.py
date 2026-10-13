@@ -6,15 +6,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import scipy.linalg as sla
+from scipy.spatial.transform import Rotation
 
 from src import gal3
 from src import imu_dynamics as imu
 from src.gal3 import compose, exp, gal, unpack, wedge
 
 from . import ode_truth
-from .conftest import G, assert_discrete_converges, rand_axis, rand_rot, rng
+from .conftest import (G, assert_discrete_converges, assert_stream_non_commuting, rand_axis,
+                       rand_rot, rng)
 
 I3 = np.eye(3)
+I5 = np.eye(5)
 
 
 # ==========================================================================
@@ -56,11 +59,11 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset):
     worst_id = residual(d["disc"])
     assert worst_id <= 1e-12, worst_id
     assert_discrete_converges(d)
+    assert_stream_non_commuting(d)
 
     # 2000 algebraic instances against the Forster endpoint
     r = rng(370)
     worst_alg = 0.0
-    worst_minus = 0.0
     for _ in range(2000):
         Dt2 = float(r.uniform(0.05, 1.0))
         R_i, v_i, p_i = rand_rot(r), 2.0 * r.normal(size=3), 5.0 * r.normal(size=3)
@@ -71,17 +74,11 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset):
                         float(np.abs(N.attitude().matrix() - R_f).max()),
                         float(np.abs(N.position() - p_f).max()),
                         float(np.abs(N.velocity() - v_f).max()))
-        # W_ij's position entry is +0.5 g Dt^2: the minus sign is wrong here
-        import gtsam
-
-        W_bad = gtsam.NavState(gtsam.Rot3(I3), -0.5 * G * Dt2 ** 2, G * Dt2)
-        X_i = gtsam.NavState(gtsam.Rot3(R_i), p_i, v_i)
-        phi_X = gtsam.NavState(X_i.attitude(), X_i.position() + X_i.velocity() * Dt2,
-                               X_i.velocity())
-        N_bad = W_bad.compose(phi_X).compose(gtsam.NavState(gtsam.Rot3(dR), dp, dv))
-        worst_minus = max(worst_minus, float(np.abs(N_bad.position() - p_f).max()))
+    # W_ij's position entry is +0.5 g Dt^2 (PLUS).  A former check that a MINUS-sign
+    # W misses forster_endpoint by >= 1e-3 was deleted: it is a fact about gtsam
+    # arithmetic (the two W differ by |g| Dt^2), and no change to src could make it
+    # fail.  The sign is pinned by worst_alg above and by the ODE comparisons.
     assert worst_alg <= 1e-12, worst_alg
-    assert worst_minus >= 1e-3, worst_minus
 
 
 # ==========================================================================
@@ -107,7 +104,9 @@ def test_increment_left_invariant_ode():
 
     # (b) the project's Euler scheme, constant inputs, at the WORST Dt of the stated
     #     range (the first-order error grows with Dt): 1000 configurations at Dt = 0.4.
-    dt = 2.5e-6                       # the claim requires dt <= 5e-6
+    #     The worst error is 2.970 dt on these configurations, so tolerance 1e-5 needs
+    #     dt <= 3.37e-6; the recorded rule is dt <= 2.5e-6, tested at that boundary.
+    dt = 2.5e-6
     n = int(round(0.4 / dt))
     omega = 0.7 * r.normal(size=(1000, 3))
     acc = 2.0 * r.normal(size=(1000, 3))
@@ -118,6 +117,40 @@ def test_increment_left_invariant_ode():
         ref = imu.preintegrate_constant(omega[k], acc[k], t)
         worst = max(worst, float(np.abs(gal(dR[k], dv[k], dp[k], t) - ref).max()))
     assert worst <= 1e-5, worst
+
+    # (b') "explicit Euler" pinned, on the same 1000 configurations.  Explicit Euler on
+    #     Ddot = D A (A = xi^ constant) is D_n = (I5 + dt A)^n, so
+    #     n log(I + dt A) = T A - (T dt / 2) A^2 + O(dt^2) gives the SIGNED first-order
+    #     error  D_n - exp(T A) = -(T dt / 2) A^2 exp(T A) + O(dt^2).  A semi-implicit
+    #     update (dp from the NEW dv) is also first order but has a different
+    #     coefficient (mismatch 2.9 here), which the err/dt magnitude checks cannot see.
+    #     A is written by hand and exp(T A) is scipy expm -- nothing from src.
+    def hat_by_hand(om, a):
+        A = np.zeros((5, 5))
+        A[0:3, 0:3] = [[0.0, -om[2], om[1]], [om[2], 0.0, -om[0]], [-om[1], om[0], 0.0]]
+        A[0:3, 3] = a
+        A[3, 4] = 1.0
+        return A
+
+    dt_c, T_c = 1e-4, 0.4
+    n_c = int(round(T_c / dt_c))
+    cR, cv, cp, cT = imu.euler_increment(omega, acc, dt_c, n_c)
+    worst_coef = worst_pred = worst_pow = 0.0
+    for k in range(1000):
+        A = hat_by_hand(omega[k], acc[k])
+        E = sla.expm(T_c * A)
+        pred = -(T_c / 2.0) * (A @ A @ E)
+        coef = (gal(cR[k], cv[k], cp[k], cT) - E) / dt_c
+        worst_coef = max(worst_coef, float(np.abs(coef - pred).max()))
+        worst_pred = max(worst_pred, float(np.abs(pred).max()))
+        if k < 20:   # and literally the matrix power (I5 + dt A)^n
+            P = np.linalg.matrix_power(I5 + dt_c * A, n_c)
+            worst_pow = max(worst_pow,
+                            float(np.abs(gal(cR[k], cv[k], cp[k], cT) - P).max()))
+    assert worst_coef <= 1e-2, worst_coef
+    # the predicted coefficient also accounts for part (b)'s worst error (2.970 dt)
+    assert 0.99 <= (worst / dt) / worst_pred <= 1.01, (worst / dt, worst_pred)
+    assert worst_pow <= 1e-11, worst_pow
 
     # (c) TIME-VARYING, non-commuting xi(t): the left-invariant ODE (D xi^, not
     #     xi^ D) against DOP853.  Euler is first order, so check the error and the
@@ -135,8 +168,11 @@ def test_increment_left_invariant_ode():
                         float(np.abs(out[2] - dp_ref).max())))
     assert errs[1] <= 1e-4, errs
     assert 1.8 <= errs[0] / errs[1] <= 2.2, errs
-    # the stream genuinely distinguishes D xi^ from xi^ D: the right-invariant
-    # rotation solution (R^T solves Sdot = S [-omega]x) is far from the left one
+    # INPUT GUARD (a property of the test's stream, not evidence about src): the
+    # stream genuinely distinguishes D xi^ from xi^ D -- the right-invariant rotation
+    # solution (R^T solves Sdot = S [-omega]x) is far from the left one.  Without it
+    # a commuting stream would silently let the order check above pass for a swapped
+    # product (mutation harness: ode_truth_constant_omega).
     dR_neg, _, _ = ode_truth.solve_increment(st.negated_rate(), Dt_tv)
     order_gap = float(np.abs(dR_ref - np.swapaxes(dR_neg, -1, -2)).max())
     assert order_gap >= 100.0 * 1e-4, order_gap
@@ -218,6 +254,7 @@ def test_forster_component_equations(endpoint_dataset):
     worst_id, _ = residuals(d["disc"])
     assert worst_id <= 1e-12, worst_id
     assert_discrete_converges(d)
+    assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C44")
@@ -268,9 +305,56 @@ def test_preintegration_chaining_is_the_group_product():
                     float(np.abs(imu.chain(A, B) - F).max()))
     assert worst <= 1e-12, worst
 
-    # ACCURACY: the continuous increments from three separate DOP853 solves chain
-    # as the group product.
+    # The recursion used above is a consistent discretisation of the increment ODE,
+    # checked against DOP853 (the identity check alone holds for ANY per-step Gal(3)
+    # element, e.g. one with 1.5 a dt^2 in position).
+    #  * omega = 0, constant a: zero-order hold is then exact, so integrate_increment
+    #    must reproduce the ODE solution to round-off for any dt;
+    #  * the time-varying stream above: first order, err(2 dt) / err(dt) ~ 2.
+    acc0 = 2.0 * r.normal(size=(n_inst, 3))
+    z = np.zeros((n_inst, 3))
+    xR, xv, xp, xT = imu.integrate_increment(z, acc0, dt, n1)
+    tR, tv, tp = ode_truth.solve_increment_constant(z, acc0, xT)
+    worst_w0 = max(float(np.abs(xR - tR).max()), float(np.abs(xv - tv).max()),
+                   float(np.abs(xp - tp).max()))
+    assert worst_w0 <= 1e-12, worst_w0
     eR, ev, ep = ode_truth.solve_increment(st, T1)
+    errs = []
+    for h, m in ((2 * dt, n1 // 2), (dt, n1)):
+        om_h, a_h = st.sampled(h, m)
+        o = imu.integrate_increment(om_h, a_h, h, m, per_step=True)
+        errs.append(max(float(np.abs(o[0] - eR).max()), float(np.abs(o[1] - ev).max()),
+                        float(np.abs(o[2] - ep).max())))
+    assert errs[1] <= 1e-4, errs
+    assert 1.8 <= errs[0] / errs[1] <= 2.2, errs
+
+    # The per-step element IS a Gal(3) element (which is why the increments chain as
+    # the product): imu_step_element(omega, a, dt) = exp(dt (0, a, 0, 1)) . (Exp(omega
+    # dt), 0, 0, 0), reference by scipy expm and scipy Rotation; and integrate_increment
+    # is the ordered product of these elements.
+    worst_step = 0.0
+    for _ in range(200):
+        om_k, a_k, h = 2.0 * r.normal(size=3), 3.0 * r.normal(size=3), float(r.uniform(1e-3, 0.2))
+        A = np.zeros((5, 5))
+        A[0:3, 3] = h * a_k
+        A[3, 4] = h
+        Rk = np.eye(5)
+        Rk[0:3, 0:3] = Rotation.from_rotvec(om_k * h).as_matrix()
+        worst_step = max(worst_step,
+                         float(np.abs(imu.imu_step_element(om_k, a_k, h) - sla.expm(A) @ Rk).max()))
+    assert worst_step <= 1e-12, worst_step
+    om_s, a_s = st.sampled(dt, 50)
+    Dp = imu.integrate_increment(om_s, a_s, dt, 50, per_step=True)
+    worst_prod = 0.0
+    for k in range(20):
+        P = np.eye(5)
+        for j in range(50):
+            P = P @ imu.imu_step_element(om_s[j, k], a_s[j, k], dt)
+        worst_prod = max(worst_prod, float(np.abs(gal(Dp[0][k], Dp[1][k], Dp[2][k], Dp[3]) - P).max()))
+    assert worst_prod <= 1e-12, worst_prod
+
+    # ACCURACY: the continuous increments from three separate DOP853 solves chain
+    # as the group product (eR, ev, ep = the [0, T1] solve above).
     fR, fv, fp = ode_truth.solve_increment(st.shifted(T1), T2)
     gR, gv, gp = ode_truth.solve_increment(st, T1 + T2)
     worst_ode = 0.0

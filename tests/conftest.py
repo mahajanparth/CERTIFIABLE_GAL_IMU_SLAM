@@ -126,6 +126,12 @@ def endpoint_dataset():
             R_i, v_i, p_i, om_s, acc_s, h, n, G, per_step=True)
         return dict(R_j=Rd, v_j=vd, p_j=pd, dR=dRd, dv=dvd, dp=dpd, Dt=Dt_out)
 
+    # INPUT GUARD data: the right-invariant rotation solution of the same stream
+    # (R^T of the omega -> -omega solve); far from the left-invariant one only if
+    # the stream is genuinely non-commuting.  See assert_stream_non_commuting.
+    dR_neg, _, _ = ode_truth.solve_increment(stream.negated_rate(), Dt)
+    order_gap = float(np.abs(dR - np.swapaxes(dR_neg, -1, -2)).max())
+
     disc = discrete(n_steps, dt)
     disc_half = discrete(max(n_steps // 2, 1), Dt / max(n_steps // 2, 1))
     return dict(
@@ -133,7 +139,7 @@ def endpoint_dataset():
         R_i=R_i, v_i=v_i, p_i=p_i,
         R_j=R_j, v_j=v_j, p_j=p_j,
         dR=dR, dv=dv, dp=dp,
-        stream=stream, disc=disc, disc_half=disc_half,
+        stream=stream, disc=disc, disc_half=disc_half, order_gap=order_gap,
     )
 
 
@@ -154,6 +160,19 @@ def assert_discrete_converges(d):
     assert e1 <= DISCRETE_ACCURACY_TOL, e1
     assert 1.8 <= e2 / e1 <= 2.2, (e1, e2)
     return e1
+
+
+def assert_stream_non_commuting(d):
+    """INPUT GUARD on the endpoint dataset (not evidence about src).
+
+    The endpoint tests catch accumulation-order defects (R @ E vs E @ R) only if
+    the stream's rotations do not commute.  Require the left- and right-invariant
+    rotation solutions of the stream to differ by >= 0.1, i.e. 50 x the discrete
+    accuracy tolerance DISCRETE_ACCURACY_TOL; a constant-omega stream gives
+    round-off only.
+    """
+    assert d["order_gap"] >= 0.1, d["order_gap"]
+    return d["order_gap"]
 
 
 @pytest.fixture(scope="session")

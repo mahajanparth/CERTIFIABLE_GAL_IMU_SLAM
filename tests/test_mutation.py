@@ -16,6 +16,13 @@ The first group are the defects the M1 verifier showed SURVIVING the suite:
   (omega, a) makes every per-step factor commute.
 
 The second group are positive controls the verifier showed were already caught.
+
+The third group (M1-F07 / M1-F09) are the defects the second-pass verifier showed
+SURVIVING, plus mutants that stand in for deleted test-local checks.  Each carries
+an ``expect`` map: for every named test, a substring of the assertion that must be
+the one that fails (pytest runs with ``--tb=short``, so a failure section shows only
+the lines on the failing path).  This proves the mutant is killed by the check
+written for it, not incidentally by an earlier assertion.
 """
 from __future__ import annotations
 
@@ -38,7 +45,14 @@ ENDPOINT_TESTS = [
     IMU + "test_forster_component_equations",         # M1-C43
 ]
 
-# id -> (file, old, new, tests that must ALL fail)
+C40 = G3 + "test_phi_dt_is_an_automorphism_not_a_translation"
+C26 = G3 + "test_cayley_denominator_never_vanishes"
+C24 = G3 + "test_gamma1_invertibility_and_taylor_branch"
+C21 = G3 + "test_log_and_gamma1_inverse"
+C41 = IMU + "test_increment_left_invariant_ode"
+C45 = IMU + "test_preintegration_chaining_is_the_group_product"
+
+# id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
     # ---- previously SURVIVING ------------------------------------------------
     "fixture_2_steps_dt_0.25": (
@@ -100,6 +114,78 @@ MUTATIONS = {
         [G3 + "test_product_closed_form",   # M1-C01
          G3 + "test_associativity"],        # M1-C03
     ),
+    # ---- second-pass SURVIVORS (M1-F07), killed on the intended assertion ------
+    "navstate_phi_sign_flip": (                                   # verifier M27
+        "src/gal3.py",
+        "N[0:3, 3] + N[0:3, 4] * Dt, N[0:3, 4])",
+        "N[0:3, 3] - N[0:3, 4] * Dt, N[0:3, 4])",
+        [C40], {C40: "assert worst_shift <= 1e-12"},
+    ),
+    "navstate_phi_no_shift": (                                    # verifier T4
+        "src/gal3.py",
+        "N[0:3, 3] + N[0:3, 4] * Dt, N[0:3, 4])",
+        "N[0:3, 3], N[0:3, 4])",
+        [C40], {C40: "assert abs(gap - float(np.abs(v).max()) * Dt) <= 1e-12"},
+    ),
+    "cay_denominator_minus->plus": (                                   # verifier M32
+        "src/gal3.py",
+        "return _I5 - 0.5 * wedge(xi)",
+        "return _I5 + 0.5 * wedge(xi)",
+        [C26], {C26: "assert worst_mat <= 1e-12"},
+    ),
+    "integrate_increment_dp_uses_new_dv": (                       # verifier M45
+        "src/imu_dynamics.py",
+        "        dp = dp + dv * dt + half * df\n        dv = dv + df * dt\n"
+        "        dR = dR @ E\n    return dR, dv, dp, t0",
+        "        dv = dv + df * dt\n        dp = dp + dv * dt + half * df\n"
+        "        dR = dR @ E\n    return dR, dv, dp, t0",
+        [C45], {C45: "assert worst_w0 <= 1e-12"},
+    ),
+    "imu_step_element_drop_half": (                               # verifier M49
+        "src/imu_dynamics.py",
+        "a * dt, 0.5 * a * dt * dt, dt)",
+        "a * dt, a * dt * dt, dt)",
+        [C45], {C45: "assert worst_step <= 1e-12"},
+    ),
+    "euler_increment_semi_implicit": (                            # verifier M51
+        "src/imu_dynamics.py",
+        "        dp = dp + dv * dt\n        dv = dv + dRa * dt\n",
+        "        dv = dv + dRa * dt\n        dp = dp + dv * dt\n",
+        [C41], {C41: "assert worst_coef <= 1e-2"},
+    ),
+    # ---- stand-ins for deleted test-local checks (M1-F09) ----------------------
+    "fixture_constant_omega": (            # the endpoint stream made commuting
+        "tests/conftest.py",
+        "stream = ode_truth.Stream.random(r, n_inst)",
+        "stream = ode_truth.Stream.random(r, n_inst, w_amp=0.0)",
+        ENDPOINT_TESTS, {n: 'assert d["order_gap"] >= 0.1' for n in ENDPOINT_TESTS},
+    ),
+    "ode_truth_constant_omega": (          # verifier T3: C41's stream made commuting
+        "tests/ode_truth.py",
+        "            w1=w_amp * r.normal(size=(n, 3)),",
+        "            w1=0.0 * r.normal(size=(n, 3)),",
+        [C41], {C41: "assert order_gap >= 100.0 * 1e-4"},
+    ),
+    "taylor_branch_removed": (             # replaces the gamma_coefficients_closed_form strawman
+        "src/gal3.py",
+        "    if theta < THETA_SMALL:\n        t2 = theta * theta\n        t4 = t2 * t2\n"
+        "        kappa1",
+        "    if theta == 0.0:\n        t2 = theta * theta\n        t4 = t2 * t2\n"
+        "        kappa1",
+        [C24], {C24: "assert max(worst) <= 1e-11"},
+    ),
+    "theta_small_8e-2": (                  # replaces the test-local trunc_at_8e2 check
+        "src/gal3.py",
+        "THETA_SMALL = 5e-2",
+        "THETA_SMALL = 8e-2",
+        [C24], {C24: "assert max(worst_sweep) <= 1e-11"},
+    ),
+    "c2_forbidden_form": (                 # replaces the test-local forbidden_worst check
+        "src/gal3.py",
+        "    c2 = (1.0 - theta * s / (2.0 * omc)) / t2\n",
+        "    c2 = 1.0 / t2 - (1.0 + np.cos(theta)) / (2.0 * theta * s)\n",
+        [C21], {C21: "assert ours_worst <= 1e-13"},
+    ),
 }
 
 
@@ -113,7 +199,7 @@ def _copy_repo(dst: Path) -> None:
 
 def _run(workdir: Path, nodes) -> tuple[int, str]:
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-rf", "-p", "no:cacheprovider",
+        [sys.executable, "-m", "pytest", "-q", "-rf", "--tb=short", "-p", "no:cacheprovider",
          *sorted(set(nodes))],
         cwd=workdir, capture_output=True, text=True, timeout=900,
     )
@@ -121,7 +207,7 @@ def _run(workdir: Path, nodes) -> tuple[int, str]:
 
 
 def _mutate_and_run(base: Path, mid: str):
-    path, old, new, nodes = MUTATIONS[mid]
+    path, old, new, nodes = MUTATIONS[mid][:4]
     work = base / mid.replace("*", "x").replace(">", "").replace("@", "at")
     _copy_repo(work)
     target = work / path
@@ -163,3 +249,28 @@ def test_mutation_is_killed(mutation_results, mid):
     assert code == 1, f"{mid}: pytest exit code {code} (expected 1 = tests failed)\n{out[-3000:]}"
     survivors = [n for n in MUTATIONS[mid][3] if f"FAILED {n}" not in out]
     assert not survivors, f"{mid} SURVIVED in {survivors}\n{out[-3000:]}"
+    expect = MUTATIONS[mid][4] if len(MUTATIONS[mid]) > 4 else {}
+    for node, needle in expect.items():
+        section = _failure_section(out, node.split("::")[-1])
+        assert needle in section, (
+            f"{mid}: {node} failed, but not on `{needle}`\n{section[-3000:]}")
+
+
+def _failure_section(out: str, test_name: str) -> str:
+    """The --tb=short failure section of one test: from its '___ name ___' header to
+    the next test header or '=====' banner."""
+    lines = out.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.startswith("_") and f" {test_name} " in line:
+            start = i
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if (lines[j].startswith("___") and lines[j].rstrip().endswith("___")) or \
+                lines[j].startswith("====="):
+            end = j
+            break
+    return "\n".join(lines[start:end])

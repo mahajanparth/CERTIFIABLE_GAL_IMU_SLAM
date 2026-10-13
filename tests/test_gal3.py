@@ -44,6 +44,7 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     rand_xi_bounded_phi,
     rng,
     assert_discrete_converges,
+    assert_stream_non_commuting,
     assert_term_exercised,
 )
 
@@ -137,13 +138,13 @@ def test_non_abelian():
     """There exist X1, X2 with max|X1 X2 - X2 X1| >= 1e-3."""
     r = rng(6)
     worst = 0.0
-    witness = None
     for _ in range(200):
         X1, X2 = rand_gal(r), rand_gal(r)
         d = float(np.abs(compose(X1, X2) - compose(X2, X1)).max())
         if d > worst:
-            worst, witness = d, (X1, X2)
-    assert witness is not None
+            worst = d
+    # (a former `witness is not None` assertion was deleted: it holds as soon as any
+    # draw has a nonzero commutator, so it could not fail independently of the next line)
     assert worst >= 1e-3, worst
 
 
@@ -409,7 +410,12 @@ def test_log_and_gamma1_inverse():
     assert worst_log <= 1e-12, worst_log
 
     # the equivalent form 1/th^2 - (1+cos th)/(2 th sin th) must NOT be used:
-    # it is the one that blows up on the chart edge.  Ours stays exact there.
+    # it is the one that blows up on the chart edge.  Ours stays exact there
+    # (finite at theta = pi exactly, and accurate against 60-digit arithmetic on
+    # the approach to pi).  A former assertion that the forbidden form itself is
+    # inaccurate there was deleted: it evaluated a test-local formula only, so no
+    # change to src could make it fail.  The forbidden form in src is caught by the
+    # two assertions below (mutation harness: c2_forbidden_form).
     import mpmath as mp
 
     mp.mp.dps = 60
@@ -418,23 +424,13 @@ def test_log_and_gamma1_inverse():
         T = mp.mpf(th)
         return (1 - T * mp.sin(T) / (2 * (1 - mp.cos(T)))) / T ** 2
 
-    def forbidden(th):
-        with np.errstate(all="ignore"):
-            return 1.0 / th ** 2 - (1.0 + np.cos(th)) / (2.0 * th * np.sin(th))
-
     assert np.isfinite(gal3.gamma_coefficients(np.pi)[3])
-    ours_worst = forbidden_worst = 0.0
+    ours_worst = 0.0
     for th in [np.pi] + [np.pi - 10.0 ** -k for k in range(3, 10)]:
         e = exact_c2(th)
         ours = gal3.gamma_coefficients(th)[3]
-        f = forbidden(th)
         ours_worst = max(ours_worst, float(abs(mp.mpf(ours) - e) / abs(e)))
-        forbidden_worst = max(
-            forbidden_worst,
-            float(abs(mp.mpf(float(f)) - e) / abs(e)) if np.isfinite(f) else np.inf,
-        )
     assert ours_worst <= 1e-13, ours_worst
-    assert forbidden_worst >= 1e-10, forbidden_worst
 
 
 @pytest.mark.claim("M1-C22")
@@ -509,17 +505,10 @@ def test_gamma1_invertibility_and_taylor_branch():
             worst[i] = max(worst[i], float(abs(mp.mpf(got[i]) - e[i]) / abs(e[i])))
     assert max(worst) <= 1e-11, worst
 
-    # and the same assertion WITHOUT the branch fails, in the documented way
-    e = exact(1e-4)
-    bad = gal3.gamma_coefficients_closed_form(1e-4)
-    rel_k3 = float(abs(mp.mpf(bad[2]) - e[2]) / abs(e[2]))
-    rel_c2 = float(abs(mp.mpf(bad[3]) - e[3]) / abs(e[3]))
-    assert rel_k3 > 1e-11 and rel_c2 > 1e-11
-    assert 0.5 <= rel_k3 <= 2.0, rel_k3        # reported 1.0
-    assert 5.0 <= rel_c2 <= 8.0, rel_c2        # reported 6.3
-
-    # the switch point itself
-    assert gal3.THETA_SMALL == 5e-2
+    # That the assertion above FAILS without the Taylor branch is shown by the
+    # mutation harness (taylor_branch_removed), on src itself.  The former check here
+    # evaluated a separate no-branch strawman (gamma_coefficients_closed_form, now
+    # removed from src) and so could not fail because of any change to the real code.
 
     # Dense sweep against a SERIES-defined 50-digit reference (independent of every
     # closed form): 1e-11 must hold everywhere, not only at the eight tabulated
@@ -551,20 +540,20 @@ def test_gamma1_invertibility_and_taylor_branch():
                                  float(abs(mp.mpf(got[i]) - e[i]) / abs(e[i])))
     assert max(worst_sweep) <= 1e-11, worst_sweep
 
+    # the switch point itself (pinned AFTER the sweep, so that moving it is first
+    # caught by the accuracy bound it would break)
+    assert gal3.THETA_SMALL == 5e-2
+
     # THETA_SMALL = 5e-2 is LOAD-BEARING.  Just below the switch the binding error
     # is the 3-term Taylor truncation (relative error ~ theta^6), not the 1 - cos
-    # cancellation: kappa1's truncation is 7.75e-13 at the switch and would be
-    # 1.30e-11 at 8e-2 -- moving the switch there would break the 1e-11 bound.
-    def taylor_k1(th):
-        return 0.5 - th ** 2 / 24.0 + th ** 4 / 720.0
-
+    # cancellation: kappa1's truncation in src is 7.75e-13 at the switch.  (That it
+    # would be 1.30e-11 at 8e-2 was asserted on a test-local Taylor polynomial, which
+    # no change to src could affect; the assertion was deleted.  Moving the switch to
+    # 8e-2 in src is caught by the sweep above -- mutation harness: theta_small_8e-2.)
     below = float(np.nextafter(gal3.THETA_SMALL, 0.0))
     trunc_at_switch = float(abs(mp.mpf(gal3.gamma_coefficients(below)[0])
                                 - series_ref(below)[0]) / series_ref(below)[0])
-    trunc_at_8e2 = float(abs(mp.mpf(taylor_k1(8e-2)) - series_ref(8e-2)[0])
-                         / series_ref(8e-2)[0])
     assert 5e-13 <= trunc_at_switch <= 1e-12, trunc_at_switch
-    assert trunc_at_8e2 > 1e-11, trunc_at_8e2
 
 
 # ==========================================================================
@@ -604,16 +593,30 @@ def test_cayley_closed_form():
 @pytest.mark.claim("M1-C26")
 def test_cayley_denominator_never_vanishes():
     """det(I5 - xi^/2) = 1 + ||phi||^2/4 > 0, so Cayley is total."""
+    def hat_by_hand(xi):
+        """xi^ written entry by entry from the convention (not src.wedge)."""
+        f, u, w, al = xi[0:3], xi[3:6], xi[6:9], xi[9]
+        return np.array([[0.0, -f[2], f[1], u[0], w[0]],
+                         [f[2], 0.0, -f[0], u[1], w[1]],
+                         [-f[1], f[0], 0.0, u[2], w[2]],
+                         [0.0, 0.0, 0.0, 0.0, al],
+                         [0.0, 0.0, 0.0, 0.0, 0.0]])
+
     r = rng(26)
-    worst = 0.0
+    worst = worst_mat = 0.0
     for _ in range(2000):
         xi = rand_xi(r)
         xi[3:6] *= 50.0
         xi[6:9] *= 50.0
         xi[9] = 3.0 * r.normal()
-        d = float(np.linalg.det(gal3.cay_denominator(xi)))
+        Den = gal3.cay_denominator(xi)
+        # the MATRIX, not only its determinant: I5 + xi^/2 has the same determinant
+        # 1 + |phi|^2/4, so a det-only check cannot see that sign
+        worst_mat = max(worst_mat, float(np.abs(Den - (I5 - 0.5 * hat_by_hand(xi))).max()))
+        d = float(np.linalg.det(Den))
         worst = max(worst, abs(d - (1.0 + float(np.dot(xi[0:3], xi[0:3])) / 4.0)))
         assert d > 0.0
+    assert worst_mat <= 1e-12, worst_mat
     assert worst <= 1e-10, worst
 
     # Totality, in a form that can fail: on 20000 draws with |phi| up to 50 and
@@ -621,7 +624,7 @@ def test_cayley_denominator_never_vanishes():
     # defining (I5 - xi^/2)^-1 (I5 + xi^/2).  ("No LinAlgError" alone is vacuous:
     # det(I - [phi]x/2) = 1 + theta^2/4 >= 1 by construction.)
     r2 = rng(2600)
-    worst_rel = worst_struct = 0.0
+    worst_rel = worst_struct = worst_den = 0.0
     min_det = np.inf
     for _ in range(20000):
         xi = r2.normal(size=gal3.DIM)
@@ -633,8 +636,13 @@ def test_cayley_denominator_never_vanishes():
         M = cay_matrix(xi)
         worst_rel = max(worst_rel, float(np.abs(C - M).max()) / max(1.0, float(np.abs(M).max())))
         worst_struct = max(worst_struct, gal3.structural_residual(C))
-        min_det = min(min_det, float(np.linalg.det(gal3.cay_denominator(xi))))
+        Den = gal3.cay_denominator(xi)
+        # it IS the denominator of cay: (I5 - xi^/2) Cay(xi) = I5 + xi^/2
+        worst_den = max(worst_den, float(np.abs(Den @ C - (I5 + 0.5 * hat_by_hand(xi))).max())
+                        / max(1.0, float(np.abs(xi).max())))
+        min_det = min(min_det, float(np.linalg.det(Den)))
     assert worst_rel <= 1e-12, worst_rel
+    assert worst_den <= 1e-12, worst_den
     assert worst_struct <= 1e-12, worst_struct
     assert min_det >= 1.0 - 1e-12, min_det
 
@@ -686,10 +694,12 @@ def test_cayley_rotation_tangent_half_angle():
         assert np.abs(rv / th - ax).max() <= 1e-9
     assert worst_big <= 1e-9, worst_big
 
-    # the tabulated values: transcription check, then each pushed through cay
+    # the tabulated values, each pushed through cay.  (A former transcription line,
+    # |2 tan(theta/2) - tabulated| <= 5e-5, evaluated numpy only and could not fail
+    # because of src; it was deleted.  The tabulated ||c|| is checked through cay
+    # below: Cay of the tabulated ||c|| must land within the tabulation tolerance.)
     for theta, tabulated in [(0.5, 0.5107), (1.0, 1.0926), (2.0, 3.1148),
                              (3.0, 28.203), (3.1415, 4.3172e4)]:
-        assert abs(2.0 * np.tan(theta / 2.0) - tabulated) <= 5e-5 * max(1.0, abs(tabulated))
         # the tabulation tolerance dc = 5e-5 max(1, c) pins theta to 2 dc / (4 + c^2)
         tol_theta = 2.0 * 5e-5 * max(1.0, tabulated) / (4.0 + tabulated ** 2) + 1e-12
         for _ in range(20):
@@ -795,6 +805,7 @@ def test_endpoint_relation(endpoint_dataset):
 
     # and that recursion really is a first-order discretisation of the ODE
     assert_discrete_converges(d)
+    assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C32")
@@ -867,6 +878,7 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset):
     assert worst_p <= 1e-12, worst_p
     assert worst_rv <= 1e-12, worst_rv
     assert_discrete_converges(d)
+    assert_stream_non_commuting(d)
 
 
 @pytest.mark.claim("M1-C35")
@@ -971,61 +983,73 @@ def test_gtsam_navstate_compose_has_no_time_coupling():
 
 @pytest.mark.claim("M1-C40")
 def test_phi_dt_is_an_automorphism_not_a_translation():
-    """Phi_Dt is no fixed translation, is a NavState automorphism, and is conjugation in Gal(3)."""
+    """Phi_Dt is no fixed translation, is a NavState automorphism, and is conjugation in Gal(3).
+
+    Every part goes through ``src.gal3.navstate_phi``.  The reference for Phi_Dt is
+    the claim's own definition (R, p + v Dt, v) evaluated on gtsam NavState objects,
+    and the reference for the NavState product is gtsam's ``compose``.
+    """
     import gtsam
 
     r = rng(40)
     Dt = 0.5
 
-    def phi(N):
-        return gtsam.NavState(N.attitude(), N.position() + N.velocity() * Dt, N.velocity())
+    def to_nav(N):
+        """5x5 [R | p | v] (src layout) -> gtsam.NavState(R, p, v)."""
+        N = np.asarray(N)
+        return gtsam.NavState(gtsam.Rot3(N[0:3, 0:3]), N[0:3, 3], N[0:3, 4])
+
+    def src_phi(X):
+        """src.gal3.navstate_phi applied to a gtsam NavState, returned as a NavState."""
+        return to_nav(gal3.navstate_phi(X.matrix(), Dt))
 
     # (i) no fixed translation.  Phi_Dt fixes the identity, so if Phi_Dt(X) = N X
     #     (or X N) for all X then N = Phi_Dt(I) = I -- and Phi_Dt(X) - X is exactly
     #     v Dt in position.  (A factor FITTED on one element, N_L = Phi(X) X^-1, is
-    #     exact at X and need not fail on a nearby Y by any fixed amount, so no such
-    #     lower bound is asserted.)
+    #     exact at X by construction and need not fail on a nearby Y by any fixed
+    #     amount, so no such bound is asserted.  The former "N_L X == Phi(X)" line was
+    #     deleted: it is true for ANY map Phi and so could not fail.)
     I_nav = gtsam.NavState()
-    assert np.array_equal(phi(I_nav).matrix(), I_nav.matrix())
+    assert np.array_equal(gal3.navstate_phi(I_nav.matrix(), Dt), I_nav.matrix())
     worst_shift = 0.0
     max_gap = 0.0
     for _ in range(2000):
         R, p, v = rand_rot(r), r.normal(size=3), r.normal(size=3)
         X = gtsam.NavState(gtsam.Rot3(R), p, v)
-        Y = phi(X)
+        Y = gal3.navstate_phi(X.matrix(), Dt)
+        # src vs the definition (R, p + v Dt, v) on gtsam's accessors
         worst_shift = max(worst_shift,
-                          float(np.abs(Y.attitude().matrix() - R).max()),
-                          float(np.abs(Y.velocity() - v).max()),
-                          float(np.abs(Y.position() - (p + v * Dt)).max()))
-        # the only candidate factor (the identity) misses by |v| Dt
-        gap = float(np.abs(I_nav.compose(X).matrix() - Y.matrix()).max())
+                          float(np.abs(Y[0:3, 0:3] - X.attitude().matrix()).max()),
+                          float(np.abs(Y[0:3, 4] - X.velocity()).max()),
+                          float(np.abs(Y[0:3, 3] - (X.position() + X.velocity() * Dt)).max()))
+        # the only candidate factor (the identity) misses Phi_Dt(X) by |v| Dt
+        gap = float(np.abs(I_nav.compose(X).matrix() - Y).max())
         assert abs(gap - float(np.abs(v).max()) * Dt) <= 1e-12, gap
         max_gap = max(max_gap, gap)
     assert worst_shift <= 1e-12, worst_shift
     assert max_gap >= 0.5, max_gap
-    # the fitted factor is exact at its own fitting point (so "fails on a second
-    # element by > 0.5" is NOT a property of Phi_Dt)
-    X = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
-    N_L = phi(X).compose(X.inverse())
-    assert float(np.abs(N_L.compose(X).matrix() - phi(X).matrix()).max()) <= 1e-12
 
-    # (ii) but it IS an automorphism
+    # (ii) but it IS an automorphism: Phi(N1) Phi(N2) = Phi(N1 N2), products by gtsam
     worst = 0.0
     for _ in range(2000):
         N1 = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
         N2 = gtsam.NavState(gtsam.Rot3(rand_rot(r)), r.normal(size=3), r.normal(size=3))
-        worst = max(worst, float(np.abs(phi(N1).compose(phi(N2)).matrix()
-                                        - phi(N1.compose(N2)).matrix()).max()))
+        worst = max(worst, float(np.abs(src_phi(N1).compose(src_phi(N2)).matrix()
+                                        - src_phi(N1.compose(N2)).matrix()).max()))
     assert worst <= 1e-12, worst
 
-    # (iii) in Gal(3) it is conjugation by T(Dt), restricted to the t = 0 slice
-    worst_c = 0.0
+    # (iii) in Gal(3) it is conjugation by T(Dt), restricted to the t = 0 slice:
+    #       the definition (R, v, p + v Dt, 0), and the lift of src's navstate_phi
+    worst_c = worst_lift = 0.0
     for _ in range(2000):
         R, v, p = rand_rot(r), r.normal(size=3), r.normal(size=3)
         X_g = gal(R, v, p, 0.0)
         conj = compose(compose(gal3.time_shift(-Dt), X_g), gal3.time_shift(Dt))
         worst_c = max(worst_c, float(np.abs(conj - gal(R, v, p + v * Dt, 0.0)).max()))
+        lifted = gal3.lift_navstate(gal3.navstate_phi(gal3.navstate(R, p, v), Dt))
+        worst_lift = max(worst_lift, float(np.abs(conj - lifted).max()))
     assert worst_c <= 1e-12, worst_c
+    assert worst_lift <= 1e-12, worst_lift
 
 
 # ==========================================================================

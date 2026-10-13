@@ -44,7 +44,6 @@ __all__ = [
     "Ad",
     "Ad_apply",
     "gamma_coefficients",
-    "gamma_coefficients_closed_form",
     "gamma1",
     "gamma2",
     "gamma1_inv",
@@ -319,20 +318,6 @@ def gamma_coefficients(theta: float):
     kappa2 = (theta - s) / (t2 * theta)
     kappa3 = (t2 - 2.0 * omc) / (2.0 * t2 * t2)     # == (th^2 + 2 cos th - 2)/(2 th^4)
     c2 = (1.0 - theta * s / (2.0 * omc)) / t2
-    return float(kappa1), float(kappa2), float(kappa3), float(c2)
-
-
-def gamma_coefficients_closed_form(theta: float):
-    """The closed forms with NO Taylor branch -- kept so a test can show it fails."""
-    theta = float(theta)
-    t2 = theta * theta
-    s = np.sin(theta)
-    c = np.cos(theta)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        kappa1 = (1.0 - c) / t2
-        kappa2 = (theta - s) / (t2 * theta)
-        kappa3 = (t2 + 2.0 * c - 2.0) / (2.0 * t2 * t2)
-        c2 = (1.0 - theta * s / (2.0 * (1.0 - c))) / t2
     return float(kappa1), float(kappa2), float(kappa3), float(c2)
 
 

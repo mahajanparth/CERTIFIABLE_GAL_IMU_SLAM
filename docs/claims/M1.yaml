@@ -56,9 +56,9 @@ claims:
     in particular the (3,4) time entry of X X^-1 is exactly 0.'
   source: DERIVED; pre-flight F4
   kind: DERIVED
-  test_hint: 2000 random X (including |t| up to ~3). max abs err of both products vs I5 <= 1e-10 (measured
-    4.4e-15); |(X X^-1)[3,4]| <= 1e-12 (measured 0.0). A test must include nonzero t AND nonzero v, or
-    the -R^T(p - t v) term is untested.
+  test_hint: '2000 random X (including |t| up to ~3). max abs err of both products vs I5 <= 1e-10
+    (measured 1.07e-14, test seed 20241012+5, 2000 draws); |(X X^-1)[3,4]| <= 1e-12 (measured 0.0). A test
+    must include nonzero t AND nonzero v, or the -R^T(p - t v) term is untested.'
   domain: Total. R^T always exists.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -66,8 +66,9 @@ claims:
   statement: 'Gal(3) is non-abelian: there exist X1, X2 with max|X1 X2 - X2 X1| >= 1e-3.'
   source: DERIVED
   kind: DERIVED
-  test_hint: Exhibit at least one witness pair from the fixed-seed stream; measured max|commutator difference|
-    = 5.0. This rejects an implementation whose compose() is accidentally additive/commutative.
+  test_hint: 'Over 200 random pairs from the fixed-seed stream (seed 20241012+6, rand_gal) assert max|X1
+    X2 - X2 X1| >= 1e-3; measured worst commutator difference 16.15 (verifier 16.15 at the same seed).
+    This rejects an implementation whose compose() is accidentally additive/commutative.'
   domain: Total.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -197,9 +198,10 @@ claims:
     alpha), and this equals scipy.linalg.expm(wedge(xi)) entrywise.
   source: DERIVED
   kind: DERIVED
-  test_hint: 2000 random xi with |phi| drawn uniformly in (0.05, 2.9), u, w ~ N(0,I3), alpha ~ N(0,1).
-    max abs err vs expm <= 1e-9 (measured 3.9e-14). alpha != 0 and u != 0 are both required or the alpha*Gamma2*u
-    coupling is untested.
+  test_hint: '2000 random xi with |phi| drawn uniformly in (0.05, 2.9), u, w ~ N(0,I3), alpha ~ N(0,1)
+    (seed 20241012+19). max abs err vs expm <= 1e-9 (measured 3.8e-15; verifier 1.5e-13 over 1e4 draws
+    including theta < 0.05 and up to 2 pi - 0.3). alpha != 0 and u != 0 are both required or the
+    alpha*Gamma2*u coupling is untested.'
   domain: Total on gal(3).
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -218,11 +220,13 @@ claims:
     = (1 - theta sin(theta) / (2 (1 - cos theta))) / theta^2.
   source: DERIVED
   kind: DERIVED
-  test_hint: '20000 random phi with |phi| in (1e-9, pi]: max abs of Gamma1inv(phi) @ Gamma1(phi) - I <=
-    1e-9 (measured 9.8e-10 WITHOUT the small-angle branch, dominated by the |phi| ~ 1e-6 samples; WITH
-    the M1-C24 Taylor branch, measured 4.0e-14 -- assert <= 1e-13). The equivalent form c2 = 1/theta^2
-    - (1+cos theta)/(2 theta sin theta) must NOT be used: assert it is not, or assert finiteness at theta
-    = pi exactly.'
+  test_hint: '20000 random phi with |phi| in (1e-9, pi] (seed 20241012+21): max abs of Gamma1inv(phi) @
+    Gamma1(phi) - I <= 1e-9 (measured 9.8e-10 WITHOUT the small-angle branch, dominated by the |phi| ~
+    1e-6 samples; WITH the M1-C24 Taylor branch, measured 1.8e-14 at the test seed -- assert <= 1e-13).
+    The equivalent form c2 = 1/theta^2 - (1+cos theta)/(2 theta sin theta) must NOT be used: assert
+    finiteness of c2 at theta = pi exactly and relative accuracy <= 1e-13 against 60-digit arithmetic at
+    theta = pi and pi - 10^-k, k = 3..9 (measured 1.0e-16); the forbidden form in src fails that bound
+    (mutation harness: c2_forbidden_form).'
   domain: Requires Gamma1(phi) invertible, i.e. theta != 2*pi*k. Log_SO3 requires theta < pi for a unique
     branch.
   verdict: CONFIRMED
@@ -243,8 +247,8 @@ claims:
     with |phi| arbitrarily close to pi.
   source: DERIVED
   kind: DERIVED
-  test_hint: 5000 random X with R = Exp_SO3(5*N(0,I3)) (so the wrapped |phi| covers (0, pi]), v, p ~ N(0,I3),
-    t ~ N(0,1). max abs err <= 1e-9 (measured 7.5e-14).
+  test_hint: '5000 random X with R = Exp_SO3(5*N(0,I3)) (so the wrapped |phi| covers (0, pi]), v, p ~
+    N(0,I3), t ~ N(0,1), seed 20241012+23. max abs err <= 1e-9 (measured 1.48e-13; verifier 1.49e-13).'
   domain: Total. Surjectivity holds because Gamma1 is invertible on [0, pi].
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -256,18 +260,25 @@ claims:
     th^4/30240 for theta < 5e-2.
   source: DERIVED + measured
   kind: DERIVED
-  test_hint: Assert the four tabulated det/cond values to 4 significant figures. Then assert max relative
-    error of each coefficient against 50-digit mpmath arithmetic <= 1e-11 over theta in {1e-9, 1e-6, 1e-4,
-    1e-2, 5e-2, 1e-1, 1.0, 3.0} -- this FAILS (kappa3 rel err 1.0, c2 rel err 6.3) if the Taylor branch
-    is absent.
+  test_hint: 'Assert the four tabulated det/cond values to 4 significant figures. Then assert max relative
+    error of each coefficient against 60-digit mpmath arithmetic <= 1e-11 over theta in {1e-9, 1e-6, 1e-4,
+    1e-2, 5e-2, 1e-1, 1.0, 3.0} (measured 8.2e-13) -- this FAILS if the Taylor branch is absent from src
+    (mutation harness: taylor_branch_removed; without the branch the 2 sin^2 closed form has relative
+    error 1.0 in kappa2, kappa3 and c2 at theta = 1e-9, and 1.8e-7 / 8.3e-8 in kappa3 / c2 at theta =
+    1e-4).'
   domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
     below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just
-    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not
-    the 1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11
-    at 8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the
-    1e-11 bound. Just above the switch, 1 - cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2):
-    the literal form gives kappa3 4.9e-10 and c2 1.9e-10 near 5e-2, while 2 sin^2 keeps every coefficient
-    <= 1.1e-12 on a dense sweep (theta in 1e-12..10, 863 points, series-defined 50-digit reference).'
+    below the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the
+    1 - cos(theta) cancellation: kappa1''s truncation is 7.75e-13 at theta = 5e-2 and would be 1.30e-11 at
+    8e-2 (crossing 1e-11 near 7.7e-2), so the switch cannot be moved up to 8e-2 without breaking the 1e-11
+    bound (mutation harness: theta_small_8e-2, caught by the dense sweep). Just above the switch, 1 -
+    cos(theta) must be evaluated as the identically equal 2 sin^2(theta/2): the literal form gives kappa3
+    and c2 relative errors of ~2e-10 just above 5e-2 (1.6e-10 / 1.6e-10 at the test''s sweep points >=
+    5e-2; 1.9e-10 / 1.9e-10 over 500 points on [0.05, 0.06]; verifier 6.1e-10 / 2.0e-10 on its own
+    points), while 2 sin^2 keeps every coefficient within 1.11e-12 on the test''s dense sweep (theta in
+    1e-12..10, 863 points, series-defined 50-digit reference; measured 1.106e-12) and within 1.41e-12 on a
+    denser 6003-point sweep (logspace(1e-12, 10, 3000), linspace(0.045, 0.2, 3000), pi and both sides of
+    5e-2; verifier 1.36e-12 on its own 6003 points) -- 7x under the 1e-11 bound.'
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
 - id: M1-C25
@@ -286,9 +297,13 @@ claims:
     gal(3) -> Gal(3) and its sole denominator never vanishes.
   source: DERIVED; pre-flight F8
   kind: DERIVED
-  test_hint: 2000 random xi, including |alpha| up to ~3 and large |u|, |w|. max |det - (1 + |phi|^2/4)|
-    <= 1e-10 (measured 1.3e-15). Also assert 20000 Cayley evaluations with nonzero alpha all succeed (zero
-    linalg failures).
+  test_hint: '2000 random xi, including |alpha| up to ~3 and large |u|, |w| (seed 20241012+26). Assert the
+    MATRIX cay_denominator(xi) = I5 - xi^/2 entrywise, with xi^ written by hand in the test (measured 0.0)
+    -- I5 + xi^/2 has the same determinant 1 + |phi|^2/4, so a determinant-only check cannot see that sign
+    (mutation harness: cay_denominator_minus->plus). max |det - (1 + |phi|^2/4)| <= 1e-10 (measured
+    8.9e-16). Also 20000 Cayley evaluations with nonzero alpha, |phi| up to 50 and |u|, |w| ~ 1e3 (seed
+    20241012+2600): finite, equal to the defining (I5 - xi^/2)^-1 (I5 + xi^/2) (rel 2.4e-15), and (I5 -
+    xi^/2) Cay(xi) = I5 + xi^/2 (rel 5.5e-15).'
   domain: Total. The determinant is independent of u, w, alpha -- only phi enters.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -307,9 +322,11 @@ claims:
     ||c|| = 0.5107 at theta = 0.5, 1.0926 at 1.0, 3.1148 at 2.0, 28.203 at 3.0, 4.3172e4 at 3.1415 rad.
   source: DERIVED; pre-flight F3
   kind: DERIVED
-  test_hint: '2000 random c with ||c|| uniform in (0.01, 5.0): | ||c|| - 2 tan(theta/2) | <= 1e-8 where
-    theta = ||Log_SO3(Cay([c]x))|| (measured 6.2e-15). Plus the five tabulated values to 4 significant
-    figures.'
+  test_hint: '2000 random c with ||c|| uniform in (0.01, 5.0) (seed 20241012+28): | ||c|| - 2 tan(theta/2)
+    | <= 1e-8 where theta = ||Log_SO3(Cay([c]x))|| (measured 6.2e-15); 2000 more with ||c|| log-uniform in
+    (5, 5e4), angle read back with scipy: <= 1e-9 (measured 8.0e-13). The five tabulated values are
+    checked THROUGH cay: Cay of the tabulated ||c|| must return theta within the tolerance implied by 4
+    significant figures, axis preserved to 1e-9.'
   domain: Cayley cannot represent theta = pi and is numerically unusable for theta > ~3 rad. Absolute
     rotations R_i, R_j must NOT be Cayley-parameterised.
   verdict: CONFIRMED
@@ -455,13 +472,16 @@ claims:
     restricted to the t = 0 slice, exactly.
   source: DERIVED
   kind: DERIVED
-  test_hint: '(i) Phi_Dt(I) == I exactly; 2000 random X: Phi_Dt(X) has the R and v of X and position p
-    + v*Dt to 1e-12, so the identity factor misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12;
-    max over draws >= 0.5). No lower bound is claimed for a factor FITTED on one element and applied to
-    a second: N_L = Phi_Dt(X) X^-1 is exact at X (residual 5.55e-16 at Y = X) and its residual goes continuously
-    to 0 as Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs: max|Phi_Dt(N1) Phi_Dt(N2)
-    - Phi_Dt(N1 N2)| <= 1e-12 (measured 1.8e-15; verifier 1.78e-15 over 2e4 x 2). (iii) 2000 random (R,v,p):
-    max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12 (measured 0.0; verifier 0.0 over 2e4 x 3).'
+  test_hint: 'All parts go through src.gal3.navstate_phi (seed 20241012+40, Dt = 0.5). (i) navstate_phi(I)
+    == I exactly; 2000 random X: navstate_phi(X) has the R and v of X and position p + v*Dt, compared with
+    the definition evaluated on gtsam NavState accessors, to 1e-12 (measured 0.0), so the identity factor
+    misses Phi_Dt(X) by exactly max|v|*Dt (asserted to 1e-12; max over draws 2.02 >= 0.5). No lower bound
+    is claimed for a factor FITTED on one element and applied to a second: N_L = Phi_Dt(X) X^-1 is exact
+    at X by construction (not asserted -- it holds for any map) and its residual goes continuously to 0 as
+    Y -> X (14% of random pairs fall below 0.5). (ii) 2000 random pairs, products by gtsam
+    NavState.compose: max|Phi_Dt(N1) Phi_Dt(N2) - Phi_Dt(N1 N2)| <= 1e-12 (measured 8.9e-16; verifier
+    1.8e-15 over 2e4). (iii) 2000 random (R,v,p): max|T(-Dt) X T(Dt) - (R, v, p + v*Dt, 0)| <= 1e-12
+    (measured 0.0) and max|T(-Dt) X T(Dt) - lift_navstate(navstate_phi(N))| <= 1e-12 (measured 0.0).'
   domain: Conjugation statement requires t(X) = 0.
   verdict: REFUTED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -471,17 +491,24 @@ claims:
     1)).
   source: DERIVED
   kind: DERIVED
-  test_hint: '1000 random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3)) at Dt = 0.4, the WORST Dt of the range
-    (0.02, 0.4) -- the Euler error grows with Dt, and its worst case grows with the sample count, so both
-    are load-bearing. Ground truth by Euler integration of dRdot = dR[omega]x, dvdot = dR a, dpdot = dv.
-    The Euler error is FIRST ORDER in dt (measured err/dt = 0.2494, constant across n = 1e3..6.4e4), so
-    the tolerance must be tied to dt: use n with dt <= 5e-6 and tolerance 1e-5 (dt = 2.5e-6: measured
-    7.4e-6 over 1000 configurations at Dt = 0.4 -- headroom only 1.35x; the earlier 2.7e-6 was over 10
-    configurations with Dt ~ U(0.02, 0.4); verifier 2.16e-6 / 5.22e-6 / 7.04e-6 at 10 / 200 / 1000 configurations).
-    The closed form exp(Dt xi) is also checked against an independent DOP853 solve of Ddot = D xi^ (rtol
-    = atol = 1e-13), 1000 configurations with Dt up to 2.0: measured 1.4e-12 (asserted <= 1e-11). Separately
-    assert the ODE itself: max rel |(d/ds) expm(s xi^) - expm(s xi^) xi^| <= 1e-8 by central difference
-    at h = 1e-6 (measured 2.1e-10).'
+  test_hint: '(a) The closed form exp(Dt xi) against an independent DOP853 solve of Ddot = D xi^ (rtol =
+    atol = 1e-13), 200 configurations at each Dt in {0.02, 0.1, 0.4, 1.0, 2.0}: measured 1.39e-12
+    (asserted <= 1e-11). (b) The project''s explicit Euler scheme (euler_increment) vs exp(Dt xi): 1000
+    random (omega ~ 0.7*N(0,I3), a ~ 2*N(0,I3)) at Dt = 0.4, the WORST Dt of the range (0.02, 0.4) (seed
+    20241012+41). The Euler error is FIRST ORDER: worst over the 1000 configurations = 2.970*dt, constant
+    to 4 digits across n = 1e3..1.6e5 (median 0.563*dt, mean 0.615*dt; verifier 2.97 at the test seed).
+    Rule: dt <= 2.5e-6 with tolerance 1e-5, tested at the boundary dt = 2.5e-6: measured 7.425e-6,
+    headroom 1.35x. The largest dt the 1e-5 tolerance admits on these configurations is 1e-5/2.970 =
+    3.37e-6; dt = 5e-6 FAILS it (1.485e-5, 4 of 1000 over), as does dt = 4e-6 (1.19e-5). (b'') Explicit
+    Euler pinned by its SIGNED first-order coefficient: (D_n - exp(T A))/dt = -(T/2) A^2 exp(T A) + O(dt)
+    with A = xi^ written by hand, T = 0.4, dt = 1e-4, same 1000 configurations: mismatch <= 1e-2 (measured
+    7.0e-4; a semi-implicit update gives ~2.9 -- mutation harness: euler_increment_semi_implicit); the
+    predicted coefficient max|(T/2) A^2 exp(TA)| = 2.970 matches (b)''s worst err/dt to 2e-6 relative
+    (asserted 1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). (c)
+    Time-varying stream (50 instances, Dt = 0.4) vs DOP853: err 5.2e-5 at dt = 1e-5 (<= 1e-4), ratio
+    err(2e-5)/err(1e-5) = 2.000 (in [1.8, 2.2]); input guard on the stream: left- vs right-invariant
+    rotation solutions differ by 0.44 (>= 1e-2). Separately assert the ODE itself: max rel |(d/ds) expm(s
+    xi^) - expm(s xi^) xi^| <= 1e-8 by central difference at h = 1e-6, 50 draws (measured 8.9e-11).'
   domain: Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the
     ordered product of per-sample exponentials, which is M1-C45.
   verdict: CONFIRMED
@@ -525,10 +552,17 @@ claims:
     note the position term uses the FIRST segment''s velocity and the SECOND segment''s duration.'
   source: DERIVED
   kind: DERIVED
-  test_hint: 'Time-varying inputs over [t_i,t_j] and [t_j,t_k]; D_ij, D_jk, D_ik from three SEPARATE DOP853
-    solves: max|D_ij D_jk - D_ik| <= 1e-10 (measured 8.4e-14); identity on the discrete recursion measured
-    9.5e-15. Plus 2000 purely algebraic random triples at <= 1e-14. A test that uses dv_jk * Dt_ij instead
-    must FAIL.'
+  test_hint: 'Time-varying inputs over [t_i,t_j] and [t_j,t_k] (seed 20241012+45); D_ij, D_jk, D_ik from
+    three SEPARATE DOP853 solves: max|D_ij D_jk - D_ik| <= 1e-10 (measured 8.4e-14); identity on the
+    discrete recursion integrate_increment measured 9.5e-15 (<= 1e-12). That recursion is checked against
+    DOP853 too: exact for omega = 0 with constant a (measured 5.2e-15, asserted <= 1e-12; a position
+    update using the NEW velocity misses by a*T*dt -- mutation harness:
+    integrate_increment_dp_uses_new_dv), and first order on the time-varying stream (5.8e-5 at dt = 5e-5,
+    ratio 2.000). imu_step_element(omega, a, dt) = exp(dt (0, a, 0, 1)) . (Exp(omega dt), 0, 0, 0) by
+    scipy expm/Rotation, 200 draws: <= 1e-12 (measured 1.0e-13), and integrate_increment equals the
+    ordered product of these elements (measured 1.7e-18). Plus 2000 purely algebraic random triples at <=
+    1e-14 (measured 0.0). A test that uses dv_jk * Dt_ij instead must FAIL (worst miss 4.23, asserted >=
+    1e-3).'
   domain: Total. Requires the increments to be adjacent and expressed in the same body frame convention.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -604,9 +638,10 @@ claims:
     Logmap matches M1-C21, AdjointMap matches M1-C11, and adjointMap matches M1-C09.'
   source: VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)
   kind: VERIFIED-PUBLISHED
-  test_hint: '2000 random samples each. Tolerances: Expmap <= 1e-9 (measured 3.9e-14); Logmap <= 1e-9
-    for |phi| < pi - 1e-3 (measured 1.0e-13); AdjointMap <= 1e-10 (measured 1.8e-15); adjointMap <= 1e-12
-    (measured 0.0). Construct the gtsam element as Gal3(Rot3(R), p, v, t) -- POSITION SECOND.'
+  test_hint: '2000 random samples each (seed 20241012+51). Tolerances: Expmap <= 1e-9 (measured 1.1e-15;
+    verifier 5.7e-14 over 1e4); Logmap <= 1e-9 for |phi| < pi - 1e-3 (measured 5.3e-15; verifier 5.8e-14);
+    AdjointMap <= 1e-10 (measured 1.8e-15); adjointMap <= 1e-12 (measured 0.0). Construct the gtsam
+    element as Gal3(Rot3(R), p, v, t) -- POSITION SECOND.'
   domain: gtsam 4.3.0 as installed; Logmap comparison restricted to |phi| < pi.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
@@ -635,9 +670,10 @@ claims:
     W_ij Phi_Dt(X_i) U_ij and equals T(-Dt) H'' X_i D_ij on (R, v, p).'
   source: VERIFIED-PUBLISHED (measured on installed gtsam 4.3.0)
   kind: VERIFIED-PUBLISHED
-  test_hint: PreintegrationParams.MakeSharedU(9.81) (so g = (0,0,-9.81)), zero bias, 500 integrateMeasurement
-    calls at dt = 1e-3 with omega = (0.3,-0.2,0.5), acc = (0.4,0.2,10.11). max abs err on (R, v, p) <=
-    1e-9 for both forms (measured 4.4e-16 for both). Also assert |form(a)[3,4]| <= 1e-12.
+  test_hint: 'PreintegrationParams.MakeSharedU(9.81) (so g = (0,0,-9.81)), zero bias, 500
+    integrateMeasurement calls at dt = 1e-3 with omega = (0.3,-0.2,0.5), acc = (0.4,0.2,10.11); 25 random
+    initial states (seed 20241012+53). max abs err on (R, v, p) <= 1e-9 for both forms (measured 1.8e-15
+    for both). Also assert |form(a)[3,4]| <= 1e-12 (measured 0.0).'
   domain: gtsam 4.3.0 as installed; requires MakeSharedU so that gravity is -z.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
