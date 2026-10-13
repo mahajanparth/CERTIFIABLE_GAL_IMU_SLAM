@@ -113,7 +113,10 @@ def so3_exp(phi) -> np.ndarray:
     if theta < THETA_SMALL:
         t2 = theta * theta
         t4 = t2 * t2
-        s = 1.0 - t2 / 6.0 + t4 / 120.0          # sin(th)/th
+        # sin(th)/th through th^6: stopping at th^4 leaves th^6/5040 = 3.1e-12 relative
+        # (1.5e-13 in the matrix) just below the switch (M1-F15), and breaks the
+        # agreement with the batched Rodrigues of src.imu_dynamics (M1-C45).
+        s = 1.0 - t2 / 6.0 + t4 / 120.0 - t4 * t2 / 5040.0   # sin(th)/th
         c = 0.5 - t2 / 24.0 + t4 / 720.0         # (1 - cos th)/th^2
     else:
         s = np.sin(theta) / theta

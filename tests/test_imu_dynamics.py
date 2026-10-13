@@ -253,14 +253,100 @@ def test_increment_closed_form_blocks():
         assert abs(float(ref[3, 4]) - Dt) <= 1e-15
     assert worst <= 1e-12, worst
 
+    # The same blocks for NEGATIVE as well as positive Dt (the statement fixes no sign;
+    # C41's domain says Dt is any real number), against an INDEPENDENT reference: scipy
+    # expm of the generator (omega, a, 0, 1)^ written by hand -- nothing from src.  The
+    # main loop above compares with src's own exp, which shares so3_exp and the Gamma
+    # coefficients with increment_blocks.  Kills dp = Dt |Dt| Gamma2 a (pass-6 Q35:
+    # dp off by 2 |dp| for Dt < 0).
+    def gen_by_hand(om, a):
+        A = np.zeros((5, 5))
+        A[0:3, 0:3] = [[0.0, -om[2], om[1]], [om[2], 0.0, -om[0]], [-om[1], om[0], 0.0]]
+        A[0:3, 3] = a
+        A[3, 4] = 1.0
+        return A
+
+    r_ex = rng(4200)   # own stream: the recorded draws below keep theirs
+    worst_expm = 0.0
+    n_neg = 0
+    for _ in range(500):
+        omega = 0.7 * r_ex.normal(size=3)
+        acc = 2.0 * r_ex.normal(size=3)
+        Dt = float(r_ex.uniform(0.02, 0.5)) * (1.0 if r_ex.uniform() < 0.5 else -1.0)
+        n_neg += Dt < 0.0
+        dR, dv, dp, t = imu.increment_blocks(omega, acc, Dt)
+        E = sla.expm(Dt * gen_by_hand(omega, acc))
+        worst_expm = max(worst_expm, float(np.abs(gal(dR, dv, dp, t) - E).max()))
+    assert n_neg >= 200, n_neg   # INPUT GUARD: both signs are sampled
+    assert worst_expm <= 1e-12, worst_expm
+
     # dp carries no Gamma1 * w term: the generator's w slot is zero, so position
-    # comes entirely from the alpha * Gamma2 * u coupling.
-    omega, acc, Dt = 0.3 * np.ones(3), np.array([0.4, -0.2, 1.1]), 0.37
+    # comes entirely from the alpha * Gamma2 * u coupling.  dp is checked against
+    # Dt^2 Gamma2(omega Dt) a with Gamma2 = sum_n [phi]x^n / (n+2)! summed HERE (40
+    # terms; nothing from src), for both signs of Dt.  (The former check re-evaluated
+    # src's own expression Dt^2 gamma2(omega Dt) a and so was blind to any defect in
+    # gamma2 or in the Dt factor -- pass-6 verifier, "tests that cannot fail".)
+    def gamma2_series(ph):
+        K = np.array([[0.0, -ph[2], ph[1]], [ph[2], 0.0, -ph[0]], [-ph[1], ph[0], 0.0]])
+        out, term, fact = np.zeros((3, 3)), np.eye(3), 2.0
+        for n in range(40):
+            out = out + term / fact
+            term = term @ K
+            fact *= n + 3
+        return out
+
+    omega, acc = 0.3 * np.ones(3), np.array([0.4, -0.2, 1.1])
     xi = imu.increment_generator(omega, acc)
     assert np.abs(xi[6:9]).max() == 0.0
-    _, _, dp, _ = imu.increment_blocks(omega, acc, Dt)
-    assert np.abs(dp - Dt ** 2 * (gal3.gamma2(omega * Dt) @ acc)).max() <= 1e-15
-    assert np.abs(dp).max() >= 1e-3
+    worst_dp_series = 0.0
+    for Dt in (0.37, -0.37, 1.3, -1.3):
+        _, _, dp, _ = imu.increment_blocks(omega, acc, Dt)
+        worst_dp_series = max(worst_dp_series, float(np.abs(
+            dp - Dt ** 2 * (gamma2_series(omega * Dt) @ acc)).max()))
+        assert np.abs(dp).max() >= 1e-3
+    assert worst_dp_series <= 1e-15, worst_dp_series
+
+    # dR = Exp_SO3(omega Dt) as increment_blocks and imu_step_element compute it: the
+    # SCALAR Rodrigues gal3.so3_exp, against scipy Rotation AND a 40-digit mpmath
+    # Rodrigues, ACROSS its small-angle switch THETA_SMALL = 0.05 (both sides, the
+    # double just below it, and exactly on it) and up to large angles.  The main loop
+    # above compares so3_exp with itself (through src exp), so only this pins it.
+    # Bound 1e-14 (measured 1.0e-15 against both).  Mutation harness: without the
+    # th^6/5040 term of sin(th)/th the scalar Taylor branch is off by th^7/5040 =
+    # 1.5e-13 just below the switch (so3_exp_taylor_no_th6, the M1-F15 regression), and
+    # th^4/720 -> th^4/700 in (1 - cos th)/th^2 gives 6.2e-13 (so3_exp_c_th4_over_700,
+    # pass-6 Q05).
+    import mpmath
+
+    def rodrigues_mp(ph):
+        with mpmath.workdps(40):
+            f = [mpmath.mpf(float(x)) for x in ph]
+            t = mpmath.sqrt(f[0] ** 2 + f[1] ** 2 + f[2] ** 2)
+            K = mpmath.matrix([[0, -f[2], f[1]], [f[2], 0, -f[0]], [-f[1], f[0], 0]])
+            if t == 0:
+                return np.eye(3)
+            M = mpmath.eye(3) + (mpmath.sin(t) / t) * K + ((1 - mpmath.cos(t)) / t ** 2) * (K * K)
+            return np.array([[float(M[i, j]) for j in range(3)] for i in range(3)])
+
+    th_s = np.concatenate([[0.0], np.logspace(-10, -1.5, 40), np.linspace(0.045, 0.055, 41),
+                           [np.nextafter(gal3.THETA_SMALL, 0.0), gal3.THETA_SMALL],
+                           np.linspace(0.06, 3.1, 60), [np.pi, 4.0, 7.5, 12.0]])
+    ax_s = rand_axis(r_ex, th_s.size)
+    worst_so3_scipy = worst_so3_mp = worst_dR = 0.0
+    for t_k, a_k in zip(th_s, ax_s):
+        ph = t_k * a_k
+        E = gal3.so3_exp(ph)
+        worst_so3_scipy = max(worst_so3_scipy,
+                              float(np.abs(E - Rotation.from_rotvec(ph).as_matrix()).max()))
+        worst_so3_mp = max(worst_so3_mp, float(np.abs(E - rodrigues_mp(ph)).max()))
+        # through increment_blocks, with Dt of either sign: omega = ph / Dt
+        for Dt in (0.3, -0.3):
+            dR = imu.increment_blocks(ph / Dt, np.zeros(3), Dt)[0]
+            worst_dR = max(worst_dR,
+                           float(np.abs(dR - Rotation.from_rotvec(ph).as_matrix()).max()))
+    assert worst_so3_scipy <= 1e-14, worst_so3_scipy
+    assert worst_so3_mp <= 1e-14, worst_so3_mp
+    assert worst_dR <= 1e-14, worst_dR
 
     # dR = Exp(omega Dt) as the integrators compute it: the batched Rodrigues used by
     # integrate_truth / integrate_increment, against scipy Rotation, ACROSS the
@@ -424,6 +510,21 @@ def test_preintegration_chaining_is_the_group_product():
         worst_step = max(worst_step,
                          float(np.abs(imu.imu_step_element(om_k, a_k, h) - sla.expm(A) @ Rk).max()))
     assert worst_step <= 1e-12, worst_step
+    # ... and for NEGATIVE dt (the claim's domain is "Total"), same scipy references:
+    # kills a position block 0.5 a dt |dt| (pass-6 Q36: off by |a| dt^2 for dt < 0).
+    r_neg = rng(4500)   # own stream: the recorded draws below keep theirs
+    worst_step_neg = 0.0
+    for _ in range(200):
+        om_k, a_k = 2.0 * r_neg.normal(size=3), 3.0 * r_neg.normal(size=3)
+        h = -float(r_neg.uniform(1e-3, 0.2))
+        A = np.zeros((5, 5))
+        A[0:3, 3] = h * a_k
+        A[3, 4] = h
+        Rk = np.eye(5)
+        Rk[0:3, 0:3] = Rotation.from_rotvec(om_k * h).as_matrix()
+        worst_step_neg = max(worst_step_neg, float(np.abs(
+            imu.imu_step_element(om_k, a_k, h) - sla.expm(A) @ Rk).max()))
+    assert worst_step_neg <= 1e-12, worst_step_neg
     om_s, a_s = st.sampled(dt, 50)
     Dp = imu.integrate_increment(om_s, a_s, dt, 50, per_step=True)
     worst_prod = 0.0
@@ -433,6 +534,27 @@ def test_preintegration_chaining_is_the_group_product():
             P = P @ imu.imu_step_element(om_s[j, k], a_s[j, k], dt)
         worst_prod = max(worst_prod, float(np.abs(gal(Dp[0][k], Dp[1][k], Dp[2][k], Dp[3]) - P).max()))
     assert worst_prod <= 1e-12, worst_prod
+    # ... and NEAR THE SMALL-ANGLE SWITCH, where the scalar Rodrigues of
+    # imu_step_element and the batched one of integrate_increment take their Taylor
+    # branches at their least accurate: per-step angles |omega| dt uniform in
+    # [0.04, 0.0499] (just below THETA_SMALL = 0.05), per-step random directions, long
+    # streams of 60 and 1000 steps, and dt of either sign.  With sin(th)/th truncated
+    # after th^4 in so3_exp alone (the M1-F15 regression) this gap is 1.2e-12 at n = 60
+    # and 5.8e-12 at n = 1000 (mutation harness: so3_exp_taylor_no_th6).
+    worst_prod_switch = 0.0
+    for n_sw, b_sw, dt_sw in ((60, 10, 0.01), (1000, 3, 0.01), (60, 10, -0.01)):
+        ang = r_neg.uniform(0.04, 0.0499, size=(n_sw, b_sw))
+        om_sw = (ang / abs(dt_sw))[..., None] * rand_axis(r_neg, n_sw * b_sw).reshape(n_sw, b_sw, 3)
+        a_sw = r_neg.normal(size=(n_sw, b_sw, 3))
+        assert float(np.linalg.norm(om_sw * dt_sw, axis=-1).max()) < gal3.THETA_SMALL  # INPUT GUARD
+        Dsw = imu.integrate_increment(om_sw, a_sw, dt_sw, n_sw, per_step=True)
+        for k in range(b_sw):
+            P = np.eye(5)
+            for j in range(n_sw):
+                P = P @ imu.imu_step_element(om_sw[j, k], a_sw[j, k], dt_sw)
+            worst_prod_switch = max(worst_prod_switch, float(np.abs(
+                gal(Dsw[0][k], Dsw[1][k], Dsw[2][k], Dsw[3]) - P).max()))
+    assert worst_prod_switch <= 1e-12, worst_prod_switch
 
     # ... also in a LARGE-STEP regime, |omega| dt ~ 0.2 .. 1.4 (well past the
     # small-angle switch THETA_SMALL = 0.05, which every other integrate_* call stays
@@ -482,11 +604,15 @@ def test_preintegration_chaining_is_the_group_product():
         worst_ode = max(worst_ode, float(np.abs(C - gal(gR[k], gv[k], gp[k], T1 + T2)).max()))
     assert worst_ode <= 1e-10, worst_ode
 
-    # 2000 purely algebraic triples, plus the swapped-duration form which must fail
+    # 4000 purely algebraic triples against the hand-written component formulas: the
+    # first 2000 with positive durations (the recorded draws), the appended 2000 with
+    # durations of either sign (the claim is total; a backward segment chains by the
+    # same product)
     worst_alg = 0.0
-    worst_wrong = 0.0
-    for _ in range(2000):
+    for i_alg in range(4000):
         Dt_ij, Dt_jk = float(r.uniform(0.05, 1.0)), float(r.uniform(0.05, 1.0))
+        if i_alg >= 2000:   # appended draws; the first 2000 keep their recorded values
+            Dt_ij, Dt_jk = Dt_ij * np.sign(r.normal()), Dt_jk * np.sign(r.normal())
         A = gal(rand_rot(r, scale=0.5), r.normal(size=3), r.normal(size=3), Dt_ij)
         B = gal(rand_rot(r, scale=0.5), r.normal(size=3), r.normal(size=3), Dt_jk)
         C = imu.chain(A, B)
@@ -499,10 +625,14 @@ def test_preintegration_chaining_is_the_group_product():
             float(np.abs(C[0:3, 4] - (dp_ij + dR_ij @ dp_jk + dv_ij * Dt_jk)).max()),
             abs(float(C[3, 4]) - (Dt_ij + Dt_jk)),
         )
-        wrong = dp_ij + dR_ij @ dp_jk + dv_jk * Dt_ij
-        worst_wrong = max(worst_wrong, float(np.abs(C[0:3, 4] - wrong).max()))
     assert worst_alg <= 1e-14, worst_alg
-    assert worst_wrong >= 1e-3, worst_wrong
+    # DELETED (pass-6 verifier, "tests that cannot fail independently"): a check that the
+    # swapped-duration form dp_ij + dR_ij dp_jk + dv_jk Dt_ij misses chain(A, B) by >= 1e-3.
+    # Once worst_alg <= 1e-14 has passed, chain(A, B) IS the correct form to 1e-14, so the
+    # miss equals |dv_ij Dt_jk - dv_jk Dt_ij| -- a property of the random inputs, not of
+    # src; no change to src could make it fail while worst_alg passes.  The FIRST-segment
+    # velocity / SECOND-segment duration term is pinned by worst_alg itself (hand-written
+    # reference) and by worst_ode (three DOP853 solves).
 
 
 # ==========================================================================
