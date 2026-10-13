@@ -115,7 +115,9 @@ and s = 1. X is PSD (min eig -1.1e-16) and satisfies P0, and every P1 trace is e
 variety (real square R) but not in the Shor relaxation. The only shared dependency is C16's trace identity.
 
 ### 3a. C32 at the claim's own seed
-(filled in below when the run finishes)
+Own sampler, seed 2, 6000 states, 2278 monomials: 3|rho_v|^2 2.6e-14, rho_v.rho_p 2.5e-14 (<= 1e-12); diag(1,2,5)
+7.9e-2, random SPD 1.4e-1 (>= 1e-4); diag(1,1,1.01) 8.7e-4. These match the claim's measured 2.4e-15 / 3.1e-15 vs
+7.9e-2 / 1.6e-1 in pattern (my residual floor is 10x higher, still 40x inside the tolerance). C32 CONFIRMED.
 
 ## 4. Mutation sweep
 
