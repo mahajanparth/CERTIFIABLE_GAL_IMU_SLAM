@@ -334,7 +334,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -442,10 +442,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-005
     started: '2026-10-13T01:55:38+00:00'
+    finished: '2026-10-13T02:08:27+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C28 (Cayley composes by the tangent-addition law; gap 9.9e-3, B2 per-step
+      product vs Cay(n w dt) 7.4e-4). 25/25 confirmed. F12 partially fixed: the factor methods are pinned
+      but the dRbar field is not (F13). 24 of 38 new mutants killed; 13 earlier mutants replayed, none
+      regressed.'
+  - role: implementer
+    agent_id: impl-M2-007-remediation
+    started: '2026-10-13T02:08:27+00:00'
     finished: null
     outcome: running
-    note: Fifth pass with a fresh planted claim, focused on F12 and CayleyFactor wiring; regression replay
-      of earlier mutants.
+    note: Pin CayleyFactor.dRbar against an independent Cayley integrator and kill R01/R02/R04/R05/R10
+      (F13); name C22's rotation metric.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -524,7 +533,7 @@ milestones:
       Dead code: REF_R_KF1 unread, predict(bias=) argument unused.'
     resolution: Ruled FIXED by verify-M2-004 (docs/verification/stage-b_m2-baselines_pass4.md).
   - id: M2-F12
-    resolved: false
+    resolved: true
     summary: 'No test calls the factor-level CayleyFactor.rotation_residual / rotation_residual_affine
       / rotation_residual_truncated -- the residuals the QCQP/SDP work will consume (independently confirmed:
       tests call only the module-level functions). Survivors: Q25 affine residual using the accel bias
@@ -532,6 +541,15 @@ milestones:
       Q46 with the transposed preintegrated rotation. Also: C25 test_hint still cites the removed ''happens
       to be orthogonal'' wording; test_c06c accel-only zero check asserts a property of the reference
       only.'
+    resolution: PARTIALLY fixed per verify-M2-005 (methods pinned); the remaining field gap is M2-F13.
+  - id: M2-F13
+    resolved: false
+    summary: 'CayleyFactor.from_edge''s dRbar is pinned by no test: c13c builds its edge-factor reference
+      from the factor''s own fields. Storing pim.dR.T keeps the suite at 100/100 (independently reproduced)
+      while the factor''s Eq. (19)/(22b) residual at ground truth goes from 2e-8 to 0.39/0.44. Medium
+      survivors: R01 transpose, R02/R05 dRbar from the Exp integrator, R04 dRbar at b_g=0, R10 dRbar*Cay(1e-6
+      e1). Also hygiene: C22''s ''3.0e-8 +/-10%'' depends on the rotation metric (matrix inf-norm 2.996e-8,
+      |Log|inf 2.81e-8, |Log|2 3.51e-8 outside the band) and the record does not name it.'
   advisory_findings:
   - id: M2-A01
     summary: 'Low/equivalent pass-3 survivors (non-blocking): P23/P46 FD steps raised to 1e-3; P29 C13
@@ -541,6 +559,10 @@ milestones:
   - id: M2-A02
     summary: 'Pass-4 low/equivalent survivors (non-blocking): dead small-angle branches Q01/Q16/Q39; equivalents
       Q04, Q36, Q44; FD-accuracy-only Q08, Q32; C25-only rank-invariant noise wiring Q28, Q29.'
+  - id: M2-A03
+    summary: 'Pass-5 low/equivalent survivors (non-blocking): R13, R18, R22, R31, R33 algebraic equivalents;
+      R36/R37 below c13b bounds; R38 unread variant field. Note for M3: R21 (affine method returning Eq.
+      (19)) is equal in value but drops the Y/Y'' lifting -- M3 must consume the lifted form explicitly.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
