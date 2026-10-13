@@ -50,6 +50,9 @@ K_PROJ = T + "test_decoder_projection_is_nearest_rotation"
 K_WHITEN = T + "test_whitened_residual_is_symmetric_root_whitening"
 K_P1RA1 = T + "test_P1_is_column_and_RA1_is_row_orthonormality"
 K_BIASCONV = T + "test_bias_boundary_converters"
+K_ROUND = T + "test_decoder_rounding_of_perturbed_lifted_states"
+K_DEGEN = T + "test_decoder_degenerate_inputs"
+K_FORMS = T + "test_form_helpers_are_symmetric_and_evaluate_correctly"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -158,6 +161,23 @@ MUTANTS = [
      "return np.concatenate([np.asarray(cb.gyroscope()), np.asarray(cb.accelerometer())])",
      "return np.concatenate([np.asarray(cb.accelerometer()), np.asarray(cb.gyroscope())])",
      "inverse bias converter in GTSAM order", [K_BIASCONV]),
+    # -- verifier pass 2 survivors (docs/verification/stage-b_m3-qcqp-derivation_pass2.md Sec. 4.3).
+    #    lf-bg-slice, lf-ba-slice, in-n_kf-edges, gb-GAL_ROWS-pos-vel, fm-cmat-left-transposed and
+    #    fm-quadT-identity have no mutant here: their helpers were unused and are DELETED. --
+    ("lf-project-before-divide", "lifting.py", "R = [project_so3(x) for x in R]",
+     "R = [project_so3(x * s) for x in R]", "rotation block projected before dividing by s", [K_ROUND, K_PROJ]),
+    ("lf-project-sign-detA", "lifting.py", "np.sign(np.linalg.det(U @ Vt))", "np.sign(np.linalg.det(A))",
+     "det correction from det(A): singular blocks give a non-rotation", [K_DEGEN]),
+    ("lf-decode-no-s-guard", "lifting.py", "if not np.isfinite(s) or abs(s) <= S_FLOOR", "if False and abs(s) <= S_FLOOR",
+     "decoder divides by s ~ 0", [K_DEGEN]),
+    ("lf-truth-state-bbar", "lifting.py", "[inst.b_true.copy() for _ in inst.truth]",
+     "[inst.bbar.copy() for _ in inst.truth]", "truth bias taken from the linearisation point", [K_INSTANCE_Z]),
+    ("cn-family-residuals-abs", "constraints.py", "np.array([c.residual(z) for c in cs])",
+     "np.abs(np.array([c.residual(z) for c in cs]))", "family_residuals returns |g|", [K_C13]),
+    ("fm-outer-nosym", "forms.py", "return sym(f[..., :, None] * g[..., None, :])",
+     "return f[..., :, None] * g[..., None, :]", "outer product left unsymmetrised", [K_FORMS]),
+    ("fm-sym-identity", "forms.py", "return 0.5 * (Q + np.swapaxes(Q, -1, -2))", "return Q",
+     "sym is the identity", [K_FORMS]),
     ("rw-missing-dt", "instance.py", "np.full(3, 1.0 / (F.SIGMA_BG_RW**2 * dtb))", "np.full(3, 1.0 / F.SIGMA_BG_RW**2)",
      "random-walk precision without Dt_b", [K_C25]),
 ]

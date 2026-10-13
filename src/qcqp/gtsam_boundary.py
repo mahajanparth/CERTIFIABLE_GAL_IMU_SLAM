@@ -20,8 +20,6 @@ from gtsam.imuBias import ConstantBias
 
 #: rows of a NavState-ordered 9-vector / 9x9 covariance, by block name
 NAV_ROWS = {"rot": slice(0, 3), "pos": slice(3, 6), "vel": slice(6, 9)}
-#: rows of a Gal3-ordered 10-vector, by block name
-GAL_ROWS = {"rot": slice(0, 3), "vel": slice(3, 6), "pos": slice(6, 9), "time": slice(9, 10)}
 
 
 def to_gtsam_bias(b) -> ConstantBias:

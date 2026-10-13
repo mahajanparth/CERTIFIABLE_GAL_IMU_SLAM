@@ -70,10 +70,6 @@ class Instance:
     rw_precision: np.ndarray         #: 6x6, project order
     pims: tuple = field(repr=False, default=())
 
-    @property
-    def n_kf(self):
-        return len(self.truth)
-
 
 def _edge(pim, e, g, bbar) -> EdgeData:
     U = GB.increment(pim, g, bbar)

@@ -437,6 +437,7 @@ def test_instance_matches_independent_gtsam_reference(which):
     for k, (key_v, key_p) in ((1, ("V_KF1", "P_KF1")), (2, ("V_KF2", "P_KF2"))):
         for st in (tr, LF.truth_state(I)):
             assert np.abs(st.v[k] - M2_REF[key_v]).max() <= 1e-12
+            assert np.array_equal(st.b[k], LIT.BIAS_TRUE)       # truth is b_true whatever bbar
             assert np.abs(st.p[k] - M2_REF[key_p]).max() <= 1e-12
     assert np.abs(I.truth[2][0] - M2_REF["R_KF2"]).max() <= 1e-12
     if which == "true":                       # at bbar = b_true the PIM rotation is the exact dR
@@ -527,6 +528,56 @@ def test_decoder_projection_is_nearest_rotation():
         assert abs(np.linalg.det(R) - 1) <= 1e-12
         assert np.abs(R - ref_R).max() <= 1e-12
         assert np.abs(LF.project_so3(A) - ref_R).max() <= 1e-12
+        # the rounding path at arbitrary sign / scale of s: an SDP eigenvector sc * z
+        for sc in (-1.0, -2.5, 0.3):
+            Rs = LF.state_of_z(sc * z, project=True).R[0]
+            assert np.abs(Rs - ref_R).max() <= 1e-12, sc
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_rounding_of_perturbed_lifted_states():
+    """project=True on perturbed lifted z at s in {1, -1, -2.5, 0.3}: every rotation block is the
+    nearest proper rotation of (block / s), computed here by SVD; v, p, b are block / s."""
+    rng = np.random.default_rng(112)
+    for _ in range(30):
+        st = random_state(rng)
+        z = z_ref(st, ref("zero")) + 1e-2 * rng.standard_normal(124)
+        z[S_IDX] = 1.0
+        for sc in (1.0, -1.0, -2.5, 0.3):
+            d = LF.state_of_z(sc * z, project=True)
+            for k in range(3):
+                B = z[15 * k:15 * k + 9].reshape(3, 3, order="F")
+                U, _, Vt = np.linalg.svd(B)
+                Rref = U @ np.diag([1.0, 1.0, np.linalg.det(U @ Vt)]) @ Vt
+                assert np.abs(d.R[k] - Rref).max() <= 1e-12, (sc, k)
+                assert np.abs(d.v[k] - z[15 * k + 9:15 * k + 12]).max() <= 1e-14
+                assert np.abs(d.b[k] - z[45 + 6 * k:51 + 6 * k]).max() <= 1e-14
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_degenerate_inputs():
+    """Degenerate rotation blocks still project to a proper rotation; s ~ 0 raises."""
+    rng = np.random.default_rng(113)
+    u, v = rng.standard_normal(3), rng.standard_normal(3)
+    blocks = {"zero": np.zeros((3, 3)), "rank1": np.outer(u, v), "minusI": -I3,
+              "rank2": rexp([0.3, -0.2, 0.9]) @ np.diag([2.0, 0.5, 0.0])}
+    for name, A in blocks.items():
+        for sc in (1.0, -1.0, -2.5):
+            z = np.zeros(124)
+            z[0:9], z[S_IDX] = sc * A.flatten(order="F"), sc
+            R = LF.state_of_z(z, project=True).R[0]
+            assert np.abs(R.T @ R - I3).max() <= 1e-12, (name, sc)
+            assert abs(np.linalg.det(R) - 1) <= 1e-12, (name, sc, np.linalg.det(R))
+    z = z_ref(truth_ref(), ref("zero"))
+    for bad in (0.0, 1e-14, -1e-14, np.nan):
+        zb = z.copy()
+        zb[S_IDX] = bad
+        with pytest.raises(ValueError):
+            LF.state_of_z(zb)
+        with pytest.raises(ValueError):
+            LF.state_of_z(zb, project=True)
+    zs = 1e-6 * z                                             # small but meaningful scale decodes
+    assert np.abs(LF.state_of_z(zs).v[1] - truth_ref().v[1]).max() <= 1e-12
 
 
 @pytest.mark.claim("M3-C02")
@@ -550,6 +601,7 @@ def _rai_text():
 
 @pytest.mark.claim("M3-C03")
 def test_c03_rai_published_sizes():
+    """MATH CHECK on published numbers; touches no src by nature (the claim is about Rai's paper)."""
     triples = [(8, 2, 340), (16, 2, 652), (8, 1, 334), (16, 1, 646), (16, 2, 652), (24, 1, 958),
                (24, 3, 970)]
     text = _rai_text()
@@ -653,6 +705,8 @@ def _random_Xi(rng):
 
 @pytest.mark.claim("M3-C05")
 def test_c05_cleared_residual():
+    """MATH CHECK (test-side 5x5 algebra only, no src); src-bound twin:
+    test_c05_shipped_residual_vanishes_on_cayley_endpoints."""
     rng = np.random.default_rng(5)
     worst, worst_t = 0.0, 0.0
     for which in ("true", "zero"):
@@ -715,6 +769,7 @@ def test_c05_shipped_residual_vanishes_on_cayley_endpoints():
 
 @pytest.mark.claim("M3-C06")
 def test_c06_residual_factorisation():
+    """MATH CHECK (no src); src-bound twin: test_c06_shipped_residual_factorisation."""
     rng = np.random.default_rng(6)
     worst = 0.0
     for which in ("true", "zero"):
@@ -891,6 +946,11 @@ def test_c13_families_nontrivial_off_variety(aniso):
             zp = z0 + 1e-3 * rng.standard_normal(len(z0))
             own = {f: max(abs(float(zp @ (c.A.toarray() @ zp)) - c.b) for c in cs) for f, cs in fam.items()}
             src_max = CN.family_max(zp, fam)          # the src helper must report |g|, not g
+            src_res = CN.family_residuals(zp, fam)     # and family_residuals the SIGNED g
+            for f, cs in fam.items():
+                g_own = np.array([float(zp @ (c.A.toarray() @ zp)) - c.b for c in cs])
+                tol_f = 1e-13 * (zp @ zp) * max(abs(c.A).max() for c in cs)
+                assert np.abs(src_res[f] - g_own).max() <= tol_f, f
             for f, m in own.items():
                 # round-off of z^T A z is ~ eps |z|^2 max|A| (RR cancels: |A| ~ 1e4 vs g ~ 1e-4)
                 tol = 1e-13 * (zp @ zp) * max(abs(c.A).max() for c in fam[f])
@@ -1152,25 +1212,21 @@ def test_c23_global_sign_flip(aniso):
     g(-z) == g(z), (-z)^T Q (-z) == z^T Q z hold for ANY quadratic form and could not fail; they
     were replaced, verifier pass 1 Sec. 7.)"""
     layout = LF.ANISO if aniso else LF.BASE
-    variant = "aniso" if aniso else "iso"
     rng = np.random.default_rng(23)
     for which in ("true", "zero"):
         r = ref(which)
-        Q = CO.assemble_Q(terms(which, variant))
         for st in [truth_ref()] + [random_state(rng) for _ in range(20)]:
             zm = -z_ref(st, r, aniso=aniso)
-            # constraints at -z: all vanish (src matrices, own evaluation)
-            for c in CN.flat(fams(which, aniso)):
-                assert abs(float(zm @ (c.A @ zm)) - c.b) <= 1e-10 * max(1.0, float(zm @ zm))
-            # cost at -z equals the independent 5x5 cost of the state
-            Jd = J_direct(st, r, imu=variant)
-            assert abs(CO.factored_cost(zm, terms(which, variant)) - Jd) <= 1e-12 * max(1.0, Jd)
-            assert abs(zm @ Q @ zm - Jd) <= 1e-12 * max(1.0, Jd) + 1e-7   # dense cancellation, C26
-            # and decodes to the state itself
+            # Constraint residuals and cost at -z are bitwise those at z (IEEE negation is exact),
+            # so asserting them only duplicates C09-C12 / C24 (verifier pass 2 Sec. 5): removed.
+            # What C23 adds is that -z DECODES to the same state:
             d = LF.state_of_z(zm, layout)
             for k in range(3):
                 for got, want in ((d.R[k], st.R[k]), (d.v[k], st.v[k]), (d.p[k], st.p[k]), (d.b[k], st.b[k])):
                     assert np.abs(got - want).max() <= 4.5e-16 * max(1.0, np.abs(want).max())
+            dp = LF.state_of_z(zm, layout, project=True)        # and on the rounding path
+            for k in range(3):
+                assert np.abs(dp.R[k] - st.R[k]).max() <= 1e-14
 
 
 # ======================================================================================
@@ -1273,6 +1329,9 @@ def test_c27_truth_discrepancy_per_component():
 
 @pytest.mark.claim("M3-C28")
 def test_c28_cayley_vs_exp_is_cubic():
+    """MATH CHECK of the surrogate (test-side Cay / GTSAM Exp).  Its only src contact is the J
+    equality below, already covered by the instance test; the shipped residual's use of Cay is
+    bound by test_c05_shipped / test_c06_shipped."""
     ed = ref("zero")["edges"][0]
     dev = []
     for s in (1, 0.5, 0.25, 0.125):
@@ -1410,7 +1469,10 @@ def test_c31_isotropy_obstruction():
     qm = np.array([a for a, _ in qz])
     qr = np.array([b for _, b in qz])
     assert np.abs(qm - qr).max() <= 1e-6 * np.abs(qr).max(), np.abs(qm - qr).max()
-    assert np.ptp(qm) <= 1e-6 * abs(np.mean(qm)), np.ptp(qm)
+    # (ptp(qm) ~ 0 is the claim's proof step but holds for ANY Q, since v_1 enters z only in its
+    # own slot; it cannot fail and was removed -- verifier pass 2 Sec. 5.  The R_0-independence
+    # that matters is that of the independent reference, asserted next.)
+    assert np.ptp(qr) <= 1e-6 * abs(np.mean(qr)), np.ptp(qr)
 
 
 SUB = np.r_[np.arange(0, 30), np.arange(45, 51), np.arange(63, 93), [S_IDX]]   # 67 entries
@@ -1583,3 +1645,45 @@ def test_c39_instance_fingerprint():
     assert all(_sig4(x, 5.5402e9) for x in d[0:3]) and all(_sig4(x, 2.2222e5) for x in d[3:6]), d
     dr = np.diag(RW_PREC)
     assert all(_sig4(x, 5.5402e9) for x in dr[0:3]) and all(_sig4(x, 2.2222e5) for x in dr[3:6])
+
+
+# ======================================================================================
+# The form helpers on their own outputs (verifier pass 2: symmetrisation downstream hides
+# defects here, so each helper is checked directly against numbers computed in the test)
+# ======================================================================================
+
+@pytest.mark.claim("M3-C17")
+def test_form_helpers_are_symmetric_and_evaluate_correctly():
+    from src.qcqp import forms as FM
+    rng = np.random.default_rng(170)
+    n = 7
+    z = rng.standard_normal(n)
+    a, b = rng.standard_normal((3, n)), rng.standard_normal((3, n))
+    A, Bm = rng.standard_normal((3, 3, n)), rng.standard_normal((3, 3, n))
+    C = rng.standard_normal((3, 3))
+    ev = lambda Q: np.einsum("...nm,n,m->...", Q, z, z)       # noqa: E731
+    lv = lambda L: L @ z                                        # noqa: E731
+
+    def symmetric(Q):
+        return np.array_equal(Q, np.swapaxes(Q, -1, -2))
+    M = rng.standard_normal((n, n))
+    S = FM.sym(M)
+    assert symmetric(S) and np.abs(S - 0.5 * (M + M.T)).max() <= 1e-15
+    cases = {
+        "outer": (FM.outer(a, b), lv(a) * lv(b)),
+        "matmul": (FM.matmul(A, Bm), lv(A) @ lv(Bm)),
+        "matvec": (FM.matvec(A, a), lv(A) @ lv(a)),
+        "dot": (FM.dot(a, b), lv(a) @ lv(b)),
+        "cross": (FM.cross(a, b), np.cross(lv(a), lv(b))),
+    }
+    for name, (Q, want) in cases.items():
+        assert symmetric(Q), name
+        assert np.abs(ev(Q) - want).max() <= 1e-12 * max(1.0, np.abs(want).max()), name
+    # the entry-wise outer coefficients themselves (not only their value): 0.5 (f g^T + g f^T)
+    assert np.abs(FM.outer(a, b)[1] - 0.5 * (np.outer(a[1], b[1]) + np.outer(b[1], a[1]))).max() <= 1e-15
+    # linear helpers
+    assert np.abs(lv(FM.hat(a)) - skew(lv(a))).max() <= 1e-14
+    assert np.abs(ev(FM.hat(FM.matvec(A, a))) - skew(lv(A) @ lv(a))).max() <= 1e-12
+    assert np.abs(lv(FM.cmat_right(A, C)) - lv(A) @ C).max() <= 1e-13
+    assert np.abs(lv(FM.cvec(C, a)) - C @ lv(a)).max() <= 1e-13
+    assert np.abs(lv(FM.lin_T(A)) - lv(A).T).max() == 0.0

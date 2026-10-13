@@ -51,11 +51,6 @@ def hat(w):
     return -np.einsum("abc,c...->ab...", _EPS, w)
 
 
-def cmat_left(C, A):
-    """constant (p,q) times linear (q,r,n) -> (p,r,n)."""
-    return np.einsum("pq,qrn->prn", C, A)
-
-
 def cmat_right(A, C):
     """linear (p,q,n) times constant (q,r) -> (p,r,n)."""
     return np.einsum("pqn,qr->prn", A, C)
@@ -70,7 +65,3 @@ def lin_T(A):
     """transpose of a (p,q,n) linear matrix form."""
     return np.swapaxes(A, 0, 1)
 
-
-def quad_T(A):
-    """transpose of a (p,q,n,n) quadratic matrix form."""
-    return np.swapaxes(A, 0, 1)

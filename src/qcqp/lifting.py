@@ -46,14 +46,6 @@ class Layout:
         o = self.bias0 + 6 * k
         return slice(o, o + 6)
 
-    def bg(self, k):
-        o = self.bias0 + 6 * k
-        return slice(o, o + 3)
-
-    def ba(self, k):
-        o = self.bias0 + 6 * k + 3
-        return slice(o, o + 3)
-
     # -- per-edge liftings --------------------------------------------------------------
     def _o(self, e):
         return self.bias0 + 6 * self.n_kf + 30 * e
@@ -178,16 +170,28 @@ def z_of_state(state: State, inst, layout: Layout = BASE, s: float = 1.0) -> np.
     return s * z
 
 
+#: relative floor below which the homogenising entry s is treated as zero by the decoder
+S_FLOOR = 1e-12
+
+
 def project_so3(A):
+    """Nearest proper rotation (Frobenius) via SVD with the det correction.  Always returns an
+    element of SO(3): for singular A (zero, rank 1, rank 2) the nearest rotation is not unique and
+    one of the minimisers is returned."""
     U, _, Vt = np.linalg.svd(A)
     D = np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))])
     return U @ D @ Vt
 
 
 def state_of_z(z, layout: Layout = BASE, project: bool = False) -> State:
-    """Decode by dividing every block by s (z and -z decode to the same state)."""
+    """Decode by dividing every block by s (z and -z decode to the same state).  With
+    ``project=True`` each rotation block is first divided by s and then projected onto SO(3)
+    (the rounding path for an SDP eigenvector of arbitrary sign and scale).  Raises ValueError
+    if |s| <= S_FLOOR * max|z|: the homogenising entry carries no scale and nothing can be decoded."""
     z = np.asarray(z, dtype=float)
     s = z[layout.s]
+    if not np.isfinite(s) or abs(s) <= S_FLOOR * max(np.abs(z).max(), 1e-300):
+        raise ValueError(f"cannot decode: s = {s!r} is zero relative to max|z| = {np.abs(z).max()!r}")
     R = [z[layout.R(k)].reshape(3, 3, order="F") / s for k in range(layout.n_kf)]
     if project:
         R = [project_so3(x) for x in R]
