@@ -515,8 +515,11 @@ claims:
     (asserted 1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). (c)
     Time-varying stream (50 instances, Dt = 0.4) vs DOP853: err 5.2e-5 at dt = 1e-5 (<= 1e-4), ratio
     err(2e-5)/err(1e-5) = 2.000 (in [1.8, 2.2]); input guard on the stream: left- vs right-invariant
-    rotation solutions differ by 0.44 (>= 1e-2). Separately assert the ODE itself: max rel |(d/ds) expm(s
-    xi^) - expm(s xi^) xi^| <= 1e-8 by central difference at h = 1e-6, 50 draws (measured 8.9e-11).'
+    rotation solutions differ by 0.44 (>= 1e-2). Separately assert the ODE itself ON THE IMPLEMENTATION:
+    max rel |(d/ds) D(s) - D(s) A| <= 1e-8 with D(s) = src preintegrate_constant(omega, a, s), A = (omega,
+    a, 0, 1)^ written by hand, central difference at h = 1e-6, 50 draws (measured 5.8e-11), and src
+    wedge(increment_generator(omega, a)) = A exactly (measured 0.0). (The former scipy-only form d/ds expm(sA)
+    = expm(sA) A held for any A.)'
   domain: Exact only for (omega, a) constant on the interval. For sampled IMU data the increment is the
     ordered product of per-sample exponentials, which is M1-C45.
   verdict: CONFIRMED

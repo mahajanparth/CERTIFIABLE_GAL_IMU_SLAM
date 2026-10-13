@@ -177,17 +177,25 @@ def test_increment_left_invariant_ode():
     order_gap = float(np.abs(dR_ref - np.swapaxes(dR_neg, -1, -2)).max())
     assert order_gap >= 100.0 * 1e-4, order_gap
 
-    # the ODE itself, by central difference on expm(s xi^)
-    worst_ode = 0.0
+    # the ODE itself, ON THE IMPLEMENTATION: central difference of src's closed form
+    # D(s) = preintegrate_constant(omega, a, s) against D(s) A with A = (omega, a, 0, 1)^
+    # written by hand (hat_by_hand), and src's generator wedged equals that A.  (The
+    # former check d/ds expm(sA) = expm(sA) A on scipy alone held for ANY matrix A and
+    # so could not fail with respect to src -- verifier pass 3, F09.)
+    worst_ode = worst_gen = 0.0
     h = 1e-6
     for _ in range(50):
-        xi = imu.increment_generator(0.7 * r.normal(size=3), 2.0 * r.normal(size=3))
-        A = wedge(xi)
+        om, a = 0.7 * r.normal(size=3), 2.0 * r.normal(size=3)
+        A = hat_by_hand(om, a)
+        worst_gen = max(worst_gen,
+                        float(np.abs(wedge(imu.increment_generator(om, a)) - A).max()))
         s = float(r.uniform(0.02, 0.4))
-        deriv = (sla.expm((s + h) * A) - sla.expm((s - h) * A)) / (2.0 * h)
-        rhs = sla.expm(s * A) @ A
+        deriv = (imu.preintegrate_constant(om, a, s + h)
+                 - imu.preintegrate_constant(om, a, s - h)) / (2.0 * h)
+        rhs = imu.preintegrate_constant(om, a, s) @ A
         worst_ode = max(worst_ode,
                         float(np.abs(deriv - rhs).max()) / max(1.0, float(np.abs(rhs).max())))
+    assert worst_gen == 0.0, worst_gen
     assert worst_ode <= 1e-8, worst_ode
 
 
