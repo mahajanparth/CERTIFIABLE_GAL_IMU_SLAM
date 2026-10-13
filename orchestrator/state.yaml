@@ -873,7 +873,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: null
@@ -936,10 +936,19 @@ milestones:
   - role: implementer
     agent_id: impl-M3-003
     started: '2026-10-13T21:20:02+00:00'
+    finished: '2026-10-13T21:38:27+00:00'
+    outcome: completed
+    note: '131 passed; harness 49/49 killed (17 new), none declared equivalent. Every instance literal
+      retyped in the test; decoder round trip at s = 1, -1, -2.5, 0.3; nearest-rotation projection, whitening,
+      family constants and converters tested; cannot-fail tests rebound. I mutated the decoder (v * s):
+      C01 fails.'
+  - role: verifier
+    agent_id: verify-M3-002
+    started: '2026-10-13T21:38:27+00:00'
     finished: null
     outcome: running
-    note: 'Kill the 17 M3 survivors: test literals typed in the test, decoder at s != +/-1, project_so3
-      det, whitening, family constants and helpers (F03).'
+    note: Second independent pass with a fresh planted claim, zero-survivor and tolerance-equivalence
+      rules.
   blocking_findings:
   - id: M3-F01
     resolved: true
