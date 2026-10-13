@@ -203,7 +203,3 @@ second, independent interior-point implementation for cross-checking marginal ce
 
 Per the user's decision, **MOSEK is not used.** Documented consequence: numbers will not be bit-comparable with
 Rai's or Barfoot's published MOSEK results. Any comparison to their tables must say so explicitly.
-
----
-
-## Execution plan — Stage B
