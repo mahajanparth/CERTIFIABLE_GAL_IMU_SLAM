@@ -523,7 +523,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -725,10 +725,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-010
     started: '2026-10-13T22:35:24+00:00'
+    finished: '2026-10-13T23:07:47+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C33 (J_Cay - J_r is second order: 2.49e-3 at |phi| = 0.1). 25/25 confirmed;
+      F26 FIXED; complex-step references confirmed independent and analytic; FD_EPS = 3e-5 confirmed optimal.
+      F27 partial: 10 low survivors, mostly because covariance tests only use per-step angles 4e-4..4e-3
+      rad.'
+  - role: implementer
+    agent_id: impl-M2-013-remediation
+    started: '2026-10-13T23:07:47+00:00'
     finished: null
     outcome: running
-    note: Tenth pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
-      floor.
+    note: Widen covariance/Jacobian tests across per-step angles 1e-6..0.5, density sweep for has_noise,
+      bias halves alone in Eq. (21b)/(21c), large v/Dt (F28).
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -935,12 +944,13 @@ milestones:
       rule.
     resolution: PARTIALLY fixed per verify-M2-009; remainder is M2-F27.
   - id: M2-F26
-    resolved: false
+    resolved: true
     summary: 'LATENT: CayleyPreintegration''s covariance feeds gyro noise through Exp''s right Jacobian
       instead of the Cayley one (Rai Eq. (4)); rotation block off 4.6e-7 / 7.2e-7 relative vs an FD linearisation
       of the noisy Cayley integrator (B1 agrees to 2e-11). No claim covers B2''s covariance.'
+    resolution: Ruled FIXED by verify-M2-010 (docs/verification/stage-b_m2-baselines_pass10.md).
   - id: M2-F27
-    resolved: false
+    resolved: true
     summary: '9 non-equivalent low survivors (verify-M2-009): X15 M1 K^2 term x(1+1e-13) (breaks C02''s
       1e-14 at |w| = 5, T = 1); X21 has_noise requiring all gyro axes > 0; X22 accel densities <= 1e-20
       ignored; X24 B2 covariance transition always Exp (9.5e-9..5.6e-8 rel); X31 Ba velocity block x(1+2e-9)
@@ -950,6 +960,20 @@ milestones:
       only on slow edges; navstate never fed a slightly non-orthogonal R. Owner decisions applied by the
       orchestrator: Q44 is equivalent (2.96e-16 rel) -- remove the fragile 0.75-ulp correct-rounding check;
       scope f24''s warnings-as-errors filter to src calls only.'
+    resolution: PARTIALLY fixed per verify-M2-010; remainder is M2-F28.
+  - id: M2-F28
+    resolved: false
+    summary: '10 low survivors (verify-M2-010): Y18 Jr K^2 coefficient x(1+1e-8), Y24/Y55 B2 noise Jacobian
+      switched by |phi| (< 1e-4 / > 1e-2), Y56 B1 noise Jacobian I - K/2 above 1e-2, Y57 rotation transition
+      = I below 1e-4 -- all survive because every covariance reference test uses per-step angles in [4e-4,
+      4e-3] rad: sweep per-step angles from ~1e-6 to ~0.5 rad. Y20/Y58 has_noise ignoring densities <=
+      1e-100 / 1e-60 -- pin ''any positive density propagates'' across a density sweep down to the smallest
+      normal float. Y30/Y59 Eq. (21b)/(21c) applying A_va/A_pa only when db_g is given -- test each bias
+      half alone. Y31 v_i Dt x(1+1e-13) in Eq. (21c) -- test at large |v| and Dt. Also: stale comment
+      tests/test_baselines.py:1111 (''FD_EPS (1e-6)''); test_c05b(c) builds its reference from B1.FD_EPS
+      so it moves with the mutant; reference-only preconditions orth >= 1e-11 and visible >= 1e-7 cannot
+      fail; P23-old''s kill margin is 1.0-1.2x (it is equivalent anyway, 4.4e-8 vs 1e-7). C18 hint quotes
+      Dt = 1.0 numbers while the fixture uses Dt = 0.5.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
