@@ -757,6 +757,13 @@ milestones:
       at 2e-8 rad/step; new <= 2.7e-15; at fixture angles Jr moves <= 4.9e-13. Per-step angle sweep, density
       sweep to 5e-324, bias halves alone, large v/Dt. Hand kill-check Y57, Y30. C18 test_hint edited (23a73bf)
       to give both per-edge and span numbers; statement unchanged. Commits 2cc0762..23a73bf.'
+  - role: verifier
+    agent_id: verify-M2-011
+    started: '2026-10-15T22:39:55+00:00'
+    finished: null
+    outcome: running
+    note: Eleventh pass with a fresh planted claim; rules on F28 (2cc0762..23a73bf), including the Jr
+      src change.
   blocking_findings:
   - id: M2-F01
     resolved: true
