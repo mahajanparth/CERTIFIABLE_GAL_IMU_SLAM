@@ -209,9 +209,31 @@ milestones:
   status: verifying
   claims: []
   seed:
-    id: M1-S10
-    caught: null
+    id: M1-S01
+    statement: For xi = (phi, u, w, alpha) in gal(3) with alpha != 0, the Cayley map has position block
+      pe = (I - [phi]x/2)^-1 (w - (alpha/2) u); equivalently the degree-2 lifting constraint is (I - [phi]x/2)
+      pe + (alpha/2) u = w for all xi in gal(3). The time-coordinate coupling therefore enters the Cayley
+      position block with the SAME negative sign as the -0.5*g*Dt^2 entry of H' in the corrected endpoint
+      relation, which is what makes Cayley consistent with the project's convention that a gravity-like
+      term standing to the left of an un-advanced state carries a minus.
+    caught: true
     published: false
+    why_false: 'The sign is PLUS: (I - [phi]x/2) pe == w + (alpha/2) u, verified to 5.7e-14 over 20000
+      random gal(3) elements with alpha != 0; the minus form is off by up to 2.5e2. Subtle because pre-flight
+      F3 only ever tested alpha=0, where the term vanishes identically, so a verifier that reuses the
+      existing F3 check passes the seed. It also rides on real project lore -- it rationalises the minus
+      by appealing to H''''s -0.5*g*Dt^2 sign, the project''s most-repeated piece of hard-won sign knowledge.'
+    note: 'Weakness: this seed contradicts M1-C25/M1-C30 in the same list, so a careful verifier can catch
+      it by reading alone rather than by computing. That still counts as catching it -- only pure deference
+      misses it -- but it is a weaker test than a seed that is internally consistent with its neighbours.'
+    void_reason: 'BURNED: recoverable from git log -p on the branch. The deriver wrote it into a tracked
+      docs/claims/ file and the later strip-commit left the original in history. The M2 implementer found
+      it this way and disclosed it. Any ''caught'' verdict on this seed is non-informative -- it tests
+      git archaeology, not adversarial verification.'
+    how: 'BY COMPUTATION despite being burned: the verifier block-inverted (I5 - xi^/2)^-1(I5 + xi^/2)
+      by hand, got the PLUS sign, and only then ran numerics (PLUS 1.11e-15, MINUS 7.69; MINUS''s MINIMUM
+      residual over 60000 draws x 3 seeds never below 9.9e-4). It states git log/log -p/show were never
+      run during verification. The archaeology risk did not materialise.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M1-001
