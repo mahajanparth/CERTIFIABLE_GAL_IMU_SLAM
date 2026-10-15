@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -396,9 +396,19 @@ milestones:
   - role: verifier
     agent_id: verify-M1-010
     started: '2026-10-15T23:16:32+00:00'
+    finished: '2026-10-15T23:49:12+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C63 (Ad^T Ad - I up to 372.9 over 1e4 SE(3) elements; exactly |p| at (I,0,e1,0)).
+      55/55 confirmed; F18-F21 FIXED (proof that the span guard catches every g-linear defect); harness
+      compound/concurrency sound. 77 new mutants: 59 killed, 8 equivalent, 10 non-equivalent (F22-F24).
+      Commit b763ab2.'
+  - role: implementer
+    agent_id: impl-M1-010-remediation
+    started: '2026-10-15T23:49:12+00:00'
     finished: null
     outcome: running
-    note: Ninth pass with a fresh planted claim; rules on F18-F21 (3f735b8).
+    note: Kill F22 (pin G_DEFAULT independently) and F23 (both-sign gravity guard); advisories A4, A5.
+      F24 pending owner decision.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -549,7 +559,7 @@ milestones:
     resolution: Ruled FIXED by verify-M1-009b (docs/verification/m1-gal3-mechanics_pass8.md); remainder
       is M1-F18..F21.
   - id: M1-F18
-    resolved: false
+    resolved: true
     summary: 'gamma_coefficients Taylor coefficients pinned by accuracy only (verify-M1-009b): S01 kappa1
       t4/720 -> /719.993 (9.44e-13 vs clean 7.75e-13, passes the 1e-12 pin), S02 kappa3 t4/40320 -> /40319
       (1.955e-13 vs 1.03e-13, passes 2e-13), S03 c2 t4/30240 -> /30239 (8.2e-14 rel). Kill: on (0, 0.05)
@@ -557,18 +567,21 @@ milestones:
       relative. Orchestrator ruling: pin the literal polynomial C24 states (also kills the more accurate
       4-term R07/S04/S05, advisory A3).'
     note: Remediated in 3f735b8; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-010 (docs/verification/m1-gal3-mechanics_pass9.md).
   - id: M1-F19
-    resolved: false
+    resolved: true
     summary: 'Rodrigues Taylor band pin (2e-15) admits + t^6/60000 in (1 - cos)/th^2, scalar so3_exp (S06)
       and batch (S07): 1.665e-15 vs clean 9.99e-16 on [0.04, 0.05). Kill: <= 1.3e-15 on C42''s 460 angles.'
     note: Remediated in 3f735b8; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-010 (docs/verification/m1-gal3-mechanics_pass9.md).
   - id: M1-F20
-    resolved: false
+    resolved: true
     summary: 'so3_log small-angle branch can move from n < 1e-10 to n < 1e-7 (S08): 3.4e-15 vs clean 4.4e-16
       relative, under C22''s 1e-14. Kill: C22 relative small-angle bound 1e-15 on the same 20000 R.'
     note: Remediated in 3f735b8; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-010 (docs/verification/m1-gal3-mechanics_pass9.md).
   - id: M1-F21
-    resolved: false
+    resolved: true
     summary: 'assert_gravity_directions_diverse admits a PLANAR random-g distribution (F1W: g in the x-z
       plane, >= 0.6 rad off z); under it g_y sign errors in gravity_lift, gravity_element, integrate_truth,
       forster_endpoint survive the whole suite (G_DEFAULT blocks also have g_y = 0). Kill: require the
@@ -576,6 +589,27 @@ milestones:
       datasets. Advisories (not gate items): A1 euler_increment never run with dt < 0; A2 _inputs per-step
       acc-length check untested.'
     note: Remediated in 3f735b8; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-010 (docs/verification/m1-gal3-mechanics_pass9.md).
+  - id: M1-F22
+    resolved: false
+    summary: 'G_DEFAULT is not pinned (verify-M1-010): N30 G_DEFAULT = (0,0,+9.81) and N29 -9.80665 survive
+      because conftest takes G = gal3.G_DEFAULT and C53 passes gtsam''s gravity explicitly. Fix: an independent
+      gravity literal in tests, assert G_DEFAULT against it (or gtsam MakeSharedU(9.81)), call endpoint
+      without g in C53.'
+  - id: M1-F23
+    resolved: false
+    summary: 'Gravity guard admits a half-space distribution (H_HEMI: g_y >= 0); under it g_y -> |g_y|
+      in gravity_lift (YABS_LIFT) and integrate_truth (YABS_TRUTH) survive. Fix: for blocks of >= 3 draws
+      require every component to take both signs with magnitude >= 1 (recorded blocks meet this at >=
+      2.10). Advisories: A4 C52 domain text says near-pi disagreement occurs ''in every implementation''
+      -- false (src 2.7e-15, gtsam ~1e-7); A5 negative-theta ValueError in gamma_coefficients untested.'
+  - id: M1-F24
+    resolved: false
+    summary: 'Rounding-band survivors (verify-M1-010): B1/B2 so3_exp and batch Rodrigues Taylor c + th^6/200000
+      (1.22e-15 vs clean 9.99e-16, 1 ulp), B3/B3b so3_log small branch at n < 3e-8 / 5e-8 (4.8e-16 / 9.7e-16
+      vs 3.5e-16), B4 kappa1 t4/720.00002 (5.8e-16 vs 1.1e-16). The pass-8 pins (1.3x/2.3x/4.5x clean)
+      still admit them; rule 1''s threshold is at or below 1 ulp here. PROCESS DECISION PENDING (owner):
+      pins ~1 ulp above clean, or a sub-ulp floor in the equivalence rules.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
