@@ -90,7 +90,7 @@ def terms(inst, layout: Layout = BASE, variant: str = "iso", W_vp=None) -> list[
             rho = np.vstack([layout.vec_form(layout.rho_v(e)), layout.vec_form(layout.rho_p(e))])
             out.append(Term(f"imu{e}.rho", rho, edge.W_vp if W_vp is None else np.asarray(W_vp, float)))
         else:
-            raise ValueError(variant)
+            raise ValueError(f"unknown cost variant {variant!r}")
     s = layout.s_form()
     R0bar, v0bar, p0bar = inst.prior
     w_prior = 1.0 / inst.sigma_prior**2

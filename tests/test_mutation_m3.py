@@ -53,6 +53,12 @@ K_BIASCONV = T + "test_bias_boundary_converters"
 K_ROUND = T + "test_decoder_rounding_of_perturbed_lifted_states"
 K_DEGEN = T + "test_decoder_degenerate_inputs"
 K_FORMS = T + "test_form_helpers_are_symmetric_and_evaluate_correctly"
+K_SGUARD = T + "test_decoder_s_guard_threshold_tie_and_scale"
+K_NONFINITE = T + "test_decoder_rejects_non_finite_z"
+K_COPY = T + "test_state_copy_is_independent"
+K_VARIANT = T + "test_cost_terms_rejects_unknown_variant"
+K_EXPORTS = T + "test_package_exports"
+K_JEXACT = T + "test_c04_instance_J_structural_zeros_exact_and_J_accuracy"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -168,8 +174,8 @@ MUTANTS = [
      "R = [project_so3(x * s) for x in R]", "rotation block projected before dividing by s", [K_ROUND, K_PROJ]),
     ("lf-project-sign-detA", "lifting.py", "np.sign(np.linalg.det(U @ Vt))", "np.sign(np.linalg.det(A))",
      "det correction from det(A): singular blocks give a non-rotation", [K_DEGEN]),
-    ("lf-decode-no-s-guard", "lifting.py", "if not np.isfinite(s) or abs(s) <= S_FLOOR", "if False and abs(s) <= S_FLOOR",
-     "decoder divides by s ~ 0", [K_DEGEN]),
+    ("lf-decode-no-s-guard", "lifting.py", "if abs(s) <= S_FLOOR * max(zmax, 1e-300):", "if False:",
+     "decoder divides by s ~ 0", [K_DEGEN, K_SGUARD]),
     ("lf-truth-state-bbar", "lifting.py", "[inst.b_true.copy() for _ in inst.truth]",
      "[inst.bbar.copy() for _ in inst.truth]", "truth bias taken from the linearisation point", [K_INSTANCE_Z]),
     ("cn-family-residuals-abs", "constraints.py", "np.array([c.residual(z) for c in cs])",
@@ -180,6 +186,33 @@ MUTANTS = [
      "sym is the identity", [K_FORMS]),
     ("rw-missing-dt", "instance.py", "np.full(3, 1.0 / (F.SIGMA_BG_RW**2 * dtb))", "np.full(3, 1.0 / F.SIGMA_BG_RW**2)",
      "random-walk precision without Dt_b", [K_C25]),
+    # -- verifier pass 3 survivors #1-#10 (docs/verification/stage-b_m3-qcqp-derivation_pass3.md
+    #    Sec. 4.3), finding M3-F05, plus the non-finite check and the FD-step change made for it --
+    ("p3-lf-sfloor-1e-6", "lifting.py", "S_FLOOR = 1e-12", "S_FLOOR = 1e-6",
+     "guard threshold 1e6 times too large", [K_SGUARD]),
+    ("p3-lf-guard-strict", "lifting.py", "if abs(s) <= S_FLOOR", "if abs(s) < S_FLOOR",
+     "the tie |s| = S_FLOOR max|z| decodes", [K_SGUARD]),
+    ("p3-lf-guard-absolute", "lifting.py", "if abs(s) <= S_FLOOR * max(zmax, 1e-300):", "if abs(s) <= S_FLOOR:",
+     "guard not scale invariant", [K_SGUARD]),
+    ("p3-lf-guard-floor-1", "lifting.py", "max(zmax, 1e-300)", "max(zmax, 1.0)",
+     "guard absolute below max|z| = 1", [K_SGUARD]),
+    ("p3-lf-guard-uses-mean", "lifting.py", "zmax = float(np.abs(z).max())", "zmax = float(np.abs(z).mean())",
+     "guard relative to mean|z|", [K_SGUARD]),
+    ("p3-lf-copy-shallow-b", "lifting.py", "[np.array(x) for x in self.b])", "list(self.b))",
+     "State.copy aliases the bias arrays", [K_COPY]),
+    ("p3-co-unknown-variant-silent", "cost.py", 'raise ValueError(f"unknown cost variant {variant!r}")', "pass",
+     "a mistyped variant silently drops the vel/pos IMU terms", [K_VARIANT]),
+    ("p3-init-BASE-ANISO-swap", "__init__.py", "from .lifting import BASE, ANISO, Layout",
+     "from .lifting import ANISO as BASE, BASE as ANISO, Layout", "package exports BASE/ANISO swapped",
+     [K_EXPORTS]),
+    ("p3-init-drop-build_instance", "__init__.py", "from .instance import build_instance  # noqa: F401\n", "",
+     "build_instance not exported", [K_EXPORTS]),
+    ("gb-fd-forward", "gtsam_boundary.py", "J[:, k] = (lp - lm) / (2 * h)", "J[:, k] = lp / h",
+     "forward-difference J: structural zeros no longer exact", [K_JEXACT]),
+    ("p3-lf-no-finite-check", "lifting.py", "if bad.size:", "if False:",
+     "NaN outside s propagates; inf gives the 's is zero' message", [K_NONFINITE]),
+    ("gb-fd-step-1e-3", "gtsam_boundary.py", "h: float = 0.1)", "h: float = 1e-3)",
+     "the pre-F05 FD step (accurate only to ~6e-13)", [K_JEXACT]),
 ]
 
 KILLERS = sorted({k for m in MUTANTS for k in m[5]})

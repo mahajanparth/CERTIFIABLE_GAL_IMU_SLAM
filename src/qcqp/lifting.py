@@ -187,11 +187,17 @@ def state_of_z(z, layout: Layout = BASE, project: bool = False) -> State:
     """Decode by dividing every block by s (z and -z decode to the same state).  With
     ``project=True`` each rotation block is first divided by s and then projected onto SO(3)
     (the rounding path for an SDP eigenvector of arbitrary sign and scale).  Raises ValueError
-    if |s| <= S_FLOOR * max|z|: the homogenising entry carries no scale and nothing can be decoded."""
+    if any entry of z is NaN or infinite, and if |s| <= S_FLOOR * max(max|z|, 1e-300): the
+    homogenising entry then carries no scale and nothing can be decoded."""
     z = np.asarray(z, dtype=float)
+    bad = np.flatnonzero(~np.isfinite(z))
+    if bad.size:
+        raise ValueError(f"cannot decode: z has {bad.size} non-finite entries (first at index "
+                         f"{int(bad[0])}: {z[bad[0]]!r})")
     s = z[layout.s]
-    if not np.isfinite(s) or abs(s) <= S_FLOOR * max(np.abs(z).max(), 1e-300):
-        raise ValueError(f"cannot decode: s = {s!r} is zero relative to max|z| = {np.abs(z).max()!r}")
+    zmax = float(np.abs(z).max())
+    if abs(s) <= S_FLOOR * max(zmax, 1e-300):
+        raise ValueError(f"cannot decode: s = {s!r} is zero relative to max|z| = {zmax!r}")
     R = [z[layout.R(k)].reshape(3, 3, order="F") / s for k in range(layout.n_kf)]
     if project:
         R = [project_so3(x) for x in R]

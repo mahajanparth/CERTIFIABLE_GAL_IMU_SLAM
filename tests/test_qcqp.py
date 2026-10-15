@@ -169,6 +169,18 @@ def fd_J(pim, bbar, h):
     return J
 
 
+def ls_J(pim, bbar, n=60, seed=0):
+    """J as the least-squares LINEAR fit of Log(Ubar^-1 U(bbar + d)) over n random |d_k| <= 0.1
+    (project order).  The map is exactly linear (predict applies Ubar Exp(J d)), so this has no
+    step-size trade-off: the fit residual is returned and is ~1e-15."""
+    bbar = np.asarray(bbar, float)
+    Ui = np.linalg.inv(U_of(pim, bbar))
+    D = np.random.default_rng(seed).uniform(-0.1, 0.1, (n, 6))
+    L = np.array([gtsam.Gal3.Logmap(gtsam.Gal3(Ui @ U_of(pim, bbar + d))) for d in D])
+    J = np.linalg.lstsq(D, L, rcond=None)[0].T
+    return J, float(np.abs(D @ J.T - L).max())
+
+
 @functools.lru_cache(maxsize=None)
 def ref(bbar_key):
     """Independent per-edge data at nominal bias.  ``bbar_key`` is "true", "zero" or a tuple."""
@@ -188,7 +200,7 @@ def ref(bbar_key):
         Svp = np.block([[C[vel, vel], C[vel, pos]], [C[pos, vel], C[pos, pos]]])
         edges.append(dict(
             i=e, j=e + 1, Dt=Dt, Ubar=Ubar, dR=Ubar[0:3, 0:3], dv=Ubar[0:3, 3], dp=Ubar[0:3, 4],
-            J=fd_J(pim, bbar, 1e-3), pim=pim, C=C,
+            J=ls_J(pim, bbar)[0], pim=pim, C=C,
             tau_R=3 / np.trace(C[rot, rot]), tau_v=3 / np.trace(C[vel, vel]),
             tau_p=3 / np.trace(C[pos, pos]),
             W_R=np.linalg.inv(C[rot, rot]), G2=np.linalg.inv(S2), W_vp=np.linalg.inv(Svp)))
@@ -580,6 +592,128 @@ def test_decoder_degenerate_inputs():
     assert np.abs(LF.state_of_z(zs).v[1] - truth_ref().v[1]).max() <= 1e-12
 
 
+#: the decoder's documented relative floor, RETYPED here (lifting.py docstring of state_of_z:
+#: raise iff |s| <= 1e-12 * max(max|z|, 1e-300)); not imported from src
+S_FLOOR_DOC = 1e-12
+
+
+def _decodes(z, **kw):
+    try:
+        LF.state_of_z(z, **kw)
+    except ValueError:
+        return False
+    return True
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_s_guard_threshold_tie_and_scale():
+    """The s ~ 0 guard: relative threshold (0.5x raises, 2x decodes, at two scales), the exact
+    tie |s| = 1e-12 max|z| raises and the next double decodes, and the guard is scale invariant
+    (c z decodes to the state of z for c down to 1e-300, both signs)."""
+    zt = z_ref(truth_ref(), ref("zero"))
+    for project in (False, True):
+        # threshold, at max|z| ~ 1.9 and at max|z| ~ 1.9e6 (an absolute floor fails one of the two)
+        for c in (1.0, 1e6):
+            zb = c * zt
+            m = np.abs(np.delete(zb, S_IDX)).max()            # |s| stays below this, so max|z| = m
+            for sgn in (1.0, -1.0):
+                zb[S_IDX] = sgn * 0.5 * S_FLOOR_DOC * m
+                assert not _decodes(zb, project=project), (c, sgn)
+                zb[S_IDX] = sgn * 2.0 * S_FLOOR_DOC * m
+                d = LF.state_of_z(zb, project=project)
+                assert np.abs(d.v[1] * zb[S_IDX] - zb[24:27]).max() <= 1e-15 * c, (c, sgn)
+        # exact tie: max|z| = 1 exactly (a power of two keeps 1e-12 * max|z| exact)
+        for scale in (1.0, 2.0**-900, 2.0**600):
+            z = np.zeros(124)
+            z[9] = scale                                       # v_0[0], the max entry
+            z[30:39] = 0.25 * scale * np.arange(1, 10) / 9      # some smaller entries
+            tie = S_FLOOR_DOC * scale
+            assert tie == 1e-12 * scale and S_FLOOR_DOC * np.abs(z).max() == tie
+            z[S_IDX] = tie
+            assert not _decodes(z, project=project), scale
+            z[S_IDX] = -tie
+            assert not _decodes(z, project=project), scale
+            z[S_IDX] = np.nextafter(tie, np.inf)
+            d = LF.state_of_z(z, project=project)
+            assert d.v[0][0] == scale / z[S_IDX]
+            z[S_IDX] = -np.nextafter(tie, np.inf)
+            assert _decodes(z, project=project), scale
+    # scale sweep: c z decodes to the same state (v, p, b and R exactly up to rounding)
+    st = truth_ref()
+    for c in (1e-13, 1e-200, 1e-300, -1e-13, -1e-300):
+        d = LF.state_of_z(c * zt)
+        for k in range(3):
+            for got, want in ((d.R[k], st.R[k]), (d.v[k], st.v[k]), (d.p[k], st.p[k]),
+                              (d.b[k], LIT.BIAS_TRUE)):
+                assert np.abs(got - want).max() <= 1e-12 * max(1.0, np.abs(want).max()), c
+        assert np.abs(LF.state_of_z(c * zt, project=True).R[1] - st.R[1]).max() <= 1e-12, c
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_rejects_non_finite_z():
+    """Any NaN / +-inf entry of z (not only s) raises ValueError naming non-finite entries,
+    never a misleading 's is zero' message and never a NaN-carrying state."""
+    zt = z_ref(truth_ref(), ref("zero"))
+    for idx in (9, 26, 50, 100, S_IDX):                     # v_0, p_1, b_0, a lifting, s
+        for bad in (np.nan, np.inf, -np.inf):
+            zb = zt.copy()
+            zb[idx] = bad
+            for project in (False, True):
+                with pytest.raises(ValueError, match="non-finite") as ei:
+                    LF.state_of_z(zb, project=project)
+                assert "zero" not in str(ei.value), (idx, bad)
+                assert str(idx) in str(ei.value)
+    # the aniso layout too (a NaN in a rho slot)
+    za = z_ref(truth_ref(), ref("zero"), aniso=True)
+    za[130] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        LF.state_of_z(za, LF.ANISO)
+
+
+@pytest.mark.claim("M3-C01")
+def test_state_copy_is_independent():
+    """State.copy() is a deep copy of every block: an in-place edit of the copy leaves the
+    original unchanged (and vice versa)."""
+    rng = np.random.default_rng(114)
+    st = random_state(rng)
+    saved = {f: [np.array(x, copy=True) for x in getattr(st, f)] for f in ("R", "v", "p", "b")}
+    c = st.copy()
+    for f in ("R", "v", "p", "b"):
+        for k in range(3):
+            assert getattr(c, f)[k] is not getattr(st, f)[k], (f, k)
+            assert np.array_equal(getattr(c, f)[k], saved[f][k]), (f, k)
+            getattr(c, f)[k].flat[0] += 1.0                   # in-place edit of the copy
+            assert np.array_equal(getattr(st, f)[k], saved[f][k]), (f, k)
+    c2 = st.copy()
+    st.b[0][0] += 7.0                                         # edit of the original
+    assert c2.b[0][0] == saved["b"][0][0]
+
+
+@pytest.mark.claim("M3-C24")
+def test_cost_terms_rejects_unknown_variant():
+    for layout in (LF.BASE, LF.ANISO):
+        for bad in ("bogus", "ISO", "isotropic", ""):
+            with pytest.raises(ValueError, match="variant"):
+                CO.terms(inst("zero"), layout, bad)
+
+
+@pytest.mark.claim("M3-C01")
+def test_package_exports():
+    """src.qcqp re-exports the layouts and entry points under the documented names (sizes are
+    the claim's literals 124 / 136)."""
+    import src.qcqp as PKG
+    assert PKG.BASE.n == 124 and not PKG.BASE.aniso
+    assert PKG.ANISO.n == 136 and PKG.ANISO.aniso
+    for name in ("build_instance", "BASE", "ANISO", "Layout", "State", "z_of_state",
+                 "state_of_z", "truth_state"):
+        assert hasattr(PKG, name), name
+    assert PKG.build_instance is INST.build_instance
+    for name in ("BASE", "ANISO", "Layout", "State", "z_of_state", "state_of_z", "truth_state"):
+        assert getattr(PKG, name) is getattr(LF, name), name
+    I = PKG.build_instance(np.zeros(6))
+    assert np.array_equal(I.bbar, np.zeros(6)) and len(I.edges) == 2
+
+
 @pytest.mark.claim("M3-C02")
 def test_c02_count_and_jside_velocity_lifting_is_needed():
     assert 15 * 3 + 6 * 3 + 24 * 2 + 1 == 112
@@ -671,6 +805,21 @@ def test_c04_bias_jacobian_structure():
         for e, ed in enumerate(inst(which).edges):
             assert np.abs(ed.J - fd_J(fixture_pim(e, ref(which)["bbar"]), ref(which)["bbar"],
                                       1e-6)).max() <= 1e-8
+
+
+@pytest.mark.claim("M3-C04")
+def test_c04_instance_J_structural_zeros_exact_and_J_accuracy():
+    """C04's structural zeros hold EXACTLY in the shipped instance J (not to a tolerance), and
+    the instance J matches the exact linear map (least-squares fit, residual ~1e-15) to 5e-14.
+    IMPLEMENTATION PIN beyond C04's 1e-8: h = 1e-3 central FD is only 2.3e-13 .. 6.1e-13
+    accurate here, and it sets the floor on family residuals at independently lifted states."""
+    for which in ("true", "zero"):
+        for e, ed in enumerate(inst(which).edges):
+            assert np.all(ed.J[0:3, 3:6] == 0.0), (which, e, np.abs(ed.J[0:3, 3:6]).max())
+            assert np.all(ed.J[9, :] == 0.0), (which, e)
+            Jx, fit = ls_J(fixture_pim(e, ref(which)["bbar"]), ref(which)["bbar"], seed=10 + e)
+            assert fit <= 1e-14, fit                            # the map is linear
+            assert np.abs(ed.J - Jx).max() <= 5e-14, (which, e, np.abs(ed.J - Jx).max())
 
 
 def _vee5(A):
@@ -1469,10 +1618,13 @@ def test_c31_isotropy_obstruction():
     qm = np.array([a for a, _ in qz])
     qr = np.array([b for _, b in qz])
     assert np.abs(qm - qr).max() <= 1e-6 * np.abs(qr).max(), np.abs(qm - qr).max()
-    # (ptp(qm) ~ 0 is the claim's proof step but holds for ANY Q, since v_1 enters z only in its
-    # own slot; it cannot fail and was removed -- verifier pass 2 Sec. 5.  The R_0-independence
-    # that matters is that of the independent reference, asserted next.)
-    assert np.ptp(qr) <= 1e-6 * abs(np.mean(qr)), np.ptp(qr)
+    # (ptp(qm) ~ 0 and ptp(qr) ~ 0 hold for ANY Q / by construction, since v_1 enters with
+    # constant coefficients; both cannot fail and were removed -- verifier passes 2 and 3, Sec. 5.)
+    # The shipped lam^2 coefficient also equals its closed form from the REFERENCE weights:
+    # v_1 enters r_v of edge 0 as +I, r_v of edge 1 as -I and r_p of edge 1 as -Dt_1 I.
+    e0, e1 = r["edges"]
+    closed = (e0["tau_v"] + e1["tau_v"] + e1["tau_p"] * e1["Dt"]**2) * (d @ d)
+    assert np.abs(qm - closed).max() <= 1e-6 * closed, (qm[:3], closed)
 
 
 SUB = np.r_[np.arange(0, 30), np.arange(45, 51), np.arange(63, 93), [S_IDX]]   # 67 entries

@@ -75,13 +75,15 @@ def increment(pim, g_w, b) -> gtsam.Gal3:
     return gravity_left(g_w, Dt).inverse().compose(Xj)
 
 
-def bias_jacobian(pim, g_w, bbar, h: float = 1e-3) -> np.ndarray:
+def bias_jacobian(pim, g_w, bbar, h: float = 0.1) -> np.ndarray:
     """J (10x6): rows Gal3 (omega, nu, rho, alpha), columns PROJECT order [b_g; b_a].
 
     Central differences of ``Log(Ubar^-1 U(bbar + d))``.  ``pim.predict`` applies the
     first-order right correction ``Ubar Exp(J d)`` (GTSAM doc Eq. (36)), so this map is
-    exactly linear in ``d`` (measured: 1e-6 vs 1e-2 steps agree to 7e-10, the 1e-6 error being
-    pure round-off), and h = 1e-3 has round-off ~1e-13 and no truncation error.
+    exactly linear in ``d`` (a least-squares linear fit to 60 random |d_k| <= 0.1 leaves a
+    residual <= 1.8e-15), so there is no truncation error at any step and the round-off,
+    ~eps |Log| / h, falls with h.  Measured against that fit on the instance: h = 1e-3 is
+    accurate to 2.3e-13 .. 6.1e-13, h = 0.1 to 4.4e-15 .. 1.1e-14 (verifier pass 3, Sec. 6).
     The columns are produced by perturbing project-order bias entries, so the swap to
     GTSAM's (accel, gyro) happens inside :func:`to_gtsam_bias` only.
     """
