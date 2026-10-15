@@ -206,34 +206,12 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M1-S01
-    statement: For xi = (phi, u, w, alpha) in gal(3) with alpha != 0, the Cayley map has position block
-      pe = (I - [phi]x/2)^-1 (w - (alpha/2) u); equivalently the degree-2 lifting constraint is (I - [phi]x/2)
-      pe + (alpha/2) u = w for all xi in gal(3). The time-coordinate coupling therefore enters the Cayley
-      position block with the SAME negative sign as the -0.5*g*Dt^2 entry of H' in the corrected endpoint
-      relation, which is what makes Cayley consistent with the project's convention that a gravity-like
-      term standing to the left of an un-advanced state carries a minus.
-    caught: true
+    id: M1-S10
+    caught: null
     published: false
-    why_false: 'The sign is PLUS: (I - [phi]x/2) pe == w + (alpha/2) u, verified to 5.7e-14 over 20000
-      random gal(3) elements with alpha != 0; the minus form is off by up to 2.5e2. Subtle because pre-flight
-      F3 only ever tested alpha=0, where the term vanishes identically, so a verifier that reuses the
-      existing F3 check passes the seed. It also rides on real project lore -- it rationalises the minus
-      by appealing to H''''s -0.5*g*Dt^2 sign, the project''s most-repeated piece of hard-won sign knowledge.'
-    note: 'Weakness: this seed contradicts M1-C25/M1-C30 in the same list, so a careful verifier can catch
-      it by reading alone rather than by computing. That still counts as catching it -- only pure deference
-      misses it -- but it is a weaker test than a seed that is internally consistent with its neighbours.'
-    void_reason: 'BURNED: recoverable from git log -p on the branch. The deriver wrote it into a tracked
-      docs/claims/ file and the later strip-commit left the original in history. The M2 implementer found
-      it this way and disclosed it. Any ''caught'' verdict on this seed is non-informative -- it tests
-      git archaeology, not adversarial verification.'
-    how: 'BY COMPUTATION despite being burned: the verifier block-inverted (I5 - xi^/2)^-1(I5 + xi^/2)
-      by hand, got the PLUS sign, and only then ran numerics (PLUS 1.11e-15, MINUS 7.69; MINUS''s MINIMUM
-      residual over 60000 draws x 3 seeds never below 9.9e-4). It states git log/log -p/show were never
-      run during verification. The archaeology risk did not materialise.'
   agent_runs:
   - role: deriver
     agent_id: deriver-M1-001
@@ -385,10 +363,20 @@ milestones:
   - role: implementer
     agent_id: impl-M1-009-remediation
     started: '2026-10-15T22:55:06+00:00'
+    finished: '2026-10-15T23:16:32+00:00'
+    outcome: completed
+    note: '166 passed (slow incl.); harness 91/91 killed (70 earlier replays). Tests only, src unchanged.
+      C24 literal 3-term polynomial pinned to 1e-15 vs 50-digit mpmath (clean <= 2.2e-16); C42 band 1.3e-15
+      (clean 9.99e-16, 1.30x); C22 small-angle 1e-15 (clean 4.3e-16); gravity guard requires every component
+      exercised and span R^3 with min_span 0.1 (orchestrator accepted 0.1 over the suggested 0.2: real
+      Dt=+0.4 4-g dataset measures 0.122, planar ~1e-16). A1 signed-dt Euler check, A2 stream-length rejection
+      tested. Harness gained multi-edit compound mutants and bounded concurrency. Commit 3f735b8.'
+  - role: verifier
+    agent_id: verify-M1-010
+    started: '2026-10-15T23:16:32+00:00'
     finished: null
     outcome: running
-    note: 'Kill F18-F21: literal Taylor-polynomial pins, tighter Rodrigues band and so3_log small-branch
-      bounds, rank-3 gravity-direction guard.'
+    note: Ninth pass with a fresh planted claim; rules on F18-F21 (3f735b8).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -546,14 +534,17 @@ milestones:
       assert each coefficient equals C24''s literal 3-term polynomial in 50-digit arithmetic to <= 1e-15
       relative. Orchestrator ruling: pin the literal polynomial C24 states (also kills the more accurate
       4-term R07/S04/S05, advisory A3).'
+    note: Remediated in 3f735b8; awaiting verifier ruling.
   - id: M1-F19
     resolved: false
     summary: 'Rodrigues Taylor band pin (2e-15) admits + t^6/60000 in (1 - cos)/th^2, scalar so3_exp (S06)
       and batch (S07): 1.665e-15 vs clean 9.99e-16 on [0.04, 0.05). Kill: <= 1.3e-15 on C42''s 460 angles.'
+    note: Remediated in 3f735b8; awaiting verifier ruling.
   - id: M1-F20
     resolved: false
     summary: 'so3_log small-angle branch can move from n < 1e-10 to n < 1e-7 (S08): 3.4e-15 vs clean 4.4e-16
       relative, under C22''s 1e-14. Kill: C22 relative small-angle bound 1e-15 on the same 20000 R.'
+    note: Remediated in 3f735b8; awaiting verifier ruling.
   - id: M1-F21
     resolved: false
     summary: 'assert_gravity_directions_diverse admits a PLANAR random-g distribution (F1W: g in the x-z
@@ -562,6 +553,7 @@ milestones:
       stacked unit g directions to span R^3 (smallest singular value / sqrt(m) >= 0.2), also for the 4-g
       datasets. Advisories (not gate items): A1 euler_increment never run with dt < 0; A2 _inputs per-step
       acc-length check untested.'
+    note: Remediated in 3f735b8; awaiting verifier ruling.
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
