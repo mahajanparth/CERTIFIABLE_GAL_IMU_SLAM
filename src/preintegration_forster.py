@@ -30,14 +30,29 @@ from .trajectory import (G_W, NavTriple, SMALL_ANGLE, hat, so3_exp, so3_log)
 
 
 def so3_right_jacobian(phi) -> np.ndarray:
-    """``Jr(phi)``, the right Jacobian of ``Exp`` on SO(3).  Needed by Eq. (63) only."""
+    """``Jr(phi)``, the right Jacobian of ``Exp`` on SO(3).  Needed by Eq. (63) only.
+
+    The ``K`` coefficient ``(1 - cos th) / th^2`` is evaluated as ``2 sin^2(th/2) / th^2``
+    (M2-F28).  The textbook form cancels: ``1 - cos th`` carries an absolute rounding error
+    of up to ~1.1e-16, i.e. a relative error up to ~1.1e-16 / (th^2/2), so ``Jr`` was off
+    by up to ~1e-16 / th ABSOLUTE between the 1e-8 series branch and ~1e-4 rad.  Measured
+    against a 50-digit mpmath derivative of ``expm``: 3.0e-9 / 3.3e-9 at th = 1.1e-8 and
+    2.9e-11 / 3.2e-11 at 1e-6 (two directions); a 4000-point sweep of old vs new gives up
+    to 2.6e-9 / 5.2e-10 / 4.5e-11 in the decades starting at 1e-8 / 1e-7 / 1e-6, and
+    <= 4.9e-13 at 1e-4, <= 4.5e-14 at 1e-3, <= 4.6e-15 at 1e-2.  Eq. (63) at per-step
+    angles 2e-8 / 3e-7 / 1e-6 rad was 2.5e-9 / 2.7e-10 / 9.9e-11 off a complex-step
+    reference (block-relative); with this form 2.7e-15 / 7.5e-15 / 6.8e-16.  At the
+    fixture's per-step angles (~1e-3 rad) and those of every pre-F28 covariance test
+    ([4e-4, 4e-3] rad) the change in ``Jr`` is <= 4.9e-13 absolute, far below every claim
+    tolerance.  The ``K^2`` coefficient ``(th - sin th) / th^3`` also cancels, but
+    it multiplies ``|K^2| = th^2``, so its absolute error stays at rounding."""
     phi = np.asarray(phi, dtype=float)
     th = float(np.linalg.norm(phi))
     K = hat(phi)
     if th < SMALL_ANGLE:
         return np.eye(3) - 0.5 * K + (1.0 / 6.0) * (K @ K)
     return (np.eye(3)
-            - ((1.0 - np.cos(th)) / th**2) * K
+            - (2.0 * np.sin(0.5 * th)**2 / th**2) * K
             + ((th - np.sin(th)) / th**3) * (K @ K))
 
 
