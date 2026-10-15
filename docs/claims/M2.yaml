@@ -257,9 +257,11 @@ claims:
     -0.5 g Dt^2, g Dt, 0) is correct only at t_i = 0 and is wrong by exactly |g| Dt t_i otherwise.
   source: DERIVED (corrects the domain of pre-flight F2)
   kind: DERIVED
-  test_hint: Evaluate both forms at t_i = 0 and t_i = 3.7 on a fixture edge. Assert W-form error <= 1e-12
-    at both (measured 8.9e-16); assert F2-form error <= 1e-12 at t_i=0 and within 1e-6 of |g|*Dt*t_i at
-    t_i=3.7 (measured 36.3 vs 9.81*1.0*3.7=36.297). Also assert the swapped order H'.T(-Dt).X_i.U is wrong.
+  test_hint: Evaluate both forms at t_i = 0 and t_i = 3.7 on each fixture edge (Dt = 0.5) and on the composed
+    two-edge span (Dt = 1.0). Assert W-form error <= 1e-12 at both (measured <= 2.0e-15 per edge, <= 8.0e-15
+    on the span); assert F2-form error <= 1e-12 at t_i=0 and within 1e-6 of |g|*Dt*t_i at t_i=3.7 (measured
+    18.148500 = 9.81*0.5*3.7 per edge, 36.297000 = 9.81*1.0*3.7 on the span; hint numbers corrected in M2-F28,
+    statement unchanged). Also assert the swapped order H'.T(-Dt).X_i.U is wrong.
   domain: The F2 form yields t_j = t_i; the W form yields t_j = t_i + Dt (physically correct clock). Benign
     for GTSAM because NavState carries no clock, but a live hazard for M3/M4 where Gal(3) states are decision
     variables.
