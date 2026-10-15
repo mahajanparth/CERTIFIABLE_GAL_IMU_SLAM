@@ -565,7 +565,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -794,10 +794,17 @@ milestones:
   - role: verifier
     agent_id: verify-M2-011
     started: '2026-10-15T22:39:55+00:00'
+    finished: '2026-10-15T23:14:21+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C34 (Jr Jr^T - I = 1.333e-6 at 4e-3 rad vs claimed 1e-12; 10000/10000 violate).
+      25/25 confirmed; F28 FIXED; Jr src change correct to 3.3e-16 vs mpmath, moves covariances <= 2.2e-14
+      rel. 55 new mutants: 17 equivalent, 6 non-equivalent (F29). Commit 052ab7a.'
+  - role: implementer
+    agent_id: impl-M2-015-remediation
+    started: '2026-10-15T23:14:21+00:00'
     finished: null
     outcome: running
-    note: Eleventh pass with a fresh planted claim; rules on F28 (2cc0762..23a73bf), including the Jr
-      src change.
+    note: 'Kill F29: extend per-step angle sweep to 3e-9..3 rad, tighten test_c11.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1022,7 +1029,7 @@ milestones:
       scope f24''s warnings-as-errors filter to src calls only.'
     resolution: PARTIALLY fixed per verify-M2-010; remainder is M2-F28.
   - id: M2-F28
-    resolved: false
+    resolved: true
     summary: '10 low survivors (verify-M2-010): Y18 Jr K^2 coefficient x(1+1e-8), Y24/Y55 B2 noise Jacobian
       switched by |phi| (< 1e-4 / > 1e-2), Y56 B1 noise Jacobian I - K/2 above 1e-2, Y57 rotation transition
       = I below 1e-4 -- all survive because every covariance reference test uses per-step angles in [4e-4,
@@ -1035,6 +1042,19 @@ milestones:
       fail; P23-old''s kill margin is 1.0-1.2x (it is equivalent anyway, 4.4e-8 vs 1e-7). C18 hint quotes
       Dt = 1.0 numbers while the fixture uses Dt = 0.5.'
     note: Remediated in 2cc0762..23a73bf; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M2-011 (docs/verification/stage-b_m2-baselines_pass11.md); remainder
+      is M2-F29.
+  - id: M2-F29
+    resolved: false
+    summary: '6 non-equivalent survivors (verify-M2-011), all from per-step angles outside the tested
+      1e-7..0.5 rad band: Z07 B1 noise input I - K/2 above |w dt| > 0.6 (cov error 0.17 at 0.7 rad); Z08
+      A_RR = I below 1e-8 in B1 and B2 (7.7e-6 rel at 5e-9 rad/step over 4000 steps -- stationary IMU);
+      Z09 A_RR = I above 0.6 (3.6 at 0.7 rad); Z10 gyro noise input I instead of Jr/J_Cay below 1e-8 (1.0e-8
+      at 9e-9 rad vs 2.7e-10); Z11 B2 raw J_r above |phi| > 0.6 (8.6e-2 at 0.7 rad); Z30 Eq. (22b) Rbreve
+      Gamma/2 x(1+1e-12) (6.6e-14 vs clean 6.7e-16; test_c11 bound 1e-13 too loose). Z07/Z08/Z09/Z30 trip
+      only change detectors (edit anchors, an in-test copy of Eq. (22b)), not reference tests. Kill: add
+      per-step angles 3e-9, 9e-9 rad (>= 1000 steps) and 1, 2, 3 rad (widen _cexp |t| <= 4 guard) to F28_STEP_ANGLES;
+      tighten test_c11 to 1e-14 or widen its bbar_g range.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
