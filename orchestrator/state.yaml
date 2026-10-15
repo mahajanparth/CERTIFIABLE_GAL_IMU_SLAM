@@ -531,7 +531,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -750,9 +750,13 @@ milestones:
   - role: implementer
     agent_id: impl-M2-014-remediation
     started: '2026-10-15T22:23:38+00:00'
-    finished: null
-    outcome: running
-    note: Continue F28 remediation from the uncommitted working tree of impl-M2-013.
+    finished: '2026-10-15T22:38:12+00:00'
+    outcome: completed
+    note: '265 passed (full, slow incl.); harness 154 tests, PASS10 section 10/10 killed. Jr K coefficient
+      now 2 sin^2(th/2)/th^2: old form 3.0e-9 off mpmath at 1.1e-8 rad, Eq. (63) 2.5e-9 off complex step
+      at 2e-8 rad/step; new <= 2.7e-15; at fixture angles Jr moves <= 4.9e-13. Per-step angle sweep, density
+      sweep to 5e-324, bias halves alone, large v/Dt. Hand kill-check Y57, Y30. C18 test_hint edited (23a73bf)
+      to give both per-edge and span numbers; statement unchanged. Commits 2cc0762..23a73bf.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -989,6 +993,7 @@ milestones:
       so it moves with the mutant; reference-only preconditions orth >= 1e-11 and visible >= 1e-7 cannot
       fail; P23-old''s kill margin is 1.0-1.2x (it is equivalent anyway, 4.4e-8 vs 1e-7). C18 hint quotes
       Dt = 1.0 numbers while the fixture uses Dt = 0.5.'
+    note: Remediated in 2cc0762..23a73bf; awaiting verifier ruling.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
