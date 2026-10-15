@@ -579,7 +579,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -816,9 +816,20 @@ milestones:
   - role: implementer
     agent_id: impl-M2-015-remediation
     started: '2026-10-15T23:14:21+00:00'
+    finished: '2026-10-15T23:30:12+00:00'
+    outcome: completed
+    note: '275 passed (slow incl.); harness 148/148, pass-11 6/6 killed by reference tests only. Sweep
+      extended to 3e-9 (x1000), 9e-9, 0.7, 1, 2, 3 rad plus a 4000-step stationary-IMU test; clean <=
+      6.8e-14 vs 1e-10. Z30 killed by a retyped Eq. (19) at large Gamma (1.2e-12 vs 1e-13). Reference
+      defect fixed: _cs_chart used R0^T on a drifted R0 (7.0e-12 vs mpmath), now solve(R0, dR) (9.6e-15).
+      src unchanged. Commit 75f941e.'
+  - role: verifier
+    agent_id: verify-M2-012
+    started: '2026-10-15T23:30:12+00:00'
     finished: null
     outcome: running
-    note: 'Kill F29: extend per-step angle sweep to 3e-9..3 rad, tighten test_c11.'
+    note: Twelfth pass with a fresh planted claim; rules on F29 (75f941e) incl. the complex-step reference
+      change.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1069,6 +1080,7 @@ milestones:
       only change detectors (edit anchors, an in-test copy of Eq. (22b)), not reference tests. Kill: add
       per-step angles 3e-9, 9e-9 rad (>= 1000 steps) and 1, 2, 3 rad (widen _cexp |t| <= 4 guard) to F28_STEP_ANGLES;
       tighten test_c11 to 1e-14 or widen its bbar_g range.'
+    note: Remediated in 75f941e; awaiting verifier ruling.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
