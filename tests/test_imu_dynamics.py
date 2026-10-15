@@ -194,6 +194,22 @@ def test_increment_left_invariant_ode():
     # the predicted coefficient also accounts for part (b)'s worst error (2.970 dt)
     assert 0.99 <= (worst / dt) / worst_pred <= 1.01, (worst / dt, worst_pred)
     assert worst_pow <= 1e-11, worst_pow
+    # (b'') SIGNED dt (pass-8 advisory A1): the same explicit-Euler identity
+    #     D_n = (I5 + dt A)^n for dt < 0 (dt = -1e-4, n = 4000, T = -0.4), 20 configurations
+    #     from an own stream.  Every other Euler check has dt > 0, where a dp update using
+    #     |dt| (pass-8 S30) is bitwise identical; for dt < 0 it moves dp by O(1).
+    r_eneg = rng(4101)
+    om_en = 0.7 * r_eneg.normal(size=(20, 3))
+    acc_en = 2.0 * r_eneg.normal(size=(20, 3))
+    dt_en, n_en = -1e-4, 4000
+    eR, ev, ep, eT = imu.euler_increment(om_en, acc_en, dt_en, n_en)
+    assert abs(eT - (-0.4)) <= 1e-12, eT
+    worst_pow_neg = 0.0
+    for k in range(20):
+        P = np.linalg.matrix_power(I5 + dt_en * hat_by_hand(om_en[k], acc_en[k]), n_en)
+        worst_pow_neg = max(worst_pow_neg,
+                            float(np.abs(gal(eR[k], ev[k], ep[k], eT) - P).max()))
+    assert worst_pow_neg <= 1e-11, worst_pow_neg
 
     # (c) TIME-VARYING, non-commuting xi(t): the left-invariant ODE (D xi^, not
     #     xi^ D) against DOP853.  Euler is first order, so check the error and the
@@ -438,11 +454,11 @@ def test_increment_closed_form_blocks():
 
     # BOTH Rodrigues (scalar gal3.so3_exp and the batched one) at the top of their Taylor
     # branch, theta in [0.04, 0.05) and just above the switch (0.05 .. 0.052, and the
-    # double just below it), against the 40-digit mpmath Rodrigues: <= 2e-15 each
+    # double just below it), against the 40-digit mpmath Rodrigues: <= 1.3e-15 each
     # (measured 1.0e-15 for both, the th^8/8! = 9.7e-16 truncation of c plus rounding).
     # The 1e-14 sweeps above leave a 10x band: a wrong th^6 term in (1 - cos th)/th^2,
     # c + th^6/10000, measures 4.9e-15 here (scalar: pass-7 R01, so3_exp_c_th6_over_10000;
-    # batch: pass-7 R32, so3_exp_batch_c_th6_over_10000), killed by these pins with a 2.4x
+    # batch: pass-7 R32, so3_exp_batch_c_th6_over_10000), killed by these pins with a 3.8x
     # margin.  Under this bound pass-7 R08 (scalar switch at 0.03: 1.4e-17, more accurate),
     # pass-4 N15 (batch switch at 1e-3: 1.1e-16) and pass-6 Q03 / Q40 (<= at 0.05 exactly:
     # 1.0e-15, as clean) all pass.  Own stream rng(4201).
@@ -456,8 +472,11 @@ def test_increment_closed_form_blocks():
     worst_sw_scalar = max(float(np.abs(gal3.so3_exp(p) - R).max())
                           for p, R in zip(phi_sw, ref_sw))
     worst_sw_batch = float(np.abs(imu._so3_exp_batch(phi_sw) - ref_sw).max())
-    assert worst_sw_scalar <= 2e-15, worst_sw_scalar
-    assert worst_sw_batch <= 2e-15, worst_sw_batch
+    # Tightened to 1.3e-15 (pass-8 M1-F19): under 2e-15, c + th^6/60000 survived in both
+    # forms (pass-8 S06 scalar, S07 batch: 1.665e-15 here, clean 9.99e-16).  Clean
+    # headroom 1.30x on these fixed 460 angles.
+    assert worst_sw_scalar <= 1.3e-15, worst_sw_scalar
+    assert worst_sw_batch <= 1.3e-15, worst_sw_batch
 
 
 @pytest.mark.claim("M1-C43")
@@ -696,9 +715,9 @@ def test_preintegration_chaining_is_the_group_product():
     # * Q38 (integrate_increment uses D0's arrays without copying): the loop only REBINDS
     #   dR, dv, dp (dp = dp + ..., dR = dR @ E); nothing is mutated in place, so neither
     #   the caller's D0 nor any result changes (bit-identical).
-    # * Q39 (the per-step stream length check in _inputs removed): it only raises on
-    #   malformed streams; every claim input has leading length n, and outputs on valid
-    #   input are bit-identical.
+    # * Q39 (the per-step stream length check in _inputs removed): bit-identical on
+    #   every valid input; the malformed-stream rejection it provides is now checked at
+    #   the end of this test (pass-8 advisory A2).
     # 4000 purely algebraic triples against the hand-written component formulas: the
     # first 2000 with positive durations (the recorded draws), the appended 2000 with
     # durations of either sign (the claim is total; a backward segment chains by the
@@ -728,6 +747,40 @@ def test_preintegration_chaining_is_the_group_product():
     # src; no change to src could make it fail while worst_alg passes.  The FIRST-segment
     # velocity / SECOND-segment duration term is pinned by worst_alg itself (hand-written
     # reference) and by worst_ode (three DOP853 solves).
+
+    # Malformed per-step streams are REJECTED, not truncated (pass-8 advisory A2; pass-6
+    # Q39 / pass-8 M06 drop one of the two length checks): a stream whose leading length
+    # is not n -- omega OR acc, too long or too short -- raises ValueError in all three
+    # integrators.  Without the acc check an over-long acc stream is silently cut to n.
+    n_bad = 7
+    om_ok, acc_ok = r.normal(size=(n_bad, 2, 3)), r.normal(size=(n_bad, 2, 3))
+    om_long, acc_long = r.normal(size=(n_bad + 1, 2, 3)), r.normal(size=(n_bad + 1, 2, 3))
+    R0_b = np.broadcast_to(np.eye(3), (2, 3, 3))
+    v0_b, p0_b = np.zeros((2, 3)), np.zeros((2, 3))
+    calls = {
+        "integrate_increment": lambda om, ac: imu.integrate_increment(om, ac, 0.01, n_bad,
+                                                                      per_step=True),
+        "euler_increment": lambda om, ac: imu.euler_increment(om, ac, 0.01, n_bad,
+                                                              per_step=True),
+        "integrate_truth": lambda om, ac: imu.integrate_truth(R0_b, v0_b, p0_b, om, ac, 0.01,
+                                                              n_bad, per_step=True),
+    }
+    not_rejected = []
+    for name, call in calls.items():
+        call(om_ok, acc_ok)   # well-formed streams are accepted
+        for label, om, ac in (("acc too long", om_ok, acc_long),
+                              ("acc too short", om_ok, acc_long[: n_bad - 1]),
+                              ("omega too long", om_long, acc_ok),
+                              ("omega too short", om_long[: n_bad - 1], acc_ok)):
+            try:
+                call(om, ac)
+            except ValueError:
+                continue
+            except Exception as exc:   # e.g. an IndexError deep in the loop: not a rejection
+                not_rejected.append((name, label, type(exc).__name__))
+                continue
+            not_rejected.append((name, label, "accepted"))
+    assert not not_rejected, not_rejected
 
 
 # ==========================================================================

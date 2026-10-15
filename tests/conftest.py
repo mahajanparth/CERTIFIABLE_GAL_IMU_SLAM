@@ -147,7 +147,8 @@ def rand_gravity(r, n=None):
     return r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)
 
 
-def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0):
+def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_component=1.0,
+                                      min_span=0.1):
     """INPUT GUARD on a block of random-g draws (not evidence about src).
 
     The random-g checks exist to catch defects that are invisible for g parallel to z,
@@ -159,6 +160,18 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0):
     * some draw with |g - g[[1, 0, 2]]|_inf >= ``min_perm_gap`` (an x/y swap is visible);
     * for m > 1, two draws >= ``min_angle`` rad apart as lines (``spread``): the block
       is not all parallel to ONE direction.
+    * EVERY component is exercised: max over the draws of |g_k| >= ``min_component``
+      for k = x, y, z (``comp``).  This applies to a single draw too.
+    * for m >= 3, the unit directions SPAN R^3: smallest singular value of the stacked
+      (m, 3) unit vectors / sqrt(m) >= ``min_span`` (``span``).
+
+    The last two close pass-8 M1-F21: a PLANAR distribution (g in the x-z plane, >= 0.6
+    rad off z) passed off_z, perm_gap and spread, and under it a g_y sign error in
+    gravity_lift, gravity_element, integrate_truth or forster_endpoint survived the
+    suite.  ``min_span`` is 0.1, not 0.2: one recorded 4-g dataset (Dt = +0.4) has
+    span 0.122 (Dt = -0.3: 0.305; the 400..2000-draw blocks 0.549..0.570); a planar block
+    has span <= 2e-16.  comp is >= 4.2 on every recorded block (the one-draw C45 g: 4.20)
+    and exactly 0 for g_y = 0.
     """
     gs = np.atleast_2d(np.asarray(gs, dtype=float))
     u = gs / np.linalg.norm(gs, axis=1, keepdims=True)
@@ -170,7 +183,13 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0):
     if len(gs) > 1:
         spread = float(np.arccos(np.clip(np.abs(u @ u.T), 0.0, 1.0)).max())
         assert spread >= min_angle, spread
-    return off_z, perm_gap, spread
+    comp = float(np.abs(gs).max(axis=0).min())
+    assert comp >= min_component, comp
+    span = None
+    if len(gs) >= 3:
+        span = float(np.linalg.svd(u, compute_uv=False)[-1] / np.sqrt(len(gs)))
+        assert span >= min_span, span
+    return off_z, perm_gap, spread, comp, span
 
 
 def assert_rand_g_datasets(datasets):

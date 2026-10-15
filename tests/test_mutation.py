@@ -26,6 +26,7 @@ written for it, not incidentally by an earlier assertion.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,59 @@ C43 = IMU + "test_forster_component_equations"
 C55 = IMU + "test_bias_convention_swap"
 # every test that draws random g (rand_gravity) or uses endpoint_datasets_rand_g
 RAND_G_TESTS = [C31, C32, C33, C34, C35, C36, C37, C38, C43, C45]
+
+# pass-8 F1W: rand_gravity planar in the x-z plane, >= 0.6 rad off z (g_y = 0 exactly)
+RAND_G_OLD = ("    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1))"
+              " * rand_axis(r, n)\n")
+F1W = ("tests/conftest.py", RAND_G_OLD,
+       "    b = r.uniform(0.6, np.pi - 0.6, size=n)\n"
+       "    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1))"
+       " * np.stack([np.sin(b), 0.0 * b, -np.cos(b)], axis=-1)\n")
+# tests whose random-g guards all see >= 3 draws (the span check needs m >= 3); C45's
+# only random g is ONE draw, guarded by off_z / perm_gap / comp alone
+SPAN_TESTS = [n for n in RAND_G_TESTS if n != C45]
+# pass-8 Y_LIFT / Y_ELEM / Y_TRUTH / Y_FORST: g -> g * (1, -1, 1) in one src function.
+# name -> ((file, old, new), tests that must fail, {test: failing assertion})
+_FLIP_Y = " * np.array([1.0, -1.0, 1.0])"
+Y_SIGN = {
+    "gravity_lift": (
+        ("src/gal3.py",
+         "    g = np.asarray(g, dtype=float).reshape(3)\n"
+         "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n",
+         "    g = np.asarray(g, dtype=float).reshape(3)" + _FLIP_Y + "\n"
+         "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n"),
+        [C31, C32, C35, C36, C38, C43],
+        {C31: 'assert worst_ode <= 1e-9, (d["label"], worst_ode)',
+         C32: "assert worst_fuse_rg <= 1e-12, worst_fuse_rg",
+         C35: "assert worst_p_rg <= 1e-10, worst_p_rg",
+         C36: "assert worst_p_rg <= 1e-10, worst_p_rg",
+         C38: "assert worst_w_rg <= 1e-12, worst_w_rg",
+         C43: 'assert worst_block <= 1e-12, (d["label"], worst_block)'}),
+    "gravity_element": (
+        ("src/gal3.py",
+         "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, -Dt)\n",
+         "    g = g" + _FLIP_Y + "\n    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, -Dt)\n"),
+        [C32, C33], {C32: "assert worst_def_rg <= 1e-12, worst_def_rg",
+                     C33: "assert worst_def_rg <= 1e-10, worst_def_rg"}),
+    "integrate_truth": (
+        ("src/imu_dynamics.py",
+         "    g = np.asarray(g, dtype=float).reshape(3)\n\n    E_s",
+         "    g = np.asarray(g, dtype=float).reshape(3)" + _FLIP_Y + "\n\n    E_s"),
+        [C31, C34, C37, C43, C45],
+        {C31: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C34: 'assert worst_p <= 1e-12, (d["label"], worst_p)',
+         C37: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C43: 'assert worst_id <= 1e-12, (d["label"], worst_id)',
+         C45: "assert worst_large_nav <= 1e-12, worst_large_nav"}),
+    "forster_endpoint": (
+        ("src/gal3.py",
+         "    R_i = np.asarray(R_i, dtype=float)\n    v_i = np.asarray(v_i, dtype=float).reshape(3)\n",
+         "    g = g" + _FLIP_Y + "\n"
+         "    R_i = np.asarray(R_i, dtype=float)\n    v_i = np.asarray(v_i, dtype=float).reshape(3)\n"),
+        [C31, C37, C43], {C31: 'assert worst_alg <= 1e-12, (d["label"], worst_alg)',
+                          C37: "assert worst_alg <= 1e-12, worst_alg",
+                          C43: 'assert worst <= 1e-9, (d["label"], worst)'}),
+}
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -524,19 +578,19 @@ MUTATIONS = {
         "src/gal3.py",
         "        c = 0.5 - t2 / 24.0 + t4 / 720.0         # (1 - cos th)/th^2\n",
         "        c = 0.5 - t2 / 24.0 + t4 / 720.0 + t4 * t2 / 10000.0  # (1 - cos th)/th^2\n",
-        [C42], {C42: "assert worst_sw_scalar <= 2e-15, worst_sw_scalar"},
+        [C42], {C42: "assert worst_sw_scalar <= 1.3e-15, worst_sw_scalar"},
     ),
     "so3_exp_batch_c_th6_over_10000": (                           # pass-7 R32 (4.9e-15)
         "src/imu_dynamics.py",
         "0.5 - t2 / 24.0 + t2 * t2 / 720.0,",
         "0.5 - t2 / 24.0 + t2 * t2 / 720.0 + t2 * t2 * t2 / 10000.0,",
-        [C42], {C42: "assert worst_sw_batch <= 2e-15, worst_sw_batch"},
+        [C42], {C42: "assert worst_sw_batch <= 1.3e-15, worst_sw_batch"},
     ),
     "so3_log_small_branch_1e-5": (                                # pass-7 R03 (3.2e-11 rel)
         "src/gal3.py",
         "    if n < 1e-10:\n",
         "    if n < 1e-5:\n",
-        [C22], {C22: "assert worst_small_rel <= 1e-14, worst_small_rel"},
+        [C22], {C22: "assert worst_small_rel <= 1e-15, worst_small_rel"},
     ),
     "c2_taylor_th4_over_30200": (                                 # pass-7 R05 (3.1e-12)
         "src/gal3.py",
@@ -558,6 +612,92 @@ MUTATIONS = {
         ENDPOINT_TESTS,
         {n: 'assert (d["Dt"] < 0) == ("Dt=-" in d["label"])' for n in ENDPOINT_TESTS},
     ),
+    # ---- eighth-pass SURVIVORS (M1-F18..F21), killed on the intended assertion ------
+    "gamma_kappa1_th4_over_719.993": (                            # pass-8 S01 (1.69e-13)
+        "src/gal3.py",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 720.0",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 719.993",
+        [C24], {C24: "assert poly_k1 <= 1e-15, poly_k1"},
+    ),
+    "gamma_kappa3_th4_over_40319": (                              # pass-8 S02 (9.2e-14)
+        "src/gal3.py",
+        "kappa3 = 1.0 / 24.0 - t2 / 720.0 + t4 / 40320.0",
+        "kappa3 = 1.0 / 24.0 - t2 / 720.0 + t4 / 40319.0",
+        [C24], {C24: "assert poly_k3 <= 1e-15, poly_k3"},
+    ),
+    "gamma_c2_th4_over_30239": (                                  # pass-8 S03 (8.2e-14)
+        "src/gal3.py",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30240.0",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30239.0",
+        [C24], {C24: "assert poly_c2 <= 1e-15, poly_c2"},
+    ),
+    "gamma_kappa1_4_terms": (                                     # pass-7 R07 (A3)
+        "src/gal3.py",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 720.0",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 720.0 - t4 * t2 / 40320.0",
+        [C24], {C24: "assert poly_k1 <= 1e-15, poly_k1"},
+    ),
+    "gamma_kappa2_4_terms": (                                     # pass-8 S04 (A3)
+        "src/gal3.py",
+        "kappa2 = 1.0 / 6.0 - t2 / 120.0 + t4 / 5040.0",
+        "kappa2 = 1.0 / 6.0 - t2 / 120.0 + t4 / 5040.0 - t4 * t2 / 362880.0",
+        [C24], {C24: "assert poly_k2 <= 1e-15, poly_k2"},
+    ),
+    "gamma_c2_4_terms": (                                         # pass-8 S05 (A3)
+        "src/gal3.py",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30240.0",
+        "c2 = 1.0 / 12.0 + t2 / 720.0 + t4 / 30240.0 + t4 * t2 / 1209600.0",
+        [C24], {C24: "assert poly_c2 <= 1e-15, poly_c2"},
+    ),
+    "so3_exp_c_th6_over_60000": (                                 # pass-8 S06 (1.665e-15)
+        "src/gal3.py",
+        "        c = 0.5 - t2 / 24.0 + t4 / 720.0         # (1 - cos th)/th^2\n",
+        "        c = 0.5 - t2 / 24.0 + t4 / 720.0 + t4 * t2 / 60000.0  # (1 - cos th)/th^2\n",
+        [C42], {C42: "assert worst_sw_scalar <= 1.3e-15, worst_sw_scalar"},
+    ),
+    "so3_exp_batch_c_th6_over_60000": (                           # pass-8 S07 (1.665e-15)
+        "src/imu_dynamics.py",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0,",
+        "0.5 - t2 / 24.0 + t2 * t2 / 720.0 + t2 * t2 * t2 / 60000.0,",
+        [C42], {C42: "assert worst_sw_batch <= 1.3e-15, worst_sw_batch"},
+    ),
+    "so3_log_small_branch_1e-7": (                                # pass-8 S08 (3.3e-15 rel)
+        "src/gal3.py",
+        "    if n < 1e-10:\n",
+        "    if n < 1e-7:\n",
+        [C22], {C22: "assert worst_small_rel <= 1e-15, worst_small_rel"},
+    ),
+    "fixture_rand_gravity_xz_plane": (                            # pass-8 F1W
+        *F1W,
+        RAND_G_TESTS, {n: "assert comp >= min_component, comp" for n in RAND_G_TESTS},
+    ),
+    "fixture_rand_gravity_tilted_plane": (   # planar, every component nonzero: span only
+        "tests/conftest.py", RAND_G_OLD,
+        "    b = np.asarray(r.uniform(0.6, np.pi - 0.6, size=n))[..., None]\n"
+        "    e1 = np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)\n"
+        "    e2 = np.array([0.0, 0.5, -1.0]) / np.sqrt(1.25)\n"
+        "    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1))"
+        " * (np.cos(b) * e1 + np.sin(b) * e2)\n",
+        SPAN_TESTS, {n: "assert span >= min_span, span" for n in SPAN_TESTS},
+    ),
+    "euler_increment_dp_abs_dt": (                                # pass-8 S30 (A1)
+        "src/imu_dynamics.py",
+        "        dp = dp + dv * dt\n",
+        "        dp = dp + dv * abs(dt)\n",
+        [C41], {C41: "assert worst_pow_neg <= 1e-11, worst_pow_neg"},
+    ),
+    "inputs_no_acc_length_check": (                               # pass-8 M06 (A2)
+        "src/imu_dynamics.py",
+        "        if omega.shape[0] != int(n) or acc.shape[0] != int(n):\n",
+        "        if omega.shape[0] != int(n):\n",
+        [C45], {C45: "assert not not_rejected, not_rejected"},
+    ),
+    **{f"{name}_g_y_sign": (edit[0], edit[1], edit[2], nodes, expect)
+       for name, (edit, nodes, expect) in Y_SIGN.items()},
+    **{f"{name}_g_y_sign_under_xz_plane_g": ((F1W, edit), None, None, RAND_G_TESTS,
+                                             {n: "assert comp >= min_component, comp"
+                                              for n in RAND_G_TESTS})
+       for name, (edit, _, _) in Y_SIGN.items()},
 }
 
 
@@ -578,16 +718,24 @@ def _run(workdir: Path, nodes) -> tuple[int, str]:
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def _edits(mid: str):
+    """The (file, old, new) edits of a mutation: one, or for a COMPOUND mutant (first
+    field a tuple of edits, old/new None) several, each applied exactly once."""
+    path, old, new = MUTATIONS[mid][:3]
+    return list(path) if isinstance(path, tuple) else [(path, old, new)]
+
+
 def _mutate_and_run(base: Path, mid: str):
-    path, old, new, nodes = MUTATIONS[mid][:4]
+    nodes = MUTATIONS[mid][3]
     work = base / mid.replace("*", "x").replace(">", "").replace("@", "at")
     _copy_repo(work)
-    target = work / path
-    text = target.read_text()
-    count = text.count(old)
-    if count != 1:
-        return mid, None, f"mutation target occurs {count} times in {path}"
-    target.write_text(text.replace(old, new))
+    for path, old, new in _edits(mid):
+        target = work / path
+        text = target.read_text()
+        count = text.count(old)
+        if count != 1:
+            return mid, None, f"mutation target occurs {count} times in {path}"
+        target.write_text(text.replace(old, new))
     return (mid, *_run(work, nodes))
 
 
@@ -597,7 +745,10 @@ def mutation_results(tmp_path_factory):
     all_nodes = sorted({n for m in MUTATIONS.values() for n in m[3]})
     clean = base / "unmutated"
     _copy_repo(clean)
-    with ThreadPoolExecutor(max_workers=len(MUTATIONS) + 1) as pool:
+    # bounded concurrency: one subprocess per mutant at once can exhaust memory on a
+    # shared machine; M1_MUTATION_WORKERS overrides the default (the CPU count)
+    workers = int(os.environ.get("M1_MUTATION_WORKERS", os.cpu_count() or 4))
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(MUTATIONS) + 1))) as pool:
         baseline = pool.submit(_run, clean, all_nodes)
         futures = [pool.submit(_mutate_and_run, base, mid) for mid in MUTATIONS]
         results = {mid: (code, out) for mid, code, out in (f.result() for f in futures)}

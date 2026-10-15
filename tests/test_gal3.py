@@ -508,7 +508,7 @@ def test_log_exp_roundtrip():
     # with n < 1e-10, so qw = 1 + O(delta) + O(1e-20).  Hence 2 qv/qw = 2 qv (1 + O(delta)):
     # the two returns differ by a RELATIVE O(delta) ~ eps, i.e. a few ulp of a result of
     # size < 2e-10, which is below the rounding of the division itself.  Under the
-    # RELATIVE small-angle bound below (1e-14, threshold 1e-15) it is still equivalent:
+    # RELATIVE small-angle bound below (1e-15, threshold 1e-16) it is still equivalent:
     # measured relative change 0.0 on 40000 R with theta in [1e-14, 1e-2] (qw rounds to
     # exactly 1.0 wherever n < 1e-10).
     r_band = rng(2200)
@@ -530,7 +530,7 @@ def test_log_exp_roundtrip():
     R_small = Rotation.from_rotvec(phi_small).as_matrix()
     worst_small = max(float(np.abs(so3_log(R) - p).max()) for R, p in zip(R_small, phi_small))
     assert worst_small <= 1e-15, worst_small
-    # ... and RELATIVE: |so3_log(R) - log(R)| / |log(R)| <= 1e-14 against a 50-digit mpmath
+    # ... and RELATIVE: |so3_log(R) - log(R)| / |log(R)| <= 1e-15 against a 50-digit mpmath
     # log of the ROUNDED matrix R (theta = atan2(|skew(R)|/2, (tr R - 1)/2)), measured
     # 4.5e-16.  The absolute bound above is blind where theta itself is tiny: moving the
     # n -> 0 branch to n < 1e-5 (pass-7 R03, mutation harness so3_log_small_branch_1e-5)
@@ -550,7 +550,10 @@ def test_log_exp_roundtrip():
         ref = log_mp(R)
         worst_small_rel = max(worst_small_rel,
                               float(np.abs(so3_log(R) - ref).max() / np.linalg.norm(ref)))
-    assert worst_small_rel <= 1e-14, worst_small_rel
+    # Lowered from 1e-14 to 1e-15 (pass-8 M1-F20): the branch moved to n < 1e-7 (pass-8
+    # S08) is 3.31e-15 relative here, against clean 4.30e-16 (headroom 2.3x).  A branch
+    # at n < 1e-8 (relative n^2/3 ~ 3e-17) is below rounding and equivalent.
+    assert worst_small_rel <= 1e-15, worst_small_rel
     # Pass-6 so3_log mutants ruled EQUIVALENT by the verifier, with their measured effect
     # (change of so3_log's output, mutant vs clean) against the tolerance-equivalence
     # threshold (1/10 of the tightest bound on so3_log's output in the affected region):
@@ -690,6 +693,40 @@ def test_gamma1_invertibility_and_taylor_branch():
     assert k2_below <= 5e-13, k2_below
     assert k3_below <= 2e-13, k3_below
     assert c2_below <= 3e-13, c2_below
+    # The Taylor branch IS the 3-term polynomial C24 states (pass-8 M1-F18): accuracy pins
+    # alone admit a perturbed coefficient that stays under them (pass-8 S01: kappa1
+    # t4/719.993, 1.69e-13; S02: kappa3 t4/40319, 9.2e-14; S03: c2 t4/30239, 8.2e-14) and
+    # a MORE accurate 4-term branch (pass-7 R07 / pass-8 S04 / S05: 7.8e-13, 2.6e-13,
+    # 1.5e-13), neither of which is the stated branch.  On 2001 theta in (0, 0.05),
+    # 1500 of them on [0.045, 0.05), each returned coefficient equals the stated
+    # polynomial evaluated in 50-digit mpmath at the same theta to <= 1e-15 relative
+    # (clean: rounding, measured 1.09e-16 / 2.18e-16 / 2.21e-16 / 2.20e-16).  The
+    # polynomials are retyped from the claim, not read from src.
+    with mp.workdps(50):
+        def stated_poly(th):
+            T2 = mp.mpf(th) ** 2
+            T4 = T2 * T2
+            return (mp.mpf(1) / 2 - T2 / 24 + T4 / 720,
+                    mp.mpf(1) / 6 - T2 / 120 + T4 / 5040,
+                    mp.mpf(1) / 24 - T2 / 720 + T4 / 40320,
+                    mp.mpf(1) / 12 + T2 / 720 + T4 / 30240)
+
+        grid_poly = np.concatenate([np.logspace(-12, np.log10(0.045), 500, endpoint=False),
+                                    np.linspace(0.045, 0.05, 1500, endpoint=False),
+                                    [np.nextafter(5e-2, 0.0)]])
+        assert float(grid_poly.max()) < 5e-2 and grid_poly.size == 2001   # INPUT GUARD
+        poly_err = [0.0] * 4
+        for th in grid_poly:
+            got = gal3.gamma_coefficients(float(th))
+            ref = stated_poly(float(th))
+            for i in range(4):
+                poly_err[i] = max(poly_err[i],
+                                  float(abs(mp.mpf(got[i]) - ref[i]) / abs(ref[i])))
+    poly_k1, poly_k2, poly_k3, poly_c2 = poly_err
+    assert poly_k1 <= 1e-15, poly_k1
+    assert poly_k2 <= 1e-15, poly_k2
+    assert poly_k3 <= 1e-15, poly_k3
+    assert poly_c2 <= 1e-15, poly_c2
     # EQUIVALENT MUTANTS (tolerance-equivalence rule: no output moves by more than 1/10
     # of the tightest tolerance any claim states for it):
     # * pass-6 Q17, kappa2 = (1 - s/theta)/theta^2 instead of (theta - s)/(theta^3):

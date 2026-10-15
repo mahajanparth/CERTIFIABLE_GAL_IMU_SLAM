@@ -12,7 +12,9 @@ conventions:
     |g| uniform in (2, 20)), except M1-C53, whose domain fixes gtsam's MakeSharedU gravity. Every
     random-g block and dataset carries an input guard (tests/conftest.py assert_gravity_directions_diverse,
     assert_rand_g_datasets) that the draws are of diverse direction (not all parallel to z or to one
-    line, an x/y swap of g visible) and that the Dt = -0.3 dataset really has Dt < 0 with both DOP853
+    line, an x/y swap of g visible, every component exercised (max |g_k| >= 1 for k = x, y, z, and for
+    blocks of >= 3 draws, including the 4 g of each dataset, unit directions spanning R^3 with smallest
+    singular value / sqrt(m) >= 0.1 -- pass-8 M1-F21)) and that the Dt = -0.3 dataset really has Dt < 0 with both DOP853
     solves run backward.
   rng: 'All sample counts are independent draws from numpy.random.default_rng with a fixed, recorded seed.
     Random rotations: Exp_SO3 of N(0, I3) unless a |phi| range is stated. Random v, p ~ N(0, I3) scaled
@@ -256,8 +258,10 @@ claims:
     scipy with theta log-uniform in [1e-10, 1e-2] (seed 20241012+2201), max |so3_log(R) - phi| <= 1e-15
     (measured 3.5e-18); moving the n -> 0 branch to n < 1e-4 gives 6.5e-13 (mutation harness
     so3_log_small_branch_1e-4, pass-6 Q07). The same 20000 R, RELATIVE error against a 50-digit mpmath
-    log of the rounded R: <= 1e-14 (measured 4.3e-16); moving the branch to n < 1e-5 is 3.2e-11 relative
-    but only 6.5e-16 absolute (mutation harness so3_log_small_branch_1e-5, pass-7 R03). Pass-6
+    log of the rounded R: <= 1e-15 (measured 4.30e-16, headroom 2.3x; 1e-14 before pass 8); moving the
+    branch to n < 1e-5 is 3.2e-11 relative but only 6.5e-16 absolute (mutation harness
+    so3_log_small_branch_1e-5, pass-7 R03), and to n < 1e-7 is 3.31e-15 relative (mutation harness
+    so3_log_small_branch_1e-7, pass-8 S08, M1-F20). Pass-6
     equivalents Q08, Q09, Q12 with measured effects in the test: Q09 by the 8-ulp rounding rule (1.1e-15,
     no worse than clean); Q12 changes only tr in (-0.5, 0], outside the 2.5e-15 band (tr <= -0.9), so
     its threshold is 1e-13 from C52 and it is equivalent (1.6e-15).'
@@ -292,7 +296,14 @@ claims:
     kappa1 <= 1e-12, kappa2 <= 5e-13, kappa3 <= 2e-13, c2 <= 3e-13 (measured 7.75e-13, 2.58e-13,
     1.03e-13, 1.55e-13, the maxima over [0.045, 0.05)); c2 with th^4/30200 gives 3.13e-12 (mutation
     harness c2_taylor_th4_over_30200, pass-7 R05). A former lower bound 5e-13 <= kappa1 error pinned the
-    truncation, not accuracy, and was removed.'
+    truncation, not accuracy, and was removed. The branch IS the stated 3-term polynomial (pass-8 M1-F18):
+    on 2001 theta in (0, 0.05) (500 log-spaced from 1e-12, 1500 on [0.045, 0.05), nextafter(0.05, 0)) each
+    returned coefficient equals the stated polynomial evaluated in 50-digit mpmath to <= 1e-15 relative
+    (measured 1.09e-16 / 2.18e-16 / 2.21e-16 / 2.20e-16 for kappa1 / kappa2 / kappa3 / c2). Mutation
+    harness: gamma_kappa1_th4_over_719.993 (S01, 1.69e-13), gamma_kappa3_th4_over_40319 (S02, 9.2e-14),
+    gamma_c2_th4_over_30239 (S03, 8.2e-14), and the more accurate 4-term branches, which are not the
+    stated branch: gamma_kappa1_4_terms (pass-7 R07, 7.75e-13), gamma_kappa2_4_terms (S04, 2.58e-13),
+    gamma_c2_4_terms (S05, 1.55e-13).'
   domain: 'Gamma1 singular exactly at theta = 2*pi*k, k >= 1. Closed-form kappa3 and c2 lose all precision
     below theta ~ 1e-4. Stated constraint on the switch point: THETA_SMALL = 5e-2 is load-bearing. Just below
     the switch the binding error is the 3-term Taylor truncation (relative error ~ theta^6), not the 1 - cos(theta)
@@ -612,7 +623,9 @@ claims:
     A^2 exp(T A) + O(dt) with A = xi^ written by hand, T = 0.4, dt = 1e-4, same 1000 configurations: mismatch
     <= 1e-2 (measured 7.0e-4; a semi-implicit update gives ~2.9 -- mutation harness: euler_increment_semi_implicit);
     the predicted coefficient max|(T/2) A^2 exp(TA)| = 2.970 matches (b)''s worst err/dt to 2e-6 relative (asserted
-    1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). Equivalent mutant (proof
+    1%); and D_n = (I5 + dt A)^n to 2.1e-13 on 20 configurations (asserted <= 1e-11). (b'''') The same
+    identity at SIGNED dt = -1e-4, n = 4000 (T = -0.4), 20 configurations (seed 20241012+4101): <= 1e-11;
+    mutation harness euler_increment_dp_abs_dt (pass-8 S30, advisory A1). Equivalent mutant (proof
     in the test): dR + dR W dt -> dR (I3 + W dt) (pass-3 V39). (c) Time-varying stream (50 instances, Dt =
     0.4) vs DOP853: err 5.2e-5 at dt = 1e-5 (<= 1e-4), ratio err(2e-5)/err(1e-5) = 2.000 (in [1.8, 2.2]); input
     guard on the stream: left- vs right-invariant rotation solutions differ by 0.44 (>= 1e-2). Separately assert
@@ -657,9 +670,11 @@ claims:
     tolerance-equivalence rule N15 and pass-6 Q40 (1.1e-15 change each) and Q03 (1.0e-15) sit at the
     1e-15 threshold of the 1e-14 bounds; pass-7 rules them EQUIVALENT (Q03 9.99e-16 <= 1e-15; N15 and
     Q40 at rounding level, <= 8 ulp, no worse than clean). Both Rodrigues on theta in [0.04, 0.05),
-    nextafter(0.05, 0) and [0.05, 0.052] (460 angles, seed 20241012+4201) vs mpmath: <= 2e-15 each
-    (measured 1.0e-15 / 1.0e-15); a th^6/10000 term in (1 - cos th)/th^2 gives 4.9e-15 (mutation
-    harness so3_exp_c_th6_over_10000, pass-7 R01; so3_exp_batch_c_th6_over_10000, R32). Input guard
+    nextafter(0.05, 0) and [0.05, 0.052] (460 angles, seed 20241012+4201) vs mpmath: <= 1.3e-15 each
+    (measured 9.99e-16 / 9.99e-16, headroom 1.30x; 2e-15 before pass 8); a th^6/10000 term in (1 - cos
+    th)/th^2 gives 4.9e-15 (mutation harness so3_exp_c_th6_over_10000, pass-7 R01;
+    so3_exp_batch_c_th6_over_10000, R32) and th^6/60000 gives 1.665e-15 (so3_exp_c_th6_over_60000,
+    pass-8 S06; so3_exp_batch_c_th6_over_60000, S07; M1-F19). Input guard
     for the dp series check: min |dp|_inf 0.0736 >= 1e-3, from the test-local series.'
   domain: '(omega, a) constant on the interval. Dt is any real number (tested for |Dt| in (0.02, 1.3),
     both signs).'
@@ -724,7 +739,10 @@ claims:
     with durations of either sign) against the hand-written component formulas at <= 1e-14 (measured
     0.0). (The former check that the dv_jk * Dt_ij form misses by >= 1e-3 was deleted in pass 6: once
     the 1e-14 check passes it is a property of the random data; a src chain using that form is killed by
-    the identity check, mutation harness chain_swapped_duration.)'
+    the identity check, mutation harness chain_swapped_duration.) Per-step streams whose leading length
+    is not n (omega or acc, one too long or one too short) raise ValueError in integrate_increment,
+    euler_increment and integrate_truth (mutation harness inputs_no_acc_length_check, pass-8 M06,
+    advisory A2).'
   domain: Total. Requires the increments to be adjacent and expressed in the same body frame convention.
   verdict: CONFIRMED
   attack: see docs/verification/m1-gal3-mechanics.md
