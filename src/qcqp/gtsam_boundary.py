@@ -45,7 +45,8 @@ def nav_to_gal3(ns: gtsam.NavState, t: float = 0.0) -> gtsam.Gal3:
 
 def make_params(g_w, sigma_g, sigma_a, sigma_int):
     g_w = np.asarray(g_w, dtype=float)
-    assert g_w[0] == 0.0 and g_w[1] == 0.0 and g_w[2] < 0, "MakeSharedU expects z-up gravity"
+    if not (g_w.shape == (3,) and g_w[0] == 0.0 and g_w[1] == 0.0 and g_w[2] < 0):
+        raise ValueError(f"MakeSharedU expects z-up gravity (0, 0, -g) with g > 0, got {g_w!r}")
     params = gtsam.PreintegrationParams.MakeSharedU(float(-g_w[2]))
     params.setGyroscopeCovariance(sigma_g**2 * np.eye(3))
     params.setAccelerometerCovariance(sigma_a**2 * np.eye(3))

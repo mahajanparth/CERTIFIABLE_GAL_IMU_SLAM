@@ -714,6 +714,135 @@ def test_package_exports():
     assert np.array_equal(I.bbar, np.zeros(6)) and len(I.edges) == 2
 
 
+@pytest.mark.claim("M3-C01")
+def test_truth_state_blocks_are_independent_arrays():
+    """truth_state hands out a mutable State: every block is its own array, sharing memory with
+    neither another keyframe's block nor the Instance (an in-place edit of the returned state
+    must not reach b_1, b_2, Instance.b_true, Instance.truth or a later truth_state call).
+    A FRESH instance is used so that a regression cannot poison the lru-cached one."""
+    I = INST.build_instance(LIT.BIAS_TRUE.copy())
+    tr = truth_ref()
+    st = LF.truth_state(I)
+    for f in ("R", "v", "p", "b"):
+        blocks = getattr(st, f)
+        for k in range(3):
+            for k2 in range(k + 1, 3):
+                assert not np.shares_memory(blocks[k], blocks[k2]), (f, k, k2)
+    for k in range(3):
+        assert not np.shares_memory(st.b[k], I.b_true), k
+        for q, f in enumerate(("R", "v", "p")):
+            assert not np.shares_memory(getattr(st, f)[k], I.truth[k][q]), (f, k)
+    for k in range(3):                                      # in-place edits of the returned state
+        st.b[k][0] += 1.0
+        st.v[k][0] += 1.0
+        st.p[k][0] += 1.0
+        st.R[k][0, 0] += 1.0
+    assert np.array_equal(I.b_true, LIT.BIAS_TRUE)
+    fresh = LF.truth_state(I)
+    for k in range(3):
+        assert np.array_equal(fresh.b[k], LIT.BIAS_TRUE), k
+        assert st.b[k][0] == LIT.BIAS_TRUE[0] + 1.0, k      # each edit applied exactly once
+        for got, want in ((fresh.R[k], tr.R[k]), (fresh.v[k], tr.v[k]), (fresh.p[k], tr.p[k]),
+                          (I.truth[k][0], tr.R[k]), (I.truth[k][1], tr.v[k]), (I.truth[k][2], tr.p[k])):
+            assert np.abs(got - want).max() <= 1e-9 * max(1.0, np.abs(want).max()), k
+
+
+#: the iso (base) term names, RETYPED from the M3-C24 term list (not read from src)
+ISO_TERM_NAMES = ["imu0.rot", "imu0.vel", "imu0.pos", "imu1.rot", "imu1.vel", "imu1.pos",
+                  "prior.R0", "prior.v0", "prior.p0", "gnss1", "gnss2", "rw0", "rw1"]
+
+
+@pytest.mark.claim("M3-C24")
+def test_cost_terms_default_variant_is_iso():
+    """CO.terms(inst) with no variant / layout is the iso base cost: the 13 iso terms, and its Q
+    reproduces the test-side iso 5x5-residual cost J_direct (not the partial weighting)."""
+    for which in ("true", "zero"):
+        T0 = CO.terms(inst(which))
+        assert [t.name for t in T0] == ISO_TERM_NAMES, which
+        Q = CO.assemble_Q(T0)
+        assert Q.shape == (124, 124)
+        rng = np.random.default_rng(241)
+        r = ref(which)
+        worst = sep = 0.0
+        for _ in range(50):
+            st = random_state(rng)
+            z = z_ref(st, r)
+            Jd, Jp = J_direct(st, r, imu="iso"), J_direct(st, r, imu="partial")
+            worst = max(worst, abs(z @ Q @ z - Jd) / max(1.0, Jd))
+            sep = max(sep, abs(Jp - Jd) / max(1.0, Jd))
+        assert worst <= 1e-12, (which, worst)
+        assert sep > 1e-6, (which, sep)                     # the check can tell iso from partial
+
+
+@pytest.mark.claim("M3-C24")
+def test_make_params_rejects_non_z_up_gravity():
+    """make_params guards GTSAM's MakeSharedU convention (gravity (0, 0, -g), g > 0) with an
+    explicit ValueError (not an assert, which python -O strips); z-up gravity is passed through."""
+    import src.qcqp.gtsam_boundary as GB
+    for g in ([0.0, 0.0, 9.81], [0.1, 0.0, -9.81], [0.0, -0.1, -9.81], [0.0, 0.0, 0.0],
+              [0.0, 0.0, np.nan]):
+        with pytest.raises(ValueError, match="z-up"):
+            GB.make_params(g, 1e-3, 1e-2, 1e-4)
+    params = GB.make_params([0.0, 0.0, -9.81], 1e-3, 1e-2, 1e-4)
+    assert np.array_equal(np.asarray(params.n_gravity), np.array([0.0, 0.0, -9.81]))
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_s_guard_floor_below_1e_minus_300():
+    """The documented floor max(max|z|, 1e-300): below max|z| = 1e-300 the threshold stays at
+    1e-12 * 1e-300 = 1e-312 (literals retyped), so tiny-but-nonzero s still raises there."""
+    for project in (False, True):
+        z = np.zeros(124)
+        z[9] = 1e-301                                          # max|z| = 1e-301 < floor
+        z[S_IDX] = 5e-313                                      # > 1e-12 max|z|, but < 1e-312
+        assert not _decodes(z, project=project)
+        z[S_IDX] = 2e-312                                      # above the floored threshold
+        assert _decodes(z, project=project)
+        z = np.zeros(124)
+        z[S_IDX] = 1e-320                                      # only s is nonzero
+        assert not _decodes(z, project=project)
+        z[30] = 1e-310
+        z[S_IDX] = 1e-312 / 4                                  # max|z| = 1e-310 < floor
+        assert not _decodes(z, project=project)
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_large_scales_decode():
+    """c z decodes to the state of z at very large |c| too (no upper cut-off on s)."""
+    zt = z_ref(truth_ref(), ref("zero"))
+    st = truth_ref()
+    assert np.abs(zt).max() < 10.0                             # so 1e307 * zt stays finite
+    for c in (1e100, 1e300, 1e305, -1e305, 1e307):
+        for project in (False, True):
+            d = LF.state_of_z(c * zt, project=project)
+            for k in range(3):
+                for got, want in ((d.R[k], st.R[k]), (d.v[k], st.v[k]), (d.p[k], st.p[k]),
+                                  (d.b[k], LIT.BIAS_TRUE)):
+                    assert np.abs(got - want).max() <= 1e-12 * max(1.0, np.abs(want).max()), c
+
+
+@pytest.mark.claim("M3-C01")
+def test_project_so3_det_correction_is_exact():
+    """project_so3(A) = U diag(1, 1, +-1) V^T with the correction EXACTLY +-1 (chosen here from
+    the sign of det(U V^T), test-side SVD): over 1e4 random A it matches to <= 2 ulp of 1 and its
+    orthogonality / det errors stay <= 4e-15 (measured clean max 2.7e-15 / 2.9e-15; a correction
+    of det(U V^T) = +-(1 + few eps) instead of +-1 reaches 6.2e-15 / 5.8e-15 and differs by 10 ulp)."""
+    rng = np.random.default_rng(115)
+    worst_ref = worst_orth = worst_det = 0.0
+    for _ in range(10000):
+        A = rng.standard_normal((3, 3))
+        U, _, Vt = np.linalg.svd(A)
+        d3 = 1.0 if np.linalg.det(U @ Vt) > 0 else -1.0
+        Rref = U @ np.diag([1.0, 1.0, d3]) @ Vt
+        R = LF.project_so3(A)
+        worst_ref = max(worst_ref, np.abs(R - Rref).max())
+        worst_orth = max(worst_orth, np.abs(R.T @ R - I3).max())
+        worst_det = max(worst_det, abs(np.linalg.det(R) - 1.0))
+    assert worst_ref <= 4.5e-16, worst_ref
+    assert worst_orth <= 4e-15, worst_orth
+    assert worst_det <= 4e-15, worst_det
+
+
 @pytest.mark.claim("M3-C02")
 def test_c02_count_and_jside_velocity_lifting_is_needed():
     assert 15 * 3 + 6 * 3 + 24 * 2 + 1 == 112

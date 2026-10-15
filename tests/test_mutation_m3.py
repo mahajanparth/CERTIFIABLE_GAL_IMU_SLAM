@@ -59,6 +59,12 @@ K_COPY = T + "test_state_copy_is_independent"
 K_VARIANT = T + "test_cost_terms_rejects_unknown_variant"
 K_EXPORTS = T + "test_package_exports"
 K_JEXACT = T + "test_c04_instance_J_structural_zeros_exact_and_J_accuracy"
+K_TRUTHCOPY = T + "test_truth_state_blocks_are_independent_arrays"
+K_DEFVARIANT = T + "test_cost_terms_default_variant_is_iso"
+K_GRAVITY = T + "test_make_params_rejects_non_z_up_gravity"
+K_FLOOR = T + "test_decoder_s_guard_floor_below_1e_minus_300"
+K_LARGE = T + "test_decoder_large_scales_decode"
+K_DETSIGN = T + "test_project_so3_det_correction_is_exact"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -213,6 +219,22 @@ MUTANTS = [
      "NaN outside s propagates; inf gives the 's is zero' message", [K_NONFINITE]),
     ("gb-fd-step-1e-3", "gtsam_boundary.py", "h: float = 0.1)", "h: float = 1e-3)",
      "the pre-F05 FD step (accurate only to ~6e-13)", [K_JEXACT]),
+    # pass-4 survivors (M3-F06)
+    ("p4-lf-truth-b-alias", "lifting.py", "[inst.b_true.copy() for _ in inst.truth]", "[inst.b_true for _ in inst.truth]",
+     "truth_state's biases are one array, the instance's own b_true", [K_TRUTHCOPY]),
+    ("p4-lf-truth-v-alias", "lifting.py", "[t[1].copy() for t in inst.truth]", "[t[1] for t in inst.truth]",
+     "truth_state's velocities alias Instance.truth", [K_TRUTHCOPY]),
+    ("p4-co-default-partial", "cost.py", 'variant: str = "iso"', 'variant: str = "partial"',
+     "terms(inst) silently returns the partial (C33) weighting", [K_DEFVARIANT]),
+    ("p4-gb-no-gravity-guard", "gtsam_boundary.py",
+     'raise ValueError(f"MakeSharedU expects z-up gravity (0, 0, -g) with g > 0, got {g_w!r}")', "pass",
+     "non-z-up gravity silently accepted (x/y dropped, sign lost)", [K_GRAVITY]),
+    ("p4-lf-floor-zero", "lifting.py", "if abs(s) <= S_FLOOR * max(zmax, 1e-300):",
+     "if abs(s) <= S_FLOOR * max(zmax, 0.0):", "decoder guard floor 1e-300 dropped", [K_FLOOR]),
+    ("p4-lf-guard-ge", "lifting.py", "if abs(s) <= S_FLOOR * max(zmax, 1e-300):",
+     "if abs(s) <= S_FLOOR * max(zmax, 1e-300) or abs(s) > 1e300:", "decoder rejects large |s|", [K_LARGE]),
+    ("p4-lf-project-det-nosign", "lifting.py", "np.sign(np.linalg.det(U @ Vt))", "np.linalg.det(U @ Vt)",
+     "det correction +-(1 + few eps) instead of exactly +-1", [K_DETSIGN]),
 ]
 
 KILLERS = sorted({k for m in MUTANTS for k in m[5]})
