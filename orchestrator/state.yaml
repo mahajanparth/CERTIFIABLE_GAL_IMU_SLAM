@@ -1004,11 +1004,11 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M3-S03
-    caught: true
+    id: M3-S04
+    caught: null
     published: false
   agent_runs:
   - role: deriver
@@ -1100,10 +1100,20 @@ milestones:
   - role: implementer
     agent_id: impl-M3-005
     started: '2026-10-15T22:22:06+00:00'
+    finished: '2026-10-15T22:40:44+00:00'
+    outcome: completed
+    note: 'test_qcqp 66 passed (slow incl.); harness 68/68 killed (56 + 12 new). s-guard threshold/tie/scale
+      sweep, State.copy independence, unknown-variant ValueError, package exports, exact J zeros. src:
+      decoder rejects non-finite z; bias_jacobian h 1e-3 -> 0.1 (J error 2.3e-13..6.1e-13 -> 6.3e-15..1.2e-14;
+      family residuals at exact-J lifts 1.5e-13 -> 3.3e-15); c31 tautology replaced by closed form. Commit
+      9bbf3a3.'
+  - role: verifier
+    agent_id: verify-M3-004
+    started: '2026-10-15T22:40:44+00:00'
     finished: null
     outcome: running
-    note: 'Kill the ten F05 survivors: s ~ 0 guard threshold/tie/scale, State.copy, unknown variant, exports,
-      J structural zeros; non-finite z guard.'
+    note: Fourth pass with a fresh planted claim; rules on F05 (9bbf3a3) including the decoder and FD-step
+      src changes.
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1163,6 +1173,7 @@ milestones:
       == 0 and J[9] == 0 exactly (C04). Also: a NaN entry in z outside s does not raise and propagates;
       an inf entry raises with a misleading ''s is zero'' message -- reject non-finite z explicitly. One
       residual tautology (report Sec. 5).'
+    note: Remediated in 9bbf3a3; awaiting verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
