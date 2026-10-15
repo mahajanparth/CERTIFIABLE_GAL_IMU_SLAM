@@ -1689,7 +1689,10 @@ PASS9_MUTANTS = [
      (_P9_JAC,), ("at the default eps on the high-rate edge |w| = 2.55",
                   "CayleyFactor.from_edge(raw)")),
     # the pre-pass-9 default FD_EPS = 1e-6 (round-off-limited): 1.1e-8 .. 1.9e-8 vs 1e-8
-    # (thin, 1.9x; not one of the pass-9 survivors, kept to show the old default fails).
+    # in this test's metric; 1.0x-1.2x in the pass-10 verifier's.  EQUIVALENT under the
+    # owner's rule (largest Jacobian change 4.4e-8 relative vs C21's 1e-7, pass 10) and
+    # killed only by a round-off-margined assertion, so this kill is NOT relied on: it
+    # is kept to document that the old default fails here, and is not in PASS9_REQUIRED.
     ("P23-old", "preintegration_forster.py",
      [("FD_EPS = 3e-5\n", "FD_EPS = 1e-6\n")],
      (_P9_JAC,), ("at the default eps on the high-rate edge",)),
@@ -1747,3 +1750,131 @@ def test_pass9_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS9_REQUIRED <= {m[0] for m in PASS9_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-10 sweep (docs/verification/stage-b_m2-baselines_pass10.md
+# Sec. 5.4, finding M2-F28), replayed as REAL FILE EDITS.  Every killer is a check against
+# an independent reference (complex step, 50-digit mpmath derivatives of ``expm`` and of
+# the Cayley definition, retyped residuals), and every kill must land on the intended
+# assertion's ``E `` line.  Measured effects (vs the bound) are in the comments.
+# ======================================================================================
+
+_P10_JR = _ID + "test_f28_right_jacobians_against_mpmath_across_angles"
+_P10_COV = _ID + "test_f28_covariance_across_per_step_angles_against_complex_step"
+_P10_NOISE = _ID + "test_f28_has_noise_is_any_positive_density_on_any_axis"
+_P10_HALVES = _ID + "test_f28_eq21b_eq21c_every_combination_of_bias_halves"
+_P10_LARGE_V = _ID + "test_f28_eq21c_at_large_velocity_and_duration"
+
+_P10_RRJ_DOC = "        ``Exp``'s here while integrating with ``Cay``).\"\"\"\n"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS10_MUTANTS = [
+    # Jr's K^2 coefficient x (1 + 1e-8): Jr 7.8e-9 abs at |phi| = 3 vs 1e-14; Eq. (63)
+    # 8.2e-10 block-relative at 0.5 rad/step vs 1e-10.
+    ("Y18", "preintegration_forster.py",
+     [("+ ((th - np.sin(th)) / th**3) * (K @ K))",
+       "+ ((th - np.sin(th)) / th**3) * (K @ K) * (1.0 + 1e-8))")],
+     (_P10_JR, _P10_COV), ("so3_right_jacobian at |phi| = 3.0e+00 vs mpmath",
+                           "ForsterPreintegration Eq. (63), gyro noise alone, "
+                           "per-step angle 0.5 (dt = 0.05)")),
+    # has_noise ignores densities <= 1e-100 (both sources): flag False at 1e-100 .. 5e-324
+    # and covariance 0 at 1e-101 .. 1e-150 (block-relative 1.0 vs 1e-10).
+    ("Y20", "preintegration_forster.py",
+     [("return bool(np.any(np.asarray(self.sigma_g) > 0.0)",
+       "return bool(np.any(np.asarray(self.sigma_g) > 1e-100)"),
+      ("or np.any(np.asarray(self.sigma_a) > 0.0))", "or np.any(np.asarray(self.sigma_a) > 1e-100))")],
+     (_P10_NOISE,), ("ForsterPreintegration with sigma_g[0] = 1.0e-101 alone: has_noise is False",
+                     "CayleyPreintegration with sigma_a[2] = 1.0e-140 alone: Eq. (63) over 14 steps")),
+    # accel densities <= 1e-60 ignored: flag False and covariance 0 (1.0 vs 1e-10).
+    ("Y58", "preintegration_forster.py",
+     [("or np.any(np.asarray(self.sigma_a) > 0.0))", "or np.any(np.asarray(self.sigma_a) > 1e-60))")],
+     (_P10_NOISE,), ("ForsterPreintegration with sigma_a[1] = 1.0e-61 alone: has_noise is False",
+                     "ForsterPreintegration with sigma_a[0] = 1.0e-61 alone: Eq. (63) over 14 steps")),
+    # B2 raw noise input through Exp's Jr below |phi| = 1e-4: 1.35e-9 at 9e-5 rad/step vs 1e-10.
+    ("Y24", "preintegration_cayley.py",
+     [("        return cay_right_jacobian(phi)\n",
+       "        if np.linalg.norm(phi) < 1e-4:\n            return so3_right_jacobian(phi)\n"
+       "        return cay_right_jacobian(phi)\n")],
+     (_P10_COV,), ("CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 9e-05",)),
+    # ... above |phi| = 1e-2: 6.7e-5 (2e-2 rad/step) .. 5.2e-2 (0.5) vs 1e-10.
+    ("Y55", "preintegration_cayley.py",
+     [("        return cay_right_jacobian(phi)\n",
+       "        if np.linalg.norm(phi) > 1e-2:\n            return so3_right_jacobian(phi)\n"
+       "        return cay_right_jacobian(phi)\n")],
+     (_P10_COV,), ("CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 0.02",)),
+    # B1 noise input first-order I - K/2 above |phi| = 1e-2: 1.3e-4 .. 8.6e-2 vs 1e-10.
+    ("Y56", "preintegration_forster.py",
+     [(_P10_RRJ_DOC + "        return so3_right_jacobian(phi)\n",
+       _P10_RRJ_DOC + "        if np.linalg.norm(phi) > 1e-2:\n"
+       "            return np.eye(3) - 0.5 * hat(phi)\n        return so3_right_jacobian(phi)\n")],
+     (_P10_COV,), ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 0.02",)),
+    # rotation transition A_RR = I below |w dt| = 1e-4 (B1 and B2): 3.8e-7 (1e-7 rad/step)
+    # .. 3.4e-4 (9e-5) vs 1e-10.
+    ("Y57", "preintegration_forster.py",
+     [("        A[0:3, 0:3] = dR_step.T\n",
+       "        A[0:3, 0:3] = np.eye(3) if np.linalg.norm(w * dt) < 1e-4 else dR_step.T\n")],
+     (_P10_COV,), ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 1e-07",
+                   "CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 9e-05")),
+    # Eq. (21b) applies A_va db_a only when db_g is given: 0.18 abs vs 1e-12.
+    ("Y30", "preintegration_cayley.py",
+     [("    if A_va is not None and db_a is not None:", "    if A_va is not None and db_g is not None:")],
+     (_P10_HALVES,), ("velocity_residual_eq21b (Dt=0.2, accel half only)",)),
+    # Eq. (21c), same for A_pa: 0.29 abs vs 1e-12.
+    ("Y59", "preintegration_cayley.py",
+     [("    if A_pa is not None and db_a is not None:", "    if A_pa is not None and db_g is not None:")],
+     (_P10_HALVES,), ("position_residual_eq21c (Dt=0.73, accel half only)",)),
+    # Eq. (21c) v_i Dt x (1 + 1e-13): 8.3e-12 abs at |v_i| = 47 m/s, Dt = 2 s vs 1e-12
+    # (clean is exactly 0 there).
+    ("Y31", "preintegration_cayley.py",
+     [("- np.asarray(v_i) * Dt - 0.5", "- np.asarray(v_i) * Dt * (1.0 + 1e-13) - 0.5")],
+     (_P10_LARGE_V,), ("position_residual_eq21c at large v_i Dt",)),
+]
+
+PASS10_REQUIRED = {"Y18", "Y20", "Y24", "Y30", "Y31", "Y55", "Y56", "Y57", "Y58", "Y59"}
+
+
+@pytest.fixture(scope="module")
+def pass10_runs(tmp_path_factory):
+    """The unmutated control and every PASS10 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS10_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass10_control"), killers)
+    assert code == 0, f"control copy fails a pass-10 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass10_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS10_MUTANTS))
+
+
+@pytest.mark.claim("M2-F28")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS10_MUTANTS,
+                         ids=[m[0] for m in PASS10_MUTANTS])
+def test_pass10_mutant_is_killed_as_a_file_edit(pass10_runs, mutant_id, src_file, edit,
+                                                killers, messages):
+    """Each pass-10 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass10_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F28")
+def test_pass10_killers_are_reference_checks():
+    """No pass-10 killer is a change detector: every one lives in the input-dependence
+    module (never this file), and every listed survivor is replayed."""
+    for m in PASS10_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS10_REQUIRED == {m[0] for m in PASS10_MUTANTS}
