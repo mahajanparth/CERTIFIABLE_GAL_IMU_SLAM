@@ -1878,3 +1878,116 @@ def test_pass10_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS10_REQUIRED == {m[0] for m in PASS10_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-11 sweep (docs/verification/stage-b_m2-baselines_pass11.md
+# Sec. 5.4, finding M2-F29), replayed as REAL FILE EDITS.  Z07-Z11 sat just outside the
+# per-step angle band [1e-7, 0.5] rad; Z30 sat under test_c11's sample (|Gamma| <~ 0.09).
+# Their pass-11 "kills" were edit-anchor fixture errors and an in-test copy of Eq. (22b);
+# those are change detectors.  Every killer below is a check against an independent
+# reference (complex step, retyped Eq. (19)), and every kill must land on the intended
+# assertion's ``E `` line.  Measured effects (vs the bound) are in the comments.
+# ======================================================================================
+
+_P11_STATIONARY = _ID + "test_f29_covariance_of_a_stationary_imu_over_4000_steps"
+_P11_EQ22B = _ID + "test_f29_eq22b_matches_a_retyped_eq19_at_large_gamma"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS11_MUTANTS = [
+    # B1 noise input first-order I - K/2 above |phi| = 0.6: 0.18 (0.7 rad/step), 0.36 (1),
+    # 1.9 (2), 8.2 (3) vs 1e-10.
+    ("Z07", "preintegration_forster.py",
+     [(_P10_RRJ_DOC + "        return so3_right_jacobian(phi)\n",
+       _P10_RRJ_DOC + "        if np.linalg.norm(phi) > 0.6:\n"
+       "            return np.eye(3) - 0.5 * hat(phi)\n        return so3_right_jacobian(phi)\n")],
+     (_P10_COV,), ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 0.7 "
+                   "(dt = 0.07) over 12 steps",)),
+    # A_RR = I below |w dt| = 1e-8 (B1 and B2): 1.9e-6 at 3e-9 rad/step x 1000, 3.4e-8 at
+    # 9e-9 x 12, 7.7e-6 at 5e-9 x 4000 vs 1e-10.
+    ("Z08", "preintegration_forster.py",
+     [("        A[0:3, 0:3] = dR_step.T\n",
+       "        A[0:3, 0:3] = np.eye(3) if np.linalg.norm(w * dt) < 1e-8 else dR_step.T\n")],
+     (_P10_COV, _P11_STATIONARY),
+     ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 3e-09 "
+      "(dt = 0.0025) over 1000 steps",
+      "CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 9e-09",
+      "CayleyPreintegration(raw) Eq. (63), stationary IMU, per-step angle 5e-09 over 4000")),
+    # A_RR = I above |w dt| = 0.6 (B1 and B2): 2.3 .. 34 at 0.7 .. 3 rad/step vs 1e-10.
+    ("Z09", "preintegration_forster.py",
+     [("        A[0:3, 0:3] = dR_step.T\n",
+       "        A[0:3, 0:3] = np.eye(3) if np.linalg.norm(w * dt) > 0.6 else dR_step.T\n")],
+     (_P10_COV,), ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 0.7",
+                   "CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 3 "
+                   "(dt = 0.3)")),
+    # gyro noise input I instead of Jr / J_Cay below |w dt| = 1e-8: 1.0e-8 at 9e-9 rad/step,
+    # 2.8e-9 at 3e-9 x 1000, 3.5e-9 at 5e-9 x 4000 vs 1e-10.
+    ("Z10", "preintegration_forster.py",
+     [("        Bg[0:3, :] = Jr * dt\n",
+       "        Bg[0:3, :] = (np.eye(3) if np.linalg.norm(w * dt) < 1e-8 else Jr) * dt\n")],
+     (_P10_COV, _P11_STATIONARY),
+     ("ForsterPreintegration Eq. (63), gyro noise alone, per-step angle 9e-09",
+      "CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 3e-09",
+      "ForsterPreintegration Eq. (63), stationary IMU, per-step angle 5e-09 over 4000")),
+    # B2 raw noise input through Exp's Jr above |phi| = 0.6: 0.092 (0.7 rad/step) .. 1.7 (3)
+    # vs 1e-10.
+    ("Z11", "preintegration_cayley.py",
+     [("        return cay_right_jacobian(phi)\n",
+       "        if np.linalg.norm(phi) > 0.6:\n            return so3_right_jacobian(phi)\n"
+       "        return cay_right_jacobian(phi)\n")],
+     (_P10_COV,), ("CayleyPreintegration(raw) Eq. (63), gyro noise alone, per-step angle 0.7",)),
+    # Eq. (22b) Rbreve's Gamma/2 x (1 + 1e-12): 1.2e-12 abs at |Gamma| ~ 1 vs 1e-13 (clean
+    # 8.9e-16); test_c11 (|Gamma| <~ 0.09) does NOT see it (6.6e-14 there).
+    ("Z30", "preintegration_cayley.py",
+     [("    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0)",
+       "    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0 * (1.0 + 1e-12))")],
+     (_P11_EQ22B,), ("rotation_residual_eq22b at large Gamma vs retyped Eq. (19)",)),
+]
+
+PASS11_REQUIRED = {"Z07", "Z08", "Z09", "Z10", "Z11", "Z30"}
+
+
+@pytest.fixture(scope="module")
+def pass11_runs(tmp_path_factory):
+    """The unmutated control and every PASS11 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS11_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass11_control"), killers)
+    assert code == 0, f"control copy fails a pass-11 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass11_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS11_MUTANTS))
+
+
+@pytest.mark.claim("M2-F29")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS11_MUTANTS,
+                         ids=[m[0] for m in PASS11_MUTANTS])
+def test_pass11_mutant_is_killed_as_a_file_edit(pass11_runs, mutant_id, src_file, edit,
+                                                killers, messages):
+    """Each pass-11 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass11_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F29")
+def test_pass11_killers_are_reference_checks():
+    """No pass-11 killer is a change detector: every one lives in the input-dependence
+    module (never this file), and every listed survivor is replayed."""
+    for m in PASS11_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS11_REQUIRED == {m[0] for m in PASS11_MUTANTS}

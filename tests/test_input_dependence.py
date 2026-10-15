@@ -1975,11 +1975,15 @@ def _chat(v):
 def _cexp(phi):
     """``Exp`` as the power series ``I + a(t) K + b(t) K^2``, ``t = phi . phi``,
     ``a = sum (-t)^n / (2n+1)!``, ``b = sum (-t)^n / (2n+2)!``: analytic in ``phi``, no
-    ``sin(th)/th`` cancellation, and no ``src`` code.  Converges to rounding for
-    ``|phi| <= 2`` with 30 terms (every per-step angle used here is < 0.1)."""
+    ``sin(th)/th`` cancellation, and no ``src`` code.  With 30 terms it converges to
+    rounding for ``|phi| <= 4`` (M2-F29 widened the guard from ``|phi| <= 2`` so the
+    per-step angle sweep can reach 3 rad): the largest series term is ``t^n / (2n+1)!``
+    <= 2.7 at ``t = 16``, so cancellation costs < 1e-15 absolute, and the truncation
+    ``16^30 / 61!`` is ~1e-47.  Pinned against 50-digit mpmath ``expm`` up to 3.14 rad by
+    :func:`test_f29_complex_series_exp_against_mpmath`."""
     phi = np.asarray(phi, dtype=complex)
     t = phi @ phi
-    assert abs(t) <= 4.0, "series Exp used outside its accuracy range"
+    assert abs(t) <= 16.0, "series Exp used outside its accuracy range"
     a = b = 0.0
     term_a, term_b = 1.0 + 0j, 0.5 + 0j          # 1/1!, 1/2!
     for n in range(30):
@@ -2015,9 +2019,14 @@ def _ceuler(gyro, accel, dt, bias, retract=_cexp, start=None):
 
 
 def _cs_chart(R0, out):
-    """Forster-chart derivative ``(vee(R0^T dR), dv, dp)`` of a complex-stepped output."""
+    """Forster-chart derivative ``(vee(R0^-1 dR), dv, dp)`` of a complex-stepped output."""
     dR = np.imag(out[0]) / CS_H
-    X = R0.T @ dR
+    # ``R0^-1``, not ``R0^T`` (M2-F29): over 1000 retyped steps at 3e-9 rad the reference
+    # state drifts 1.1e-14 off orthogonality, and with ``R0^T`` that drift entered the
+    # chart, putting the reference itself 7.0e-12 block-relative off a 40-digit mpmath
+    # covariance (src: 9.0e-15).  ``R0^-1 dR`` is the exact right-chart derivative of
+    # ``R0 Exp(d)`` whether or not ``R0`` is orthogonal.
+    X = np.linalg.solve(R0, dR)
     return np.concatenate([ivee(0.5 * (X - X.T)), np.imag(out[1]) / CS_H,
                            np.imag(out[2]) / CS_H])
 
@@ -2424,11 +2433,17 @@ def _unit_rows(X):
     return X / np.linalg.norm(X, axis=1)[:, None]
 
 
-#: ``(per-step angle |(omega - b_g) dt|, dt)``: angles from 1e-7 to 0.5 rad on both sides
-#: of every branch point in the noise-input / transition code (1e-4, 1e-2), at body rates
-#: from 1e-4 rad/s (a stationary IMU) to 10 rad/s
-F28_STEP_ANGLES = ((1e-7, 1e-3), (1e-6, 1e-3), (1e-5, 1e-4), (5e-5, 1e-4), (9e-5, 1e-3),
-                   (2e-2, 5e-3), (0.1, 1e-2), (0.25, 2.5e-2), (0.5, 5e-2))
+#: ``(per-step angle |(omega - b_g) dt|, dt[, steps])`` (12 steps unless given): angles
+#: from 3e-9 to 3 rad on both sides of every branch point in the noise-input / transition
+#: code (1e-8, 1e-4, 1e-2), at body rates from 1.2e-6 rad/s (a stationary IMU) to 10 rad/s.
+#: M2-F29 added the two ends: 3e-9 (over 1000 steps) and 9e-9 rad sit INSIDE the 1e-8
+#: series branch of ``Exp`` / ``Jr``, the normal regime of a stationary, well-calibrated
+#: IMU; 0.7, 1, 2 and 3 rad reach the domain edge (nothing restricts B1's or B2's per-step
+#: angle to <= 0.5 rad).
+F28_STEP_ANGLES = ((3e-9, 2.5e-3, 1000), (9e-9, 1e-3),
+                   (1e-7, 1e-3), (1e-6, 1e-3), (1e-5, 1e-4), (5e-5, 1e-4), (9e-5, 1e-3),
+                   (2e-2, 5e-3), (0.1, 1e-2), (0.25, 2.5e-2), (0.5, 5e-2),
+                   (0.7, 7e-2), (1.0, 0.1), (2.0, 0.2), (3.0, 0.3))
 
 
 def _f28_stream(angle, dt, n=12):
@@ -2442,7 +2457,7 @@ def _f28_stream(angle, dt, n=12):
 @pytest.mark.claim("M2-F28")
 def test_f28_covariance_across_per_step_angles_against_complex_step():
     """Eq. (63) for Baseline 1, Baseline 2 (raw) and the reparameterized contrast, at
-    per-step angles 1e-7 .. 0.5 rad (:data:`F28_STEP_ANGLES`), anisotropic gyro noise
+    per-step angles 3e-9 .. 3 rad (:data:`F28_STEP_ANGLES`), anisotropic gyro noise
     alone and gyro + accel, against :func:`_cs_covariance` (complex step), block-relative
     :data:`COV_CS_REL`.
 
@@ -2456,7 +2471,18 @@ def test_f28_covariance_across_per_step_angles_against_complex_step():
     * Y55 (B2 raw uses ``J_r`` above 1e-2): 6.7e-5 (2e-2 rad) .. 5.2e-2 (0.5 rad);
       Y56 (B1 ``I - K/2`` above 1e-2): 1.3e-4 .. 8.6e-2;
     * Y57 (``A_RR = I`` below 1e-4, B1 and B2): 3.8e-7 (1e-7 rad) .. 3.4e-4 (9e-5 rad);
-    * Y18 (``Jr`` K^2 coefficient x (1 + 1e-8)): 8.2e-10 at 0.5 rad, 2.1e-10 at 0.25."""
+    * Y18 (``Jr`` K^2 coefficient x (1 + 1e-8)): 8.2e-10 at 0.5 rad, 2.1e-10 at 0.25.
+
+    Pass 11 (M2-F29): the band was [1e-7, 0.5] rad, so branches below the 1e-8 series
+    threshold and above 0.5 rad survived.  Added 3e-9 rad (x 1000 steps), 9e-9 rad, and
+    0.7, 1, 2, 3 rad.  Measured clean at the new angles (worst of the three classes and
+    both noise settings): 1.1e-14 (3e-9 x 1000), 9.2e-16 (9e-9), 1.4e-15 (0.7), 2.4e-15
+    (1), 5.4e-15 (2), 7.7e-15 (3); every older angle unchanged or lower (the ``R0^-1``
+    chart fix in :func:`_cs_chart`).  Mutants (vs 1e-10):
+    * Z07 (B1 ``I - K/2`` above 0.6): 0.18 (0.7 rad) .. 8.2 (3 rad);
+    * Z09 (``A_RR = I`` above 0.6): 2.3 .. 34;  Z11 (B2 raw ``J_r`` above 0.6): 0.092 .. 1.7;
+    * Z08 (``A_RR = I`` below 1e-8): 1.9e-6 (3e-9 x 1000), 3.4e-8 (9e-9);
+    * Z10 (gyro noise input ``I`` below 1e-8): 2.8e-9 (3e-9 x 1000), 1.0e-8 (9e-9)."""
     failures = []
     sg = np.array([2e-4, 5e-4, 9e-4])
     sa = np.array([4e-3, 1.1e-2, 2.6e-2])
@@ -2465,8 +2491,9 @@ def test_f28_covariance_across_per_step_angles_against_complex_step():
               {"variant": B2.VARIANT_RAW}, _ccay),
              ("CayleyPreintegration(reparam)", B2.CayleyPreintegration,
               {"variant": B2.VARIANT_REPARAM}, _cexp))
-    for angle, dt in F28_STEP_ANGLES:
-        gyro, accel = _f28_stream(angle, dt)
+    for angle, dt, *steps in F28_STEP_ANGLES:
+        n = steps[0] if steps else 12
+        gyro, accel = _f28_stream(angle, dt, n)
         for name, cls, kw, cretract in cases:
             for noise, dens in (("gyro noise alone", dict(sigma_g=sg)),
                                 ("gyro and accel noise", dict(sigma_g=sg, sigma_a=sa))):
@@ -2476,9 +2503,97 @@ def test_f28_covariance_across_per_step_angles_against_complex_step():
                 for omega, acc in zip(gyro, accel):
                     pim.integrate_measurement(omega, acc, dt)
                 _check(failures, f"{name} Eq. (63), {noise}, per-step angle {angle:.2g} "
-                       f"(dt = {dt:.2g}) (block-relative)", _block_rel(pim.cov, want),
-                       COV_CS_REL)
+                       f"(dt = {dt:.2g}) over {n} steps (block-relative)",
+                       _block_rel(pim.cov, want), COV_CS_REL)
     _assert_no_failures(failures)
+
+
+# ======================================================================================
+# M2-F29 (verification pass 11): the per-step angle sweep's two ends, the complex series
+# ``Exp`` at large angles, and Eq. (22b) at |Gamma| ~ 1
+# ======================================================================================
+
+
+@pytest.mark.claim("M2-F29")
+def test_f29_complex_series_exp_against_mpmath():
+    """:func:`_cexp` (the reference ``Exp`` of every complex-step covariance) at |phi| from
+    1e-9 to 3.14 rad, against 50-digit ``mpmath.expm`` of the hat matrix, at 1e-14 absolute.
+    M2-F29 widened its guard to ``|phi| <= 4`` so the sweep can reach 3 rad; this pins that
+    the series is still exact there.  Measured clean: <= 3.3e-16."""
+    mpmath = _mp()
+    mpmath.mp.dps = 50
+    failures = []
+    for d in _SMALL_DIRS:
+        for nrm in (1e-9, 9e-9, 1e-3, 0.5, 1.0, 2.0, 3.0, 3.14):
+            phi = nrm * d / np.linalg.norm(d)
+            want = _mp_to_np(_mp_expm_hat(mpmath, [mpmath.mpf(float(x)) for x in phi]))
+            _check(failures, f"_cexp at |phi| = {nrm:.2g} vs mpmath expm (abs)",
+                   mabs(np.real(_cexp(phi)), want), 1e-14)
+    _assert_no_failures(failures)
+
+
+@pytest.mark.slow
+@pytest.mark.claim("M2-F29")
+def test_f29_covariance_of_a_stationary_imu_over_4000_steps():
+    """Eq. (63) for B1, B2 (raw) and the reparameterized contrast over 4000 steps at a
+    per-step angle of 5e-9 rad (dt = 2.5e-3: a 10 s stationary IMU at 400 Hz with
+    ``|w - b_g|`` = 2e-6 rad/s, i.e. inside the 1e-8 series branch at every step), gyro
+    noise alone, against :func:`_cs_covariance`, block-relative :data:`COV_CS_REL`.
+
+    Measured clean: 6.8e-14 (all three).  Before M2-F29 the complex-step chart used
+    ``R0^T`` and was itself 7.0e-12 off a 40-digit mpmath covariance at 3e-9 rad x 1000
+    steps (src: 9.0e-15), see :func:`_cs_chart`.  Z08 (``A_RR = I`` below 1e-8):
+    7.7e-6; Z10 (gyro noise input ``I`` below 1e-8): 3.5e-9 (both vs 1e-10)."""
+    failures = []
+    sg = np.array([2e-4, 5e-4, 9e-4])
+    angle, dt, n = 5e-9, 2.5e-3, 4000
+    gyro, accel = _f28_stream(angle, dt, n)
+    for name, cls, kw, cretract in (
+            ("ForsterPreintegration", B1.ForsterPreintegration, {}, _cexp),
+            ("CayleyPreintegration(raw)", B2.CayleyPreintegration,
+             {"variant": B2.VARIANT_RAW}, _ccay),
+            ("CayleyPreintegration(reparam)", B2.CayleyPreintegration,
+             {"variant": B2.VARIANT_REPARAM}, _cexp)):
+        want = _cs_covariance(gyro, accel, dt, BIAS_BOTH, sg, 0.0, cretract)
+        pim = cls(bias_hat=BIAS_BOTH.copy(), sigma_g=sg, **kw)
+        for omega, acc in zip(gyro, accel):
+            pim.integrate_measurement(omega, acc, dt)
+        _check(failures, f"{name} Eq. (63), stationary IMU, per-step angle 5e-09 over "
+               f"{n} steps (block-relative)", _block_rel(pim.cov, want), COV_CS_REL)
+    _assert_no_failures(failures)
+
+
+#: Eq. (22b) vs a retyped Eq. (19), absolute: the claim's own bound (M2-C11).
+F29_EQ22B_ABS = 1e-13
+
+
+@pytest.mark.claim("M2-F29")
+def test_f29_eq22b_matches_a_retyped_eq19_at_large_gamma():
+    """Rai Eq. (22b) (``src``) against Eq. (19) RETYPED here,
+    ``(R_j - R_i dRbar) - (1/2)(R_j + R_i dRbar) hat(J_R (b_g - bbar_g))``, over 2000 draws
+    with ``J_R ~ N(0, 1)``, ``b_g, bbar_g ~ U(-0.5, 0.5)``, ``|dRbar| <= 1.7`` rad and
+    ``R_i, R_j`` anywhere, at C11's own 1e-13 absolute.
+
+    Pass 11 (M2-F29, Z30): ``test_c11`` draws ``|Gamma| = |J_R bbar_g| <~ 0.09``, so a
+    1e-12 relative slip in ``Rbreve``'s ``Gamma/2`` moves it by <~ 7e-14, under its bound.
+    Here ``|Gamma|`` reaches ~2.  Measured clean: 8.9e-16 (three seeds); Z30
+    (``Gamma/2 x (1 + 1e-12)`` in ``Rbreve``): 1.2e-12."""
+    rng = _rng(20261015)
+    worst = 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        J_R = rng.standard_normal((3, 3))
+        b_g = rng.uniform(-0.5, 0.5, 3)
+        bbar_g = rng.uniform(-0.5, 0.5, 3)
+        A = R_i @ dRbar
+        want = (R_j - A) - 0.5 * (R_j + A) @ ihat(J_R @ (b_g - bbar_g))
+        worst = max(worst, mabs(B2.rotation_residual_eq22b(R_i, R_j, dRbar, J_R, b_g,
+                                                           bbar_g), want))
+    assert worst <= F29_EQ22B_ABS, (
+        f"rotation_residual_eq22b at large Gamma vs retyped Eq. (19): {worst:.3e} "
+        f"> {F29_EQ22B_ABS:.0e}")
 
 
 #: positive densities down to the smallest positive normal float and the smallest
