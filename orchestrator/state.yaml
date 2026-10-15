@@ -369,10 +369,18 @@ milestones:
   - role: verifier
     agent_id: verify-M1-009
     started: '2026-10-13T22:51:17+00:00'
+    finished: '2026-10-15T22:23:38+00:00'
+    outcome: failed
+    note: Eighth pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
+      floor. INTERRUPTED by session end before the report was written; scratch _p8/ left untracked (claims
+      A/B recomputed, 80 mutant runs logged).
+  - role: verifier
+    agent_id: verify-M1-009b
+    started: '2026-10-15T22:23:38+00:00'
     finished: null
     outcome: running
-    note: Eighth pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
-      floor.
+    note: 'Continuation of verify-M1-009 from its _p8/ scratch: same seed M1-S09, finish F17 replay, sweep
+      and report.'
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -734,10 +742,17 @@ milestones:
   - role: implementer
     agent_id: impl-M2-013-remediation
     started: '2026-10-13T23:07:47+00:00'
+    finished: '2026-10-15T22:23:38+00:00'
+    outcome: failed
+    note: Widen covariance/Jacobian tests across per-step angles 1e-6..0.5, density sweep for has_noise,
+      bias halves alone in Eq. (21b)/(21c), large v/Dt (F28). INTERRUPTED by session end with uncommitted
+      edits (Jr K coefficient 2sin^2(th/2)/th^2 fix in src, five F28 tests in tests/test_input_dependence.py).
+  - role: implementer
+    agent_id: impl-M2-014-remediation
+    started: '2026-10-15T22:23:38+00:00'
     finished: null
     outcome: running
-    note: Widen covariance/Jacobian tests across per-step angles 1e-6..0.5, density sweep for has_noise,
-      bias halves alone in Eq. (21b)/(21c), large v/Dt (F28).
+    note: Continue F28 remediation from the uncommitted working tree of impl-M2-013.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -977,12 +992,11 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
-    id: null
-    statement: null
-    caught: null
+    id: M3-S03
+    caught: true
     published: false
   agent_runs:
   - role: deriver
@@ -1066,10 +1080,18 @@ milestones:
   - role: verifier
     agent_id: verify-M3-003
     started: '2026-10-13T22:44:19+00:00'
+    finished: '2026-10-13T23:15:00+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C42 (decode(-z) == decode(z) exactly; rotation gap 0.0 vs 1.98 to the negated
+      rotations). 36/36 confirmed; F04 FIXED. 109 real-file-edit mutant runs: 26 survivors, 16 equivalent,
+      10 non-equivalent low (F05), five of them in the new s ~ 0 guard.'
+  - role: implementer
+    agent_id: impl-M3-005
+    started: '2026-10-15T22:22:06+00:00'
     finished: null
     outcome: running
-    note: Third pass with a fresh planted claim, zero-survivor rule with tolerance-equivalence and rounding
-      floor.
+    note: 'Kill the ten F05 survivors: s ~ 0 guard threshold/tie/scale, State.copy, unknown variant, exports,
+      J structural zeros; non-finite z guard.'
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1105,7 +1127,7 @@ milestones:
       quantity, with the measured effect written down.'
     resolution: Ruled FIXED by verify-M3-002 (docs/verification/stage-b_m3-qcqp-derivation_pass2.md).
   - id: M3-F04
-    resolved: false
+    resolved: true
     summary: '12 survivors (verify-M3-002). Medium: lf-project-before-divide (project_so3(x*s) gives a
       wrong rotation, error up to 1.97, at s = -1, -2.5 with project=True -- M4 rounds an eigenvector
       of arbitrary sign); lf-truth-state-bbar (truth_state(''zero'').b is 0 instead of b_true). Low: lf-project-sign-detA
@@ -1115,6 +1137,20 @@ milestones:
       fm-quadT-identity (unused forms helpers -- test or delete). Cannot-fail: c31 ptp(qm), c23 -z assertions,
       c28/c03 and original c05/c06 never touch src. M4 risks noted: decoder has no s ~ 0 guard and checks
       no lifting consistency.'
+    resolution: Ruled FIXED by verify-M3-003 (docs/verification/stage-b_m3-qcqp-derivation_pass3.md);
+      remainder is M3-F05.
+  - id: M3-F05
+    resolved: false
+    summary: '10 non-equivalent low survivors (verify-M3-003). Five in the s ~ 0 guard added by 4931a68:
+      threshold, tie and scale semantics untested (tests only bracket S_FLOOR between ~5e-15 and 0.5)
+      -- test the threshold at 0.5x / 2x of S_FLOOR*max|z| and the exact tie, and a scale sweep (1e-13
+      and 1e-300 x z decode). Others: State.copy aliasing of the bias arrays (mutate st.copy().b[0] in
+      place, st unchanged); cost.terms silently accepting an unknown variant (pytest.raises(ValueError));
+      package exports in src/qcqp/__init__.py untested (BASE.n == 124, ANISO.n == 136, build_instance
+      exported); forward-difference J (pass-1 gb-fd-forward re-ruled) -- pin structural zeros inst.edges[e].J[0:3,3:6]
+      == 0 and J[9] == 0 exactly (C04). Also: a NaN entry in z outside s does not raise and propagates;
+      an inf entry raises with a misleading ''s is zero'' message -- reject non-finite z explicitly. One
+      residual tautology (report Sec. 5).'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
