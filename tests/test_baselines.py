@@ -436,6 +436,11 @@ def _gtsam_euler_reference(gyro, accel, dt, bias):
             np.array(pim.deltaPij()) - e_p), pim
 
 
+#: test_c05b(c)'s FD step on GTSAM's bias-corrected ``predict``: a literal, independent of
+#: src's ``FD_EPS`` (M2-F28)
+GTSAM_JR_REF_FD_EPS = 1e-5
+
+
 @pytest.mark.claim("M2-F08")
 def test_c05b_baselines_1_and_2_on_a_time_varying_stream():
     """Baselines 1 and 2 against GTSAM on the M2-C19/C21 time-varying stream.
@@ -452,8 +457,12 @@ def test_c05b_baselines_1_and_2_on_a_time_varying_stream():
         ZOH-vs-Euler difference (see :func:`_gtsam_euler_reference`).  Measured
         <= 5.2e-15; a dp-only ``dR_{i,k+1}`` fold moves dp by 2.2e-6.  Bound 1e-12.
     (c) ``J_R`` from Baseline 1's finite differences against the rotation block of GTSAM's
-        bias correction, which is ``dR Exp(J_R db_g)`` exactly (M2-C20).  Measured 1.8e-11
-        against |J_R| = 0.10; ``dR J_R dR^T`` is 2.3e-6 away.  Bound 1e-9.
+        bias correction, which is ``dR Exp(J_R db_g)`` exactly (M2-C20).  The reference's
+        FD step is the literal :data:`GTSAM_JR_REF_FD_EPS`, not src's ``FD_EPS`` (M2-F28:
+        it used to read ``B1.FD_EPS`` and so moved with an FD-step mutant).  Measured
+        4.0e-13 against |J_R| = 0.10 (6.5e-13 at eps 3e-5, 1.7e-11 at 1e-6: GTSAM's
+        correction is linear in db_g, so the step barely matters); ``dR J_R dR^T`` is
+        2.3e-6 away.  Bound 1e-9.
     """
     gyro, accel, dt = T.time_varying_stream()
     bias = T.BIAS_TRUE
@@ -481,7 +490,7 @@ def test_c05b_baselines_1_and_2_on_a_time_varying_stream():
     # -- (c) --------------------------------------------------------------------------------
     _, gtsam_pim = _gtsam_euler_reference(gyro, accel, dt, bias)
     R_hat = gtsam_pim.deltaRij().matrix()
-    eps = B1.FD_EPS
+    eps = GTSAM_JR_REF_FD_EPS
     J_ref = np.zeros((3, 3))
     for m in range(3):
         step = np.zeros(6)
@@ -1108,8 +1117,9 @@ def _indep_cayley_increment(gyro, accel, dt, bias):
     return R, v, p
 
 
-#: the reference's own FD step -- deliberately not src's FD_EPS (1e-6): truncation is
-#: below 1e-11 relative here and round-off ~1e-14/eps ~ 1e-9 absolute
+#: the reference's own FD step, a literal -- deliberately not src's FD_EPS (3e-5), so a
+#: mutant of FD_EPS cannot move it: truncation is below 1e-11 relative here and round-off
+#: ~1e-14/eps ~ 1e-9 absolute
 CAYLEY_REF_FD_EPS = 1e-5
 
 

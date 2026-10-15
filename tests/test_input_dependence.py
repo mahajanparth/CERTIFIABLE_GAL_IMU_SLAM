@@ -2232,8 +2232,10 @@ def test_f27_navstate_keeps_a_drifted_rotation():
     for (R0, v0, p0), edge, bias, g, drift in ((STATE_A, EDGE_A, BIAS_BOTH, G_A, 1e-11),
                                                (STATE_B, EDGE_B, BIAS_ACCEL, G_B, 3e-11)):
         R = R0 + drift * rng.normal(size=(3, 3))
+        # orthogonality error 2.9e-11 / 1.1e-10 (deterministic seed).  No precondition
+        # assert: it could not fail (M2-F28); that the drift is visible is shown by X41's
+        # kill in tests/test_mutation.py, not asserted here.
         orth = float(np.abs(R.T @ R - np.eye(3)).max())
-        assert orth >= 1e-11, f"the drift is not visible ({orth:.1e})"
         where = f"(orthogonality error {orth:.1e})"
         if not np.array_equal(B3.navstate(T.NavTriple(R=R, v=v0, p=p0)).attitude().matrix(), R):
             failures.append(f"navstate does not keep a drifted R as given {where}")
@@ -2327,12 +2329,292 @@ def test_f27_recursion_reads_eps_at_large_steps():
     failures = []
     dt, n = 0.3, 10
     gyro, accel, _ = T.time_varying_stream(n, dt)
-    small = _irecursion(gyro, accel, dt, BIAS_BOTH, n, 1e-6)
     for eps in (5e-2, 0.2):
         want = _irecursion(gyro, accel, dt, BIAS_BOTH, n, eps)
-        visible = max(rel(w_, s_) for w_, s_ in zip(want, small))
-        assert visible >= 1e-7, f"eps = {eps} is not visible ({visible:.1e})"
+        # eps moves the reference by 1.9e-7 / 3.1e-6 relative vs eps = 1e-6 (measured, see
+        # the docstring).  No precondition assert: it could not fail (M2-F28); that eps is
+        # visible is shown by W12's kill in tests/test_mutation.py.
         got = B3.bias_jacobian_recursion(gyro, accel, dt, BIAS_BOTH.copy(), n, eps=eps)
         _check(failures, f"bias_jacobian_recursion at dt = {dt}, eps = {eps}",
                max(rel(g_, w_) for g_, w_ in zip(got, want)), 1e-9)
+    _assert_no_failures(failures)
+
+
+# ======================================================================================
+# M2-F28 (verification pass 10): per-step angle band, has_noise semantics, Eq. (21b) /
+# (21c) bias-half combinations and large v_i Dt
+# ======================================================================================
+
+
+def _mp_expm_hat(mpmath, phi):
+    """``Exp`` as ``mpmath.expm`` of the 3x3 hat matrix: the general matrix exponential,
+    not Rodrigues, so it shares no closed form with the code under test."""
+    return mpmath.expm(_mp_hat(mpmath, phi))
+
+
+def _mp_cay(mpmath, phi):
+    """Rai Eq. (3) as its DEFINITION, ``(I - K/2)^-1 (I + K/2)``, in ``mpmath``."""
+    K = _mp_hat(mpmath, phi)
+    I3 = mpmath.eye(3)
+    return mpmath.inverse(I3 - K / 2) * (I3 + K / 2)
+
+
+def _mp_right_jacobian(mpmath, retract, phi, h):
+    """The right Jacobian of ``retract`` from its DEFINITION, ``retract(phi + t e)
+    = retract(phi) Exp(t J e) + O(t^2)``: column ``i`` is ``vee(retract(phi)^T
+    d/dt retract(phi + t e_i))`` by a central difference at step ``h`` in ``mpmath``
+    (truncation ``~h^2``, round-off ``~10^-dps / h``).  No Jacobian formula is used."""
+    R0T = retract(mpmath, phi).T
+    cols = []
+    for i in range(3):
+        up = [x + (h if j == i else 0) for j, x in enumerate(phi)]
+        dn = [x - (h if j == i else 0) for j, x in enumerate(phi)]
+        D = R0T * (retract(mpmath, up) - retract(mpmath, dn)) / (2 * h)
+        cols.append([float((D[2, 1] - D[1, 2]) / 2), float((D[0, 2] - D[2, 0]) / 2),
+                     float((D[1, 0] - D[0, 1]) / 2)])
+    return np.array(cols).T
+
+
+#: per-step / argument angles from just above the 1e-8 series branch to 3 rad
+F28_ANGLES = (1.1e-8, 1e-7, 1e-6, 1e-5, 9e-5, 1e-4, 1.1e-4, 1e-3, 1e-2, 1.1e-2, 0.1, 0.5,
+              1.0, 2.0, 3.0)
+
+#: Jr / J_Cay vs the mpmath definitional derivative, ABSOLUTE.  Measured clean <= 1.7e-16
+#: on every angle (entries are O(1)); 60x margin.
+F28_JACOBIAN_ABS = 1e-14
+
+
+@pytest.mark.claim("M2-F28")
+def test_f28_right_jacobians_against_mpmath_across_angles():
+    """``so3_right_jacobian`` (B1) and ``cay_right_jacobian`` (Rai Eq. (4)) at |phi| from
+    1.1e-8 to 3 rad, two directions each, against :func:`_mp_right_jacobian` of
+    ``mpmath.expm`` / the Eq. (3) definition at 50 digits (h = 1e-22), at 1e-14 absolute.
+
+    Pass 10 (M2-F28): every earlier Jacobian check sat at one or two angles.  What this
+    separates, measured:
+    * Y18 (``Jr``'s K^2 coefficient x (1 + 1e-8)): 7.8e-9 at |phi| = 3, 4.5e-9 at 2,
+      1.3e-9 at 1 (vs the 1e-14 bound);
+    * the textbook ``(1 - cos th) / th^2`` K coefficient (src before M2-F28): 3.0e-9 /
+      3.3e-9 at 1.1e-8, 2.6e-11 / 2.9e-11 at 1e-7, 2.9e-11 / 3.2e-11 at 1e-6 --
+      cancellation, up to ~1e-16 / th.
+    """
+    mpmath = _mp()
+    mpmath.mp.dps = 50
+    h = mpmath.mpf("1e-22")
+    failures = []
+    try:
+        for d in _SMALL_DIRS:
+            for nrm in F28_ANGLES:
+                phi = nrm * d / np.linalg.norm(d)
+                mphi = [mpmath.mpf(float(x)) for x in phi]
+                _check(failures, f"so3_right_jacobian at |phi| = {nrm:.1e} vs mpmath (abs)",
+                       mabs(B1.so3_right_jacobian(phi),
+                            _mp_right_jacobian(mpmath, _mp_expm_hat, mphi, h)),
+                       F28_JACOBIAN_ABS)
+                _check(failures, f"cay_right_jacobian at |phi| = {nrm:.1e} vs mpmath (abs)",
+                       mabs(B2.cay_right_jacobian(phi),
+                            _mp_right_jacobian(mpmath, _mp_cay, mphi, h)),
+                       F28_JACOBIAN_ABS)
+    finally:
+        mpmath.mp.dps = 60
+    _assert_no_failures(failures)
+
+
+def _unit_rows(X):
+    return X / np.linalg.norm(X, axis=1)[:, None]
+
+
+#: ``(per-step angle |(omega - b_g) dt|, dt)``: angles from 1e-7 to 0.5 rad on both sides
+#: of every branch point in the noise-input / transition code (1e-4, 1e-2), at body rates
+#: from 1e-4 rad/s (a stationary IMU) to 10 rad/s
+F28_STEP_ANGLES = ((1e-7, 1e-3), (1e-6, 1e-3), (1e-5, 1e-4), (5e-5, 1e-4), (9e-5, 1e-3),
+                   (2e-2, 5e-3), (0.1, 1e-2), (0.25, 2.5e-2), (0.5, 5e-2))
+
+
+def _f28_stream(angle, dt, n=12):
+    """A time-varying stream whose bias-corrected per-step angle is EXACTLY ``angle``
+    (rotation axis and specific force vary step to step, so the steps do not commute)."""
+    gyro0, accel, _ = T.time_varying_stream(n, dt)
+    gyro = BIAS_BOTH[0:3] + _unit_rows(gyro0) * (angle / dt)
+    return gyro, accel
+
+
+@pytest.mark.claim("M2-F28")
+def test_f28_covariance_across_per_step_angles_against_complex_step():
+    """Eq. (63) for Baseline 1, Baseline 2 (raw) and the reparameterized contrast, at
+    per-step angles 1e-7 .. 0.5 rad (:data:`F28_STEP_ANGLES`), anisotropic gyro noise
+    alone and gyro + accel, against :func:`_cs_covariance` (complex step), block-relative
+    :data:`COV_CS_REL`.
+
+    Pass 10 (M2-F28 b/f): every covariance reference used per-step angles in [4e-4,
+    4e-3] rad, so a branch on ``|w dt|`` outside it survived.  Measured clean: <= 5.4e-15
+    (after the M2-F28 ``Jr`` fix; with the old K coefficient B1 is 8.9e-11 at 1e-7 rad and
+    9.95e-11 at 1e-6 -- inside the bound, which is why the ``Jr`` fix is pinned by
+    :func:`test_f28_right_jacobians_against_mpmath_across_angles`, not here).  Mutants and
+    their worst effect here (block-relative, vs 1e-10):
+    * Y24 (B2 raw uses ``J_r`` below 1e-4): 1.35e-9 at 9e-5 rad, 4.2e-10 at 5e-5;
+    * Y55 (B2 raw uses ``J_r`` above 1e-2): 6.7e-5 (2e-2 rad) .. 5.2e-2 (0.5 rad);
+      Y56 (B1 ``I - K/2`` above 1e-2): 1.3e-4 .. 8.6e-2;
+    * Y57 (``A_RR = I`` below 1e-4, B1 and B2): 3.8e-7 (1e-7 rad) .. 3.4e-4 (9e-5 rad);
+    * Y18 (``Jr`` K^2 coefficient x (1 + 1e-8)): 8.2e-10 at 0.5 rad, 2.1e-10 at 0.25."""
+    failures = []
+    sg = np.array([2e-4, 5e-4, 9e-4])
+    sa = np.array([4e-3, 1.1e-2, 2.6e-2])
+    cases = (("ForsterPreintegration", B1.ForsterPreintegration, {}, _cexp),
+             ("CayleyPreintegration(raw)", B2.CayleyPreintegration,
+              {"variant": B2.VARIANT_RAW}, _ccay),
+             ("CayleyPreintegration(reparam)", B2.CayleyPreintegration,
+              {"variant": B2.VARIANT_REPARAM}, _cexp))
+    for angle, dt in F28_STEP_ANGLES:
+        gyro, accel = _f28_stream(angle, dt)
+        for name, cls, kw, cretract in cases:
+            for noise, dens in (("gyro noise alone", dict(sigma_g=sg)),
+                                ("gyro and accel noise", dict(sigma_g=sg, sigma_a=sa))):
+                want = _cs_covariance(gyro, accel, dt, BIAS_BOTH, dens.get("sigma_g", 0.0),
+                                      dens.get("sigma_a", 0.0), cretract)
+                pim = cls(bias_hat=BIAS_BOTH.copy(), **kw, **dens)
+                for omega, acc in zip(gyro, accel):
+                    pim.integrate_measurement(omega, acc, dt)
+                _check(failures, f"{name} Eq. (63), {noise}, per-step angle {angle:.2g} "
+                       f"(dt = {dt:.2g}) (block-relative)", _block_rel(pim.cov, want),
+                       COV_CS_REL)
+    _assert_no_failures(failures)
+
+
+#: positive densities down to the smallest positive normal float and the smallest
+#: denormal.  ``has_noise`` is ``sigma > 0`` on any axis, so DENORMALS COUNT AS NOISE
+#: (a denormal is a strictly positive float; nothing in Eq. (63) needs it to be normal).
+#: The covariance is checked down to 1e-150, where its largest entry is 1.4e-302 (still
+#: normal; measured <= 4.1e-15 block-relative).  Below that it goes denormal (1.4e-306 at
+#: 1e-152) and then underflows to zero (1e-156), so there only the flag is pinned -- and
+#: the flag at the smallest denormal rules out ANY positive threshold.
+F28_DENSITIES_PROPAGATED = (1e-21, 1e-60, 1e-61, 1e-100, 1e-101, 1e-140, 1e-150)
+F28_DENSITIES_FLAG_ONLY = (1e-200, float(np.finfo(float).tiny), 5e-324)
+
+
+def _cs_step_sequence(gyro, accel, dt, bias, retract):
+    """The complex-step ``(A, Bg, Ba)`` of every step of :func:`_cs_covariance`, so many
+    density settings can reuse one linearisation."""
+    out, state = [], (np.eye(3), np.zeros(3), np.zeros(3))
+    for omega, acc in zip(gyro, accel):
+        out.append(_cs_step_jacobians(state, omega, acc, dt, bias, retract))
+        state = tuple(np.real(x) for x in _ceuler([omega], [acc], dt, bias, retract,
+                                                  start=state))
+    return out
+
+
+def _cs_cov_from_steps(steps, dt, sg, sa):
+    sgv = np.broadcast_to(np.asarray(sg, float), (3,))
+    sav = np.broadcast_to(np.asarray(sa, float), (3,))
+    Qg, Qa = np.diag(sgv**2) / dt, np.diag(sav**2) / dt
+    C = np.zeros((9, 9))
+    for A, Bg, Ba in steps:
+        C = A @ C @ A.T + Bg @ Qg @ Bg.T + Ba @ Qa @ Ba.T
+    return C
+
+
+@pytest.mark.claim("M2-F28")
+def test_f28_has_noise_is_any_positive_density_on_any_axis():
+    """For B1 and B2, each noise source alone, each axis alone, and every density in
+    :data:`F28_DENSITIES_PROPAGATED` + :data:`F28_DENSITIES_FLAG_ONLY`: ``has_noise`` is
+    True, and (where the covariance is representable) Eq. (63) matches the complex-step
+    reference block-relative at :data:`COV_CS_REL`.
+
+    Pass 10 (M2-F28 c): ``has_noise`` was pinned only at 1e-21, so a threshold anywhere
+    in (1e-21, ~1.5e-154] survived (Y20: <= 1e-100 ignored; Y58: accel <= 1e-60 ignored);
+    each returns a ZERO covariance where the reference is nonzero (block-relative error
+    1.0, i.e. 100% off), and ``has_noise`` False.  Measured clean: <= 3.0e-15
+    block-relative at every propagated density."""
+    failures = []
+    gyro, accel, _ = T.time_varying_stream(14, 1e-3)
+    dt = 1e-3
+    for cls, cretract in ((B1.ForsterPreintegration, _cexp), (B2.CayleyPreintegration, _ccay)):
+        steps = _cs_step_sequence(gyro, accel, dt, BIAS_BOTH, cretract)
+        for source in ("sigma_g", "sigma_a"):
+            for axis in range(3):
+                for dens in F28_DENSITIES_PROPAGATED + F28_DENSITIES_FLAG_ONLY:
+                    sig = np.zeros(3)
+                    sig[axis] = dens
+                    where = f"{cls.__name__} with {source}[{axis}] = {dens:.1e} alone"
+                    pim = cls(bias_hat=BIAS_BOTH.copy(), **{source: sig})
+                    if not pim.has_noise:
+                        failures.append(f"{where}: has_noise is False")
+                    if dens not in F28_DENSITIES_PROPAGATED:
+                        continue
+                    for omega, acc in zip(gyro, accel):
+                        pim.integrate_measurement(omega, acc, dt)
+                    want = _cs_cov_from_steps(steps, dt, sig if source == "sigma_g" else 0.0,
+                                              sig if source == "sigma_a" else 0.0)
+                    _check(failures, f"{where}: Eq. (63) over 14 steps (block-relative)",
+                           _block_rel(pim.cov, want), COV_CS_REL)
+    _assert_no_failures(failures)
+
+
+@pytest.mark.claim("M2-F28")
+def test_f28_eq21b_eq21c_every_combination_of_bias_halves():
+    """Eq. (21b) / (21c) with the bias terms supplied for the gyro half only, the accel
+    half only, both, and neither, against the retyped residuals (an omitted half is a
+    zero term), at TIER0.
+
+    Pass 10 (M2-F28 d): every call supplied both halves or neither, so applying the
+    ``A_va`` / ``A_pa`` term only when ``db_g`` is given (Y30 / Y59) survived; with only
+    the accel half supplied they drop ``A db_a``: 0.18 (Y30) / 0.29 (Y59) absolute here.
+    Measured clean: 0 (the retyped residual performs the same operations)."""
+    rng = _rng(281)
+    failures = []
+    for Dt, g in ((0.2, G_A), (0.73, G_B)):
+        R_i = _rand_rot(rng)
+        v_i, v_j, p_i, p_j, dvbar, dpbar = (rng.normal(size=3) for _ in range(6))
+        A_vg, A_va, A_pg, A_pa = (rng.normal(size=(3, 3)) for _ in range(4))
+        db = BIAS_BOTH
+        z3 = np.zeros(3)
+        for label, use_g, use_a in (("gyro half only", True, False),
+                                    ("accel half only", False, True),
+                                    ("both halves", True, True), ("neither half", False, False)):
+            kw_v = dict(A_vg=A_vg if use_g else None, db_g=db[0:3] if use_g else None,
+                        A_va=A_va if use_a else None, db_a=db[3:6] if use_a else None)
+            kw_p = dict(A_pg=A_pg if use_g else None, db_g=db[0:3] if use_g else None,
+                        A_pa=A_pa if use_a else None, db_a=db[3:6] if use_a else None)
+            db_ref = np.concatenate([db[0:3] if use_g else z3, db[3:6] if use_a else z3])
+            where = f"(Dt={Dt}, {label})"
+            _check(failures, f"velocity_residual_eq21b {where}",
+                   mabs(B2.velocity_residual_eq21b(R_i, v_i, v_j, dvbar, Dt, g, **kw_v),
+                        _ieq21b(R_i, v_i, v_j, dvbar, Dt, g, A_vg, A_va, db_ref)), TIER0)
+            _check(failures, f"position_residual_eq21c {where}",
+                   mabs(B2.position_residual_eq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g, **kw_p),
+                        _ieq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g, A_pg, A_pa, db_ref)),
+                   TIER0)
+    _assert_no_failures(failures)
+
+
+@pytest.mark.claim("M2-F28")
+def test_f28_eq21c_at_large_velocity_and_duration():
+    """Eq. (21b) / (21c) at |v_i| = 43 / 47 m/s and Dt = 2 s, against the retyped residuals at
+    C10's own 1e-12, with ``p_j`` / ``v_j`` built so the residual itself is O(1) while
+    ``v_i Dt`` is ~60 m per component and ``g Dt^2 / 2`` ~20 m.
+
+    Pass 10 (M2-F28 e): on the fixture (|v| <= 1.2, Dt = 0.5) a 1e-13 relative error in
+    ``v_i Dt`` (Y31) is <= 6e-14 absolute; here it is 8.3e-12 (8x the bound).  Measured
+    clean: 0 (same operations as the retyped residual, so the bound's margin is not eaten
+    by rounding)."""
+    rng = _rng(283)
+    failures = []
+    Dt = 2.0
+    for g, v_i in ((G_A, np.array([30.0, -25.0, 18.0])), (G_B, np.array([-22.0, 31.0, -27.0]))):
+        R_i = _rand_rot(rng)
+        p_i = np.array([120.0, -45.0, 8.0]) + rng.normal(size=3)
+        dvbar, dpbar = rng.normal(size=3), rng.normal(size=3)
+        A_vg, A_va, A_pg, A_pa = (rng.normal(size=(3, 3)) for _ in range(4))
+        v_j = v_i + g * Dt + R_i @ (dvbar + 0.5 * rng.normal(size=3))
+        p_j = p_i + v_i * Dt + 0.5 * g * Dt**2 + R_i @ (dpbar + 0.5 * rng.normal(size=3))
+        db = BIAS_BOTH
+        where = f"(|v_i| = {np.linalg.norm(v_i):.0f} m/s, Dt = {Dt})"
+        _check(failures, f"velocity_residual_eq21b at large v_i Dt {where}",
+               mabs(B2.velocity_residual_eq21b(R_i, v_i, v_j, dvbar, Dt, g, A_vg, A_va,
+                                               db[0:3], db[3:6]),
+                    _ieq21b(R_i, v_i, v_j, dvbar, Dt, g, A_vg, A_va, db)), TIER0)
+        _check(failures, f"position_residual_eq21c at large v_i Dt {where}",
+               mabs(B2.position_residual_eq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g, A_pg, A_pa,
+                                               db[0:3], db[3:6]),
+                    _ieq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g, A_pg, A_pa, db)), TIER0)
     _assert_no_failures(failures)
