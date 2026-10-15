@@ -1072,7 +1072,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M3-S04
@@ -1178,10 +1178,19 @@ milestones:
   - role: verifier
     agent_id: verify-M3-004
     started: '2026-10-15T22:40:44+00:00'
+    finished: '2026-10-15T23:19:42+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C43 (Cayley closed form missing denominator: 1.247e-5 at |phi| <= 0.1 vs
+      claimed 1e-12). 36/36 confirmed; F05 FIXED (decoder non-finite guard and FD step 0.1 verified independently).
+      95 new mutants: 84 killed, 4 equivalent, 7 non-equivalent low (F06). No spurious feasible points.
+      Commit 9f2c968.'
+  - role: implementer
+    agent_id: impl-M3-006
+    started: '2026-10-15T23:19:42+00:00'
     finished: null
     outcome: running
-    note: Fourth pass with a fresh planted claim; rules on F05 (9bbf3a3) including the decoder and FD-step
-      src changes.
+    note: 'Kill F06: truth_state array independence, default variant, z-up gravity raise, guard floor
+      and large-scale tests, projection sign.'
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1230,7 +1239,7 @@ milestones:
     resolution: Ruled FIXED by verify-M3-003 (docs/verification/stage-b_m3-qcqp-derivation_pass3.md);
       remainder is M3-F05.
   - id: M3-F05
-    resolved: false
+    resolved: true
     summary: '10 non-equivalent low survivors (verify-M3-003). Five in the s ~ 0 guard added by 4931a68:
       threshold, tie and scale semantics untested (tests only bracket S_FLOOR between ~5e-15 and 0.5)
       -- test the threshold at 0.5x / 2x of S_FLOOR*max|z| and the exact tie, and a scale sweep (1e-13
@@ -1242,6 +1251,21 @@ milestones:
       an inf entry raises with a misleading ''s is zero'' message -- reject non-finite z explicitly. One
       residual tautology (report Sec. 5).'
     note: Remediated in 9bbf3a3; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M3-004 (docs/verification/stage-b_m3-qcqp-derivation_pass4.md);
+      remainder is M3-F06.
+  - id: M3-F06
+    resolved: false
+    summary: '7 non-equivalent low survivors (verify-M3-004): (1) truth_state returns one shared bias
+      array for all keyframes, the cached Instance b_true -- in-place edits corrupt other keyframes and
+      the cache; (2) truth_state velocity arrays alias Instance.truth; (3) cost.terms default variant
+      ''iso'' -> ''partial'' survives (every test passes the variant explicitly); (4) removing the z-up
+      gravity assert in make_params goes unnoticed (non-z-up g silently wrong; asserts also vanish under
+      python -O -- use a raise); (5) dropping the guard''s 1e-300 floor; (6) an added |s| > 1e300 rejection
+      survives (guard never tested above 1e6 x z); (7) removing np.sign() in the projection det correction
+      (10 ulp on rotations, orthogonality 6.1e-15 vs 2.9e-15). Killing tests in report Sec. 6. M4 risks:
+      dense z^T Q z at truth 3.9e-9 vs factored 6.2e-22 (max|Q| 1.1e10) -- use factored cost or rescale
+      Q; redundant rows rank-deficient (472/453); C35 margin needs rotations orthogonal to ~1e-15; report
+      rounded point''s own constraint residual.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
