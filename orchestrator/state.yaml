@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -377,10 +377,18 @@ milestones:
   - role: verifier
     agent_id: verify-M1-009b
     started: '2026-10-15T22:23:38+00:00'
+    finished: '2026-10-15T22:55:06+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C62 (3-term kappa2 polynomial 2.5838e-13 rel at 0.05 vs claimed 1e-16). 55/55
+      confirmed; interrupted run''s C21/C28 BAD flags were script bugs. F17 FIXED. 101 src + 17 fixture
+      mutants: 32 equivalent, 7 non-equivalent low (F18-F21). Commit 94ad0ea.'
+  - role: implementer
+    agent_id: impl-M1-009-remediation
+    started: '2026-10-15T22:55:06+00:00'
     finished: null
     outcome: running
-    note: 'Continuation of verify-M1-009 from its _p8/ scratch: same seed M1-S09, finish F17 replay, sweep
-      and report.'
+    note: 'Kill F18-F21: literal Taylor-polynomial pins, tighter Rodrigues band and so3_log small-branch
+      bounds, rank-3 gravity-direction guard.'
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -518,7 +526,7 @@ milestones:
       written down.'
     resolution: PARTIALLY fixed per verify-M1-008; remainder is M1-F17.
   - id: M1-F17
-    resolved: false
+    resolved: true
     summary: '6 survivors (verify-M1-008): R01/R32 so3_exp and batch Rodrigues Taylor c + t^4 t^2/10000
       (error 4.9e-15 vs clean 1.0e-15; killed only by src-vs-src worst_prod_switch) -- pin both against
       mpmath on [0.04, 0.05) at <= 2e-15; R03 so3_log small branch at n < 1e-5 (190x worse) -- make C22''s
@@ -528,6 +536,32 @@ milestones:
       assertions implied by the preceding equality (C25 worst_minus, C34 least_wrong, C32 other-G_Dt,
       C22 back-xi, C40 max_gap, C42 |dp|); C24 trunc_at_switch lower bound pins truncation not accuracy;
       Q12''s test comment is wrong.'
+    resolution: Ruled FIXED by verify-M1-009b (docs/verification/m1-gal3-mechanics_pass8.md); remainder
+      is M1-F18..F21.
+  - id: M1-F18
+    resolved: false
+    summary: 'gamma_coefficients Taylor coefficients pinned by accuracy only (verify-M1-009b): S01 kappa1
+      t4/720 -> /719.993 (9.44e-13 vs clean 7.75e-13, passes the 1e-12 pin), S02 kappa3 t4/40320 -> /40319
+      (1.955e-13 vs 1.03e-13, passes 2e-13), S03 c2 t4/30240 -> /30239 (8.2e-14 rel). Kill: on (0, 0.05)
+      assert each coefficient equals C24''s literal 3-term polynomial in 50-digit arithmetic to <= 1e-15
+      relative. Orchestrator ruling: pin the literal polynomial C24 states (also kills the more accurate
+      4-term R07/S04/S05, advisory A3).'
+  - id: M1-F19
+    resolved: false
+    summary: 'Rodrigues Taylor band pin (2e-15) admits + t^6/60000 in (1 - cos)/th^2, scalar so3_exp (S06)
+      and batch (S07): 1.665e-15 vs clean 9.99e-16 on [0.04, 0.05). Kill: <= 1.3e-15 on C42''s 460 angles.'
+  - id: M1-F20
+    resolved: false
+    summary: 'so3_log small-angle branch can move from n < 1e-10 to n < 1e-7 (S08): 3.4e-15 vs clean 4.4e-16
+      relative, under C22''s 1e-14. Kill: C22 relative small-angle bound 1e-15 on the same 20000 R.'
+  - id: M1-F21
+    resolved: false
+    summary: 'assert_gravity_directions_diverse admits a PLANAR random-g distribution (F1W: g in the x-z
+      plane, >= 0.6 rad off z); under it g_y sign errors in gravity_lift, gravity_element, integrate_truth,
+      forster_endpoint survive the whole suite (G_DEFAULT blocks also have g_y = 0). Kill: require the
+      stacked unit g directions to span R^3 (smallest singular value / sqrt(m) >= 0.2), also for the 4-g
+      datasets. Advisories (not gate items): A1 euler_increment never run with dt < 0; A2 _inputs per-step
+      acc-length check untested.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
