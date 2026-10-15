@@ -1072,10 +1072,10 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M3-S04
+    id: M3-S05
     caught: null
     published: false
   agent_runs:
@@ -1187,10 +1187,18 @@ milestones:
   - role: implementer
     agent_id: impl-M3-006
     started: '2026-10-15T23:19:42+00:00'
+    finished: '2026-10-15T23:29:19+00:00'
+    outcome: completed
+    note: test_qcqp 72 passed (slow incl.); harness 75/75 killed (7 new p4-*). truth_state independence
+      (src already copied; test added), default variant iso, make_params assert -> ValueError (also NaN/shape;
+      holds under -O), guard floor below 1e-300 and large scales to 1e307, projection det-correction pin
+      (orth/det headroom ~1.4-1.5x). Commit 519864f.
+  - role: verifier
+    agent_id: verify-M3-005
+    started: '2026-10-15T23:29:19+00:00'
     finished: null
     outcome: running
-    note: 'Kill F06: truth_state array independence, default variant, z-up gravity raise, guard floor
-      and large-scale tests, projection sign.'
+    note: Fifth pass with a fresh planted claim; rules on F06 (519864f).
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1266,6 +1274,7 @@ milestones:
       dense z^T Q z at truth 3.9e-9 vs factored 6.2e-22 (max|Q| 1.1e10) -- use factored cost or rescale
       Q; redundant rows rank-deficient (472/453); C35 margin needs rotations orthogonal to ~1e-15; report
       rounded point''s own constraint residual.'
+    note: Remediated in 519864f; awaiting verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
