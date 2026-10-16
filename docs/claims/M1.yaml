@@ -14,7 +14,8 @@ conventions:
     assert_rand_g_datasets) that the draws are of diverse direction (not all parallel to z or to one
     line, an x/y swap of g visible, every component exercised (max |g_k| >= 1 for k = x, y, z, and for
     blocks of >= 3 draws, including the 4 g of each dataset, unit directions spanning R^3 with smallest
-    singular value / sqrt(m) >= 0.1 -- pass-8 M1-F21)) and that the Dt = -0.3 dataset really has Dt < 0 with both DOP853
+    singular value / sqrt(m) >= 0.1 -- pass-8 M1-F21 -- and every component taking both signs with
+    magnitude >= 1 -- pass-9 M1-F23)) and that the Dt = -0.3 dataset really has Dt < 0 with both DOP853
     solves run backward.
   rng: 'All sample counts are independent draws from numpy.random.default_rng with a fixed, recorded seed.
     Random rotations: Exp_SO3 of N(0, I3) unless a |phi| range is stated. Random v, p ~ N(0, I3) scaled

@@ -17,7 +17,11 @@ from . import ode_truth
 #: the fixed, recorded seed for every randomized claim test
 SEED = 20241012
 
-G = gal3.G_DEFAULT
+#: the project's stated gravity (M1.yaml conventions), RETYPED as a literal: it must not be
+#: read from ``gal3.G_DEFAULT``, or every test that uses it follows a mutation of the
+#: default (pass-9 M1-F22: G_DEFAULT -> (0, 0, +9.81) or -9.80665 survived the suite).
+#: ``gal3.G_DEFAULT`` is pinned against it (and against gtsam) in the M1-C53 test.
+G = np.array([0.0, 0.0, -9.81])
 
 
 def rng(offset: int = 0) -> np.random.Generator:
@@ -148,7 +152,7 @@ def rand_gravity(r, n=None):
 
 
 def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_component=1.0,
-                                      min_span=0.1):
+                                      min_span=0.1, min_signed=1.0):
     """INPUT GUARD on a block of random-g draws (not evidence about src).
 
     The random-g checks exist to catch defects that are invisible for g parallel to z,
@@ -172,6 +176,17 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
     span 0.122 (Dt = -0.3: 0.305; the 400..2000-draw blocks 0.549..0.570); a planar block
     has span <= 2e-16.  comp is >= 4.2 on every recorded block (the one-draw C45 g: 4.20)
     and exactly 0 for g_y = 0.
+
+    * for m >= 3, EVERY component takes BOTH signs with magnitude >= ``min_signed``:
+      max_k g_k >= min_signed and min_k g_k <= -min_signed for k = x, y, z (``signed``,
+      the smallest of those six margins).
+
+    This closes pass-9 M1-F23: span and comp only rule out LINEAR defects (g -> M g); a
+    HALF-SPACE distribution (g_y := |g_y|) passed every guard, and under it a
+    sign-dependent defect (g_y -> |g_y| in gravity_lift or integrate_truth) survived the
+    suite.  Measured ``signed`` on the recorded blocks: 2.102 and 4.321 (the 4-g datasets,
+    Dt = +0.4 / -0.3), 16.7..18.8 (the 400..2000-draw blocks); a half-space block has
+    signed <= 0.  The single-draw C45 block is exempt (m < 3).
     """
     gs = np.atleast_2d(np.asarray(gs, dtype=float))
     u = gs / np.linalg.norm(gs, axis=1, keepdims=True)
@@ -189,7 +204,11 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
     if len(gs) >= 3:
         span = float(np.linalg.svd(u, compute_uv=False)[-1] / np.sqrt(len(gs)))
         assert span >= min_span, span
-    return off_z, perm_gap, spread, comp, span
+    signed = None
+    if len(gs) >= 3:
+        signed = float(min(gs.max(axis=0).min(), (-gs.min(axis=0)).min()))
+        assert signed >= min_signed, signed
+    return off_z, perm_gap, spread, comp, span, signed
 
 
 def assert_rand_g_datasets(datasets):

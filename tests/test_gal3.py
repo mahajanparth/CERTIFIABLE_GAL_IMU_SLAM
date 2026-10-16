@@ -735,9 +735,23 @@ def test_gamma1_invertibility_and_taylor_branch():
     #   relative; C24's tightest coefficient bound is 1e-11 relative -> threshold 1e-12),
     #   and max change of the Gamma1 / Gamma2 MATRICES 8.2e-16 (tightest matrix bound,
     #   C21's 1e-13 -> threshold 1e-14).
-    # * pass-6 Q18, the theta < 0 ValueError removed: every caller passes a norm
-    #   (gamma1/gamma2/gamma1_inv use np.linalg.norm), and C24's statement covers
-    #   theta >= 0 only.  Measured effect on every claim output: 0.0 (code not reached).
+    # * (formerly) pass-6 Q18, the theta < 0 ValueError removed: every caller passes a
+    #   norm, so no claim output moves.  The raise is nevertheless part of the src
+    #   contract (C24 covers theta >= 0 only, and a negative theta is refused rather than
+    #   silently evaluated), so it is now checked directly (pass-9 advisory A5, N13:
+    #   accepting theta in [-1, 0) survived).
+    neg_thetas = [-float(np.nextafter(0.0, 1.0)), -1e-300, -1e-12, -1e-3,
+                  -float(np.nextafter(5e-2, 0.0)), -0.5, -1.0, -3.0, -np.pi, -10.0]
+    not_rejected = []
+    for th in neg_thetas:
+        try:
+            gal3.gamma_coefficients(th)
+        except ValueError:
+            continue
+        not_rejected.append(th)
+    assert not not_rejected, not_rejected
+    for th in (0.0, float(np.nextafter(0.0, 1.0))):   # the boundary itself is accepted
+        assert np.all(np.isfinite(gal3.gamma_coefficients(th))), th
 
 
 # ==========================================================================
@@ -1780,6 +1794,12 @@ def test_gtsam_gal3_group_operations():
             w_loc = max(w_loc, float(np.abs(A.localCoordinates(B) - log(rel)).max()))
 
     # the domain edge itself: |phi_rel| in (pi - 1e-2, pi - 1.001e-3)
+    # (Why the comparison stops at pi - 1e-3: nearer pi, gtsam's Gal3 Logmap loses
+    # accuracy -- measured on 3000 X at |phi| = pi - 10^-u, u in (2, 5): gtsam
+    # Expmap(Logmap X) - X up to 1.8e-7, gtsam Logmap vs the project's log up to 5.3e-7,
+    # while the project's exp(log X) - X stays at 2.2e-15 and both SO(3) logs match the
+    # true rotation vector to 8.9e-16.  The near-pi disagreement is gtsam's Gal3 Logmap,
+    # not a property of every implementation -- pass-9 advisory A4.)
     for _ in range(400):
         Ra, va, pa, ta = rand_rot(r), r.normal(size=3), 3.0 * r.normal(size=3), float(r.normal())
         Rrel = _rotvec_to_matrix((np.pi - r.uniform(1.001e-3, 1e-2)) * rand_axis(r))

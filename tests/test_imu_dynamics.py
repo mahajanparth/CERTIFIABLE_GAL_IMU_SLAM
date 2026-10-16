@@ -809,7 +809,7 @@ def test_gtsam_pim_predict_matches_both_forms():
     assert abs(Dt - 0.5) <= 1e-9
 
     r = rng(53)
-    worst_a = worst_b = worst_t = 0.0
+    worst_a = worst_b = worst_t = worst_default = 0.0
     for _ in range(25):
         R_i, v_i, p_i = rand_rot(r), 2.0 * r.normal(size=3), 5.0 * r.normal(size=3)
         state_i = gtsam.NavState(gtsam.Rot3(R_i), p_i, v_i)
@@ -823,6 +823,13 @@ def test_gtsam_pim_predict_matches_both_forms():
                       float(np.abs(v_a - pred.velocity()).max()),
                       float(np.abs(p_a - pred.position()).max()))
         worst_t = max(worst_t, abs(t_a))
+        # form (a) with g OMITTED: the src default G_DEFAULT is what is tested here
+        # (pass-9 M1-F22: every other call passes g explicitly)
+        R_d, v_d, p_d, _ = unpack(gal3.endpoint(gal(R_i, v_i, p_i, 0.0), gal(dR, dv, dp, Dt)))
+        worst_default = max(worst_default,
+                            float(np.abs(R_d - pred.attitude().matrix()).max()),
+                            float(np.abs(v_d - pred.velocity()).max()),
+                            float(np.abs(p_d - pred.position()).max()))
 
         # form (b): W_ij Phi_Dt(X_i) U_ij on NavState
         N = _navstate_form_b(R_i, v_i, p_i, dR, dv, dp, Dt, g)
@@ -833,6 +840,16 @@ def test_gtsam_pim_predict_matches_both_forms():
     assert worst_a <= 1e-9, worst_a
     assert worst_b <= 1e-9, worst_b
     assert worst_t <= 1e-12, worst_t
+    assert worst_default <= 1e-9, worst_default
+    # G_DEFAULT pinned to the stated convention (0, 0, -9.81), retyped here (not read
+    # from conftest or src), to gtsam's MakeSharedU(9.81) gravity, and re-exported
+    # unchanged by imu_dynamics
+    g_stated = np.array([0.0, 0.0, -9.81])
+    pin_default = max(float(np.abs(np.asarray(gal3.G_DEFAULT, dtype=float) - g_stated).max()),
+                      float(np.abs(np.asarray(gal3.G_DEFAULT, dtype=float) - g).max()),
+                      float(np.abs(np.asarray(imu.G_DEFAULT, dtype=float) - g_stated).max()))
+    assert np.shape(gal3.G_DEFAULT) == (3,), np.shape(gal3.G_DEFAULT)
+    assert pin_default == 0.0, pin_default
 
 
 @pytest.mark.claim("M1-C54")

@@ -122,6 +122,27 @@ Y_SIGN = {
                           C43: 'assert worst <= 1e-9, (d["label"], worst)'}),
 }
 
+C53 = IMU + "test_gtsam_pim_predict_matches_both_forms"
+# pass-9 M1-F22: the default gravity mutated (N30: points UP)
+G_DEFAULT_OLD = "G_DEFAULT = np.array([0.0, 0.0, -9.81])\n"
+N30 = ("src/gal3.py", G_DEFAULT_OLD, "G_DEFAULT = np.array([0.0, 0.0, 9.81])\n")
+# pass-9 M1-F23: a HALF-SPACE gravity fixture (g_y := |g_y|; passes off_z/perm_gap/spread/
+# comp/span) and the sign-dependent g_y -> |g_y| defects it masked
+H_HEMI = ("tests/conftest.py", RAND_G_OLD,
+          "    g = r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)\n"
+          "    g[..., 1] = np.abs(g[..., 1])\n"
+          "    return g\n")
+YABS_LIFT = ("src/gal3.py",
+             "    g = np.asarray(g, dtype=float).reshape(3)\n"
+             "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n",
+             "    g = np.asarray(g, dtype=float).reshape(3)\n"
+             "    g = np.array([g[0], abs(g[1]), g[2]])\n"
+             "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n")
+YABS_TRUTH = ("src/imu_dynamics.py",
+              "    g = np.asarray(g, dtype=float).reshape(3)\n\n    E_s",
+              "    g = np.asarray(g, dtype=float).reshape(3)\n"
+              "    g = np.array([g[0], abs(g[1]), g[2]])\n\n    E_s")
+
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
     # ---- previously SURVIVING ------------------------------------------------
@@ -698,6 +719,46 @@ MUTATIONS = {
                                              {n: "assert comp >= min_component, comp"
                                               for n in RAND_G_TESTS})
        for name, (edit, _, _) in Y_SIGN.items()},
+    # ---- ninth-pass SURVIVORS (M1-F22, M1-F23) and advisory A5 -----------------
+    "G_DEFAULT_points_up": (                                      # pass-9 N30 (M1-F22)
+        *N30, [C53], {C53: "assert worst_default <= 1e-9, worst_default"},
+    ),
+    "G_DEFAULT_9.80665": (                                        # pass-9 N29 (M1-F22)
+        "src/gal3.py", G_DEFAULT_OLD, "G_DEFAULT = np.array([0.0, 0.0, -9.80665])\n",
+        [C53], {C53: "assert worst_default <= 1e-9, worst_default"},
+    ),
+    # N30 with the conftest gravity read back from src (the pre-F22 coupling): C53 does
+    # not use conftest's G, so the default is still pinned
+    "G_DEFAULT_points_up_conftest_coupled": (
+        (N30, ("tests/conftest.py", "G = np.array([0.0, 0.0, -9.81])\n", "G = gal3.G_DEFAULT\n")),
+        None, None, [C53], {C53: "assert worst_default <= 1e-9, worst_default"},
+    ),
+    "fixture_rand_gravity_half_space_y": (                        # pass-9 H_HEMI (M1-F23)
+        *H_HEMI, SPAN_TESTS, {n: "assert signed >= min_signed, signed" for n in SPAN_TESTS},
+    ),
+    "gravity_lift_abs_g_y": (                                     # pass-9 YABS_LIFT alone
+        *YABS_LIFT, [C31], {C31: 'assert worst_ode <= 1e-9, (d["label"], worst_ode)'},
+    ),
+    "integrate_truth_abs_g_y": (                                  # pass-9 YABS_TRUTH alone
+        *YABS_TRUTH, [C31], {C31: 'assert worst_id <= 1e-12, (d["label"], worst_id)'},
+    ),
+    "gravity_lift_abs_g_y_under_half_space_g": (                  # pass-9 YABS_LIFT + H_HEMI
+        (H_HEMI, YABS_LIFT), None, None,
+        SPAN_TESTS, {n: "assert signed >= min_signed, signed" for n in SPAN_TESTS},
+    ),
+    "integrate_truth_abs_g_y_under_half_space_g": (               # pass-9 YABS_TRUTH + H_HEMI
+        (H_HEMI, YABS_TRUTH), None, None,
+        SPAN_TESTS, {n: "assert signed >= min_signed, signed" for n in SPAN_TESTS},
+    ),
+    "gamma_coefficients_accepts_theta_ge_-1": (                   # pass-9 N13 (A5)
+        "src/gal3.py", "    if theta < 0.0:\n", "    if theta < -1.0:\n",
+        [C24], {C24: "assert not not_rejected, not_rejected"},
+    ),
+    "gamma_coefficients_no_negative_check": (                     # pass-6 Q18 (A5)
+        "src/gal3.py",
+        "    if theta < 0.0:\n        raise ValueError(\"theta must be non-negative\")\n", "",
+        [C24], {C24: "assert not not_rejected, not_rejected"},
+    ),
 }
 
 
