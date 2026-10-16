@@ -774,13 +774,23 @@ def test_cost_terms_default_variant_is_iso():
         assert sep > 1e-6, (which, sep)                     # the check can tell iso from partial
 
 
-@pytest.mark.claim("M3-C24")
+# NOT claim-bound: no M3 claim states make_params' input validation (the claims only fix the
+# domain MakeSharedU(9.81)); binding it to a claim would misreport what that claim's test checks.
 def test_make_params_rejects_non_z_up_gravity():
-    """make_params guards GTSAM's MakeSharedU convention (gravity (0, 0, -g), g > 0) with an
-    explicit ValueError (not an assert, which python -O strips); z-up gravity is passed through."""
+    """make_params guards GTSAM's MakeSharedU convention (gravity (0, 0, -g), finite g > 0) with
+    an explicit ValueError (not an assert, which python -O strips): wrong sign / x-y components,
+    wrong shape (length 2 or 4, 2-D, 0-d) and +-inf / NaN in any component all raise with the
+    guard's own message; z-up gravity is passed through."""
     import src.qcqp.gtsam_boundary as GB
-    for g in ([0.0, 0.0, 9.81], [0.1, 0.0, -9.81], [0.0, -0.1, -9.81], [0.0, 0.0, 0.0],
-              [0.0, 0.0, np.nan]):
+    bad = [[0.0, 0.0, 9.81], [0.1, 0.0, -9.81], [0.0, -0.1, -9.81], [0.0, 0.0, 0.0],
+           [0.0, 0.0, -9.81, 0.0], [0.0, 0.0, -9.81, -9.81], [0.0, -9.81], [[0.0, 0.0, -9.81]],
+           [[0.0], [0.0], [-9.81]], -9.81]
+    for c in range(3):
+        for v in (np.inf, -np.inf, np.nan):
+            g = [0.0, 0.0, -9.81]
+            g[c] = v
+            bad.append(g)
+    for g in bad:
         with pytest.raises(ValueError, match="z-up"):
             GB.make_params(g, 1e-3, 1e-2, 1e-4)
     params = GB.make_params([0.0, 0.0, -9.81], 1e-3, 1e-2, 1e-4)
@@ -807,6 +817,27 @@ def test_decoder_s_guard_floor_below_1e_minus_300():
 
 
 @pytest.mark.claim("M3-C01")
+def test_decoder_s_guard_counts_aniso_rho_entries():
+    """The guard's max|z| runs over ALL n = 136 entries of an aniso z, the rho slots
+    [124, 136) included: with every other entry O(1), s = 1 and the rho entries +-1e13
+    (so max|z| = 1e13 lives only there) the decoder must raise; at 1e11 it decodes
+    (threshold 1e-12 * 1e11 = 0.1 < |s| = 1)."""
+    zt = z_ref(truth_ref(), ref("zero"), aniso=True)
+    assert zt.shape == (N_ANISO,) and zt[S_IDX] == 1.0 and np.abs(zt[:N_BASE]).max() < 10.0
+    for mag in (1e13, -1e13):
+        for idx in (slice(N_BASE, N_ANISO), slice(N_BASE, N_BASE + 1), slice(N_ANISO - 1, N_ANISO)):
+            za = zt.copy()
+            za[idx] = mag
+            for project in (False, True):
+                with pytest.raises(ValueError, match="zero relative"):
+                    LF.state_of_z(za, LF.ANISO, project=project)
+    za = zt.copy()
+    za[N_BASE:] = 1e11
+    for project in (False, True):
+        assert _decodes(za, layout=LF.ANISO, project=project)
+
+
+@pytest.mark.claim("M3-C01")
 def test_decoder_large_scales_decode():
     """c z decodes to the state of z at very large |c| too (no upper cut-off on s)."""
     zt = z_ref(truth_ref(), ref("zero"))
@@ -824,9 +855,11 @@ def test_decoder_large_scales_decode():
 @pytest.mark.claim("M3-C01")
 def test_project_so3_det_correction_is_exact():
     """project_so3(A) = U diag(1, 1, +-1) V^T with the correction EXACTLY +-1 (chosen here from
-    the sign of det(U V^T), test-side SVD): over 1e4 random A it matches to <= 2 ulp of 1 and its
-    orthogonality / det errors stay <= 4e-15 (measured clean max 2.7e-15 / 2.9e-15; a correction
-    of det(U V^T) = +-(1 + few eps) instead of +-1 reaches 6.2e-15 / 5.8e-15 and differs by 10 ulp)."""
+    the sign of det(U V^T), test-side SVD): over 1e4 random A it matches to <= 2 ulp of 1 (a
+    correction of det(U V^T) = +-(1 + few eps) instead of +-1 differs by ~10 ulp; this pin is what
+    kills that defect).  The orthogonality / det bounds are a loose sanity check only, set to
+    2e-14: measured clean max over 41 seeds (115, 0-39) is 3.3e-15 / 3.4e-15, i.e. ~6x headroom
+    (the old 4e-15 had 1.2x and depended on the LAPACK build)."""
     rng = np.random.default_rng(115)
     worst_ref = worst_orth = worst_det = 0.0
     for _ in range(10000):
@@ -839,8 +872,43 @@ def test_project_so3_det_correction_is_exact():
         worst_orth = max(worst_orth, np.abs(R.T @ R - I3).max())
         worst_det = max(worst_det, abs(np.linalg.det(R) - 1.0))
     assert worst_ref <= 4.5e-16, worst_ref
-    assert worst_orth <= 4e-15, worst_orth
-    assert worst_det <= 4e-15, worst_det
+    assert worst_orth <= 2e-14, worst_orth
+    assert worst_det <= 2e-14, worst_det
+
+
+# NOT claim-bound: no M3 claim states that the Instance is immutable (M4 risk R4 of verifier
+# pass 5); this guards the lru-cached instance against poisoning by an in-place write.
+def test_cached_instance_arrays_are_read_only():
+    """Every numpy array of the cached Instance and of its edges is read-only (an in-place write
+    raises ValueError and leaves the value unchanged), the dicts are read-only mappings, and a
+    later instance() call still returns the reference data."""
+    for which in ("true", "zero"):
+        I = INST.instance(which)
+        arrays = [("bbar", I.bbar), ("g", I.g), ("b_true", I.b_true), ("rw", I.rw_precision)]
+        arrays += [(f"truth{k}.{q}", I.truth[k][q]) for k in range(3) for q in range(3)]
+        arrays += [(f"prior{q}", I.prior[q]) for q in range(3)]
+        arrays += [(f"gnss{k}", I.gnss[k]) for k in (1, 2)]
+        for e, ed in enumerate(I.edges):
+            for name in ("dR", "dv", "dp", "J", "W_R", "G2", "W_vp"):
+                arrays.append((f"e{e}.{name}", getattr(ed, name)))
+            arrays += [(f"e{e}.cov{key}", blk) for key, blk in ed.cov.items()]
+            arrays += [(f"e{e}.J_R", ed.J_R), (f"e{e}.J_nu", ed.J_nu)]   # views inherit the flag
+        assert len(arrays) == 4 + 9 + 3 + 2 + 2 * (7 + 9 + 2)
+        for name, a in arrays:
+            assert isinstance(a, np.ndarray) and not a.flags.writeable, (which, name)
+            before = a.copy()
+            with pytest.raises(ValueError, match="read-only"):
+                a.flat[0] = a.flat[0] + 1.0
+            with pytest.raises(ValueError, match="read-only"):
+                a += 1.0
+            assert np.array_equal(a, before), (which, name)
+        with pytest.raises(TypeError):
+            I.gnss[1] = np.zeros(3)
+        with pytest.raises(TypeError):
+            I.edges[0].cov[("rot", "rot")] = np.zeros((3, 3))
+        assert INST.instance(which) is I
+    assert np.array_equal(INST.instance("true").b_true, LIT.BIAS_TRUE)
+    assert np.array_equal(INST.instance("zero").bbar, np.zeros(6))
 
 
 @pytest.mark.claim("M3-C02")

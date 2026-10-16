@@ -12,7 +12,9 @@ All numerical inputs from GTSAM come through :mod:`.gtsam_boundary`.
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
+import types
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -101,12 +103,36 @@ def build_instance(bbar) -> Instance:
     dtb = F.T_EDGE
     rw = np.diag(np.r_[np.full(3, 1.0 / (F.SIGMA_BG_RW**2 * dtb)),
                        np.full(3, 1.0 / (F.SIGMA_BA_RW**2 * dtb))])
-    return Instance(bbar=bbar, g=g, edges=tuple(edges), truth=truth,
-                    b_true=F.BIAS_TRUE.copy(),
-                    gnss={k: truth[k][2].copy() for k in (1, 2)},
-                    prior=tuple(x.copy() for x in truth[0]),
-                    sigma_prior=F.SIGMA_PRIOR, sigma_gnss=F.SIGMA_GNSS,
-                    rw_precision=rw, pims=tuple(pims))
+    return _frozen(Instance(bbar=bbar, g=g, edges=tuple(edges), truth=truth,
+                            b_true=F.BIAS_TRUE.copy(),
+                            gnss={k: truth[k][2].copy() for k in (1, 2)},
+                            prior=tuple(x.copy() for x in truth[0]),
+                            sigma_prior=F.SIGMA_PRIOR, sigma_gnss=F.SIGMA_GNSS,
+                            rw_precision=rw, pims=tuple(pims)))
+
+
+def _freeze(x):
+    """Read-only view of the numpy content of ``x`` (arrays flagged write=False, dicts wrapped
+    in a read-only mapping, tuples rebuilt); other objects are returned unchanged."""
+    if isinstance(x, np.ndarray):
+        x.setflags(write=False)
+        return x
+    if isinstance(x, dict):
+        return types.MappingProxyType({k: _freeze(v) for k, v in x.items()})
+    if isinstance(x, tuple):
+        return tuple(_freeze(v) for v in x)
+    return x
+
+
+def _frozen(inst: Instance) -> Instance:
+    """Every numpy array reachable from the instance and its edges is made read-only, so that an
+    in-place write by a caller cannot poison the lru-cached :func:`instance` (the GTSAM PIM
+    objects in ``pims`` are not covered)."""
+    edges = tuple(dataclasses.replace(ed, **{f.name: _freeze(getattr(ed, f.name))
+                                            for f in dataclasses.fields(ed)}) for ed in inst.edges)
+    kw = {f.name: _freeze(getattr(inst, f.name)) for f in dataclasses.fields(inst)
+          if f.name not in ("edges", "pims")}
+    return dataclasses.replace(inst, edges=edges, **kw)
 
 
 @functools.lru_cache(maxsize=None)

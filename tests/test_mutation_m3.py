@@ -65,6 +65,8 @@ K_GRAVITY = T + "test_make_params_rejects_non_z_up_gravity"
 K_FLOOR = T + "test_decoder_s_guard_floor_below_1e_minus_300"
 K_LARGE = T + "test_decoder_large_scales_decode"
 K_DETSIGN = T + "test_project_so3_det_correction_is_exact"
+K_ANISORHO = T + "test_decoder_s_guard_counts_aniso_rho_entries"
+K_READONLY = T + "test_cached_instance_arrays_are_read_only"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -227,7 +229,7 @@ MUTANTS = [
     ("p4-co-default-partial", "cost.py", 'variant: str = "iso"', 'variant: str = "partial"',
      "terms(inst) silently returns the partial (C33) weighting", [K_DEFVARIANT]),
     ("p4-gb-no-gravity-guard", "gtsam_boundary.py",
-     'raise ValueError(f"MakeSharedU expects z-up gravity (0, 0, -g) with g > 0, got {g_w!r}")', "pass",
+     'raise ValueError(f"MakeSharedU expects z-up gravity (0, 0, -g) with finite g > 0, got {g_w!r}")', "pass",
      "non-z-up gravity silently accepted (x/y dropped, sign lost)", [K_GRAVITY]),
     ("p4-lf-floor-zero", "lifting.py", "if abs(s) <= S_FLOOR * max(zmax, 1e-300):",
      "if abs(s) <= S_FLOOR * max(zmax, 0.0):", "decoder guard floor 1e-300 dropped", [K_FLOOR]),
@@ -235,6 +237,22 @@ MUTANTS = [
      "if abs(s) <= S_FLOOR * max(zmax, 1e-300) or abs(s) > 1e300:", "decoder rejects large |s|", [K_LARGE]),
     ("p4-lf-project-det-nosign", "lifting.py", "np.sign(np.linalg.det(U @ Vt))", "np.linalg.det(U @ Vt)",
      "det correction +-(1 + few eps) instead of exactly +-1", [K_DETSIGN]),
+    # -- verifier pass 5 survivors (M3-F07) and the src guards added for them --
+    ("p5-lf-zmax-pre-s", "lifting.py", "zmax = float(np.abs(z).max())", "zmax = float(np.abs(z[:layout.s]).max())",
+     "guard's max|z| skips s and the aniso rho entries", [K_ANISORHO]),
+    ("p5-gb-guard-noshape", "gtsam_boundary.py", "g_w.shape == (3,) and np.isfinite(g_w).all()",
+     "np.isfinite(g_w).all()", "make_params shape check dropped (length-4 gravity accepted)", [K_GRAVITY]),
+    ("p5-gb-guard-finite", "gtsam_boundary.py", "g_w.shape == (3,) and np.isfinite(g_w).all()\n",
+     "g_w.shape == (3,)\n", "the isfinite clause added for p5-gb-guard-finite removed (g_z = -inf accepted)",
+     [K_GRAVITY]),
+    ("p7-in-no-setflags", "instance.py", "x.setflags(write=False)", "pass",
+     "Instance arrays left writable", [K_READONLY]),
+    ("p7-in-not-frozen", "instance.py", "return _frozen(Instance(", "return (Instance(",
+     "build_instance skips freezing entirely", [K_READONLY]),
+    ("p7-in-edges-not-frozen", "instance.py", "return dataclasses.replace(inst, edges=edges, **kw)",
+     "return dataclasses.replace(inst, **kw)", "edge arrays (dR, J, W_*, cov) left writable", [K_READONLY]),
+    ("p7-in-dict-writable", "instance.py", "return types.MappingProxyType({k: _freeze(v) for k, v in x.items()})",
+     "return {k: _freeze(v) for k, v in x.items()}", "gnss / cov dicts left mutable", [K_READONLY]),
 ]
 
 KILLERS = sorted({k for m in MUTANTS for k in m[5]})
