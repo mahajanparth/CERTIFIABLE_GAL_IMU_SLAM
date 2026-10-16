@@ -1169,10 +1169,10 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M3-S05
+    id: M3-S06
     caught: null
     published: false
   agent_runs:
@@ -1297,15 +1297,24 @@ milestones:
     outcome: completed
     note: 'Caught planted M3-C44 (diag(1,1,-1) satisfies both orthogonality families, handedness error
       2; without P2 the QCQP converged to det -1 in 83/180 blocks). 36/36 confirmed; F06 FIXED. 176 new
-      mutants: 175 killed of 183 runs incl. replays; 8 survived, 5 equivalent, 3 non-equivalent (F07). No spurious feasible points.
-      Commit e6823a1.'
+      mutants: 175 killed of 183 runs incl. replays; 8 survived, 5 equivalent, 3 non-equivalent (F07).
+      No spurious feasible points. Commit e6823a1.'
   - role: implementer
     agent_id: impl-M3-007
     started: '2026-10-16T01:27:23+00:00'
+    finished: '2026-10-16T02:15:06+00:00'
+    outcome: completed
+    note: test_qcqp 74 passed (slow incl., 38 min under load); harness 82/82 killed (7 new). aniso rho-dominant
+      decoder guard test; make_params wrong-shape tests; src isfinite in make_params; src build_instance
+      freezes all Instance/EdgeData arrays (setflags write=False, dicts as MappingProxyType) with a test
+      over 40 arrays (GTSAM PIMs remain mutable). Projection orth/det bounds loosened 4e-15 -> 2e-14 (clean
+      3.4e-15 over 41 seeds); gravity test unbound (no claim covers it). Commit 75c7908.
+  - role: verifier
+    agent_id: verify-M3-006
+    started: '2026-10-16T02:15:06+00:00'
     finished: null
     outcome: running
-    note: 'Kill F07: anisotropic rho-dominant decoder guard, gravity shape test, isfinite in make_params;
-      loosen fragile projection bounds; read-only cached Instance arrays.'
+    note: Sixth pass with a fresh planted claim; rules on F07 (75c7908) under rules 1-4.
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1398,6 +1407,7 @@ milestones:
       sup-norm error over the affected domain exceeds the clean sup-norm error by at most 2 ulp of the
       quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x inside the tightest claim tolerance
       for that quantity. Applies to every milestone.'
+    note: Remediated in 75c7908; awaiting verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
