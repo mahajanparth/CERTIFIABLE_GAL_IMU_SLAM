@@ -2564,7 +2564,9 @@ def test_f29_covariance_of_a_stationary_imu_over_4000_steps():
 
 
 #: Eq. (22b) vs a retyped Eq. (19), absolute: the claim's own bound (M2-C11).
-F29_EQ22B_ABS = 1e-13
+#: 1e-14, not C11's 1e-13 (M2-F30, pass 12 A07): clean 8.9e-16 (four seeds), so 11x
+#: headroom; at 1e-13 a 5e-14 relative slip in Rbreve (5.5e-14 .. 6.1e-14 here) survived.
+F29_EQ22B_ABS = 1e-14
 
 
 @pytest.mark.claim("M2-F29")
@@ -2572,12 +2574,15 @@ def test_f29_eq22b_matches_a_retyped_eq19_at_large_gamma():
     """Rai Eq. (22b) (``src``) against Eq. (19) RETYPED here,
     ``(R_j - R_i dRbar) - (1/2)(R_j + R_i dRbar) hat(J_R (b_g - bbar_g))``, over 2000 draws
     with ``J_R ~ N(0, 1)``, ``b_g, bbar_g ~ U(-0.5, 0.5)``, ``|dRbar| <= 1.7`` rad and
-    ``R_i, R_j`` anywhere, at C11's own 1e-13 absolute.
+    ``R_i, R_j`` anywhere, at 1e-14 absolute (C11's 1e-13 / 10).
 
     Pass 11 (M2-F29, Z30): ``test_c11`` draws ``|Gamma| = |J_R bbar_g| <~ 0.09``, so a
     1e-12 relative slip in ``Rbreve``'s ``Gamma/2`` moves it by <~ 7e-14, under its bound.
-    Here ``|Gamma|`` reaches ~2.  Measured clean: 8.9e-16 (three seeds); Z30
-    (``Gamma/2 x (1 + 1e-12)`` in ``Rbreve``): 1.2e-12."""
+    Here ``|Gamma|`` reaches ~2.  Measured clean: 8.9e-16 (four seeds); Z30
+    (``Gamma/2 x (1 + 1e-12)`` in ``Rbreve``): 1.2e-12.
+
+    Pass 12 (M2-F30, A07): the bound is now 1e-14, i.e. tau/10 rather than the claim
+    tolerance itself; ``Gamma/2 x (1 + 5e-14)`` gives 6.1e-14 here."""
     rng = _rng(20261015)
     worst = 0.0
     for _ in range(2000):
@@ -2594,6 +2599,65 @@ def test_f29_eq22b_matches_a_retyped_eq19_at_large_gamma():
     assert worst <= F29_EQ22B_ABS, (
         f"rotation_residual_eq22b at large Gamma vs retyped Eq. (19): {worst:.3e} "
         f"> {F29_EQ22B_ABS:.0e}")
+
+
+#: M2-F30 (pass 12, A11): ``src``'s Eq. (19) against an independent reference at large
+#: ``|xi|``.  Clean: <= 8.9e-16 abs (J_R ~ N(0, 1) regime) and <= 4.4e-16 x (1 + |xi|) (chart
+#: regime, |xi| up to 2 tan(1.5) = 28.2), over five seeds each, so >= 11x / 22x headroom.
+F30_EQ19_ABS = 1e-14
+F30_EQ19_PER_XI = 1e-14
+
+
+def _cleared_eq16(R_i, R_j, dRbar, xi):
+    """Eq. (16) with its denominator cleared, RETYPED:
+    ``R_j (I - xi^/2) - R_i dRbar (I + xi^/2)``.  Algebraically Eq. (19), but arranged as two
+    products against Cayley's factors rather than a difference minus a half-sum."""
+    E = ihat(xi) / 2.0
+    return R_j @ (np.eye(3) - E) - (R_i @ dRbar) @ (np.eye(3) + E)
+
+
+@pytest.mark.claim("M2-F30")
+def test_f30_eq19_matches_a_retyped_cleared_eq16_at_large_xi():
+    """``src``'s Rai Eq. (19) against the RETYPED denominator-cleared Eq. (16), the mirror
+    of the F29 test (which checks ``src``'s Eq. (22b) against a retyped Eq. (19)).
+
+    Pass 12 (M2-F30, A11): ``src``'s Eq. (19) was only ever checked at small ``|xi|``
+    (``test_c09`` |xi| <= 0.35, ``test_c11`` |Gamma| <~ 0.09).  A ``1/2 -> 1/2 + 3e-14``
+    slip broke the C11 identity by 2.2e-13 (beyond the claim's own 1e-13) unnoticed.
+
+    (a) ``xi = J_R (b_g - bbar_g)`` with ``J_R ~ N(0, 1)``, ``|b| <= 0.5``: absolute 1e-14.
+        Clean 8.9e-16; A11 1.9e-13.
+    (b) ``|xi| = 2 tan(theta/2)``, ``theta ~ U(0, 3)`` (up to the M2-C07 chart edge, |xi| up
+        to 28.2): the residual's entries reach ~25, so the bound scales as
+        ``1e-14 (1 + |xi|)``.  Clean 4.4e-16 x (1 + |xi|); A11 5.3e-14 x (1 + |xi|)."""
+    rng = _rng(20261016)
+    worst_j = 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        J_R = rng.standard_normal((3, 3))
+        xi = J_R @ (rng.uniform(-0.5, 0.5, 3) - rng.uniform(-0.5, 0.5, 3))
+        worst_j = max(worst_j, mabs(B2.rotation_residual_eq19(R_i, R_j, dRbar, xi),
+                                    _cleared_eq16(R_i, R_j, dRbar, xi)))
+    assert worst_j <= F30_EQ19_ABS, (
+        f"rotation_residual_eq19 at J_R ~ N(0, 1) vs retyped cleared Eq. (16): "
+        f"{worst_j:.3e} > {F30_EQ19_ABS:.0e}")
+
+    rng = _rng(20261017)
+    worst_c = 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        u = rng.standard_normal(3)
+        xi = 2.0 * np.tan(rng.uniform(0.0, 3.0) / 2.0) * u / np.linalg.norm(u)
+        err = mabs(B2.rotation_residual_eq19(R_i, R_j, dRbar, xi),
+                   _cleared_eq16(R_i, R_j, dRbar, xi))
+        worst_c = max(worst_c, err / (1.0 + float(np.linalg.norm(xi))))
+    assert worst_c <= F30_EQ19_PER_XI, (
+        f"rotation_residual_eq19 up to the C07 chart edge vs retyped cleared Eq. (16): "
+        f"{worst_c:.3e} x (1 + |xi|) > {F30_EQ19_PER_XI:.0e} x (1 + |xi|)")
 
 
 #: positive densities down to the smallest positive normal float and the smallest

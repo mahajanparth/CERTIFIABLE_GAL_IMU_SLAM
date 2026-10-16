@@ -1991,3 +1991,82 @@ def test_pass11_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS11_REQUIRED == {m[0] for m in PASS11_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-12 sweep (docs/verification/stage-b_m2-baselines_pass12.md
+# Sec. 5.4, finding M2-F30), replayed as REAL FILE EDITS.  Both sat in the band between
+# tau/10 and tau = 1e-13 that the C11-facing bounds left open, and A11 also exploited that
+# ``src``'s Eq. (19) was never checked against a reference at large |xi|.  The killers are
+# the F29 Eq. (22b)-vs-retyped-Eq. (19) test (bound now 1e-14) and the new F30
+# Eq. (19)-vs-retyped-cleared-Eq. (16) test; both compare ``src`` with a retyped DIFFERENT
+# equation, never with a copy of ``src``.
+# ======================================================================================
+
+_P12_EQ19 = _ID + "test_f30_eq19_matches_a_retyped_cleared_eq16_at_large_xi"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS12_MUTANTS = [
+    # Eq. (22b) Rbreve's Gamma/2 x (1 + 5e-14): 6.1e-14 abs at |Gamma| ~ 2 vs 1e-14 (clean
+    # 8.9e-16).
+    ("A07", "preintegration_cayley.py",
+     [("    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0)",
+       "    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0 * (1.0 + 5e-14))")],
+     (_P11_EQ22B,), ("rotation_residual_eq22b at large Gamma vs retyped Eq. (19)",)),
+    # Eq. (19) 1/2 -> 1/2 + 3e-14: 1.9e-13 abs at J_R ~ N(0, 1) vs 1e-14 (clean 8.9e-16).
+    ("A11", "preintegration_cayley.py",
+     [("    return (R_j - A) - 0.5 * (R_j + A) @ hat(xi)\n",
+       "    return (R_j - A) - (0.5 + 3e-14) * (R_j + A) @ hat(xi)\n")],
+     (_P12_EQ19,), ("rotation_residual_eq19 at J_R ~ N(0, 1) vs retyped cleared Eq. (16)",)),
+]
+
+PASS12_REQUIRED = {"A07", "A11"}
+
+
+@pytest.fixture(scope="module")
+def pass12_runs(tmp_path_factory):
+    """The unmutated control and every PASS12 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS12_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass12_control"), killers)
+    assert code == 0, f"control copy fails a pass-12 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass12_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS12_MUTANTS))
+
+
+@pytest.mark.claim("M2-F30")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS12_MUTANTS,
+                         ids=[m[0] for m in PASS12_MUTANTS])
+def test_pass12_mutant_is_killed_as_a_file_edit(pass12_runs, mutant_id, src_file, edit,
+                                                killers, messages):
+    """Each pass-12 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass12_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F30")
+def test_pass12_killers_are_reference_checks():
+    """Every pass-12 killer lives in the input-dependence module (never this file), and
+    every listed survivor is replayed.  This checks LOCATION only; that each killer is a
+    reference check (src vs a retyped different equation) was established by reading
+    them: F29 compares src's Eq. (22b) with a retyped Eq. (19), F30 compares src's
+    Eq. (19) with a retyped denominator-cleared Eq. (16)."""
+    for m in PASS12_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS12_REQUIRED == {m[0] for m in PASS12_MUTANTS}
