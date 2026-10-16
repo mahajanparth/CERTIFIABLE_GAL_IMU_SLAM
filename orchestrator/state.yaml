@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -405,10 +405,20 @@ milestones:
   - role: implementer
     agent_id: impl-M1-010-remediation
     started: '2026-10-15T23:49:12+00:00'
+    finished: '2026-10-16T01:27:23+00:00'
+    outcome: completed
+    note: '176 passed; harness 101/101 (10 new). Tests only, src unchanged: conftest G retyped literal,
+      C53 calls endpoint without g and pins G_DEFAULT to literal and gtsam MakeSharedU(9.81); signed both-sign
+      gravity guard (clean >= 2.102); A5 negative-theta ValueError tested; A4 test-side note (culprit
+      is gtsam Gal3 Logmap, round trip 1.8e-7). C52 domain wording "in every implementation" is in the
+      claim field and left for a deriver edit. Commit 8e1ecae.'
+  - role: verifier
+    agent_id: verify-M1-011
+    started: '2026-10-16T01:27:23+00:00'
     finished: null
     outcome: running
-    note: Kill F22 (pin G_DEFAULT independently) and F23 (both-sign gravity guard); advisories A4, A5.
-      F24 pending owner decision.
+    note: Tenth pass with a fresh planted claim; rules on F22/F23 (8e1ecae) and re-rules F24 under rule
+      4.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -596,6 +606,7 @@ milestones:
       because conftest takes G = gal3.G_DEFAULT and C53 passes gtsam''s gravity explicitly. Fix: an independent
       gravity literal in tests, assert G_DEFAULT against it (or gtsam MakeSharedU(9.81)), call endpoint
       without g in C53.'
+    note: Remediated in 8e1ecae; awaiting verifier ruling.
   - id: M1-F23
     resolved: false
     summary: 'Gravity guard admits a half-space distribution (H_HEMI: g_y >= 0); under it g_y -> |g_y|
@@ -603,6 +614,7 @@ milestones:
       require every component to take both signs with magnitude >= 1 (recorded blocks meet this at >=
       2.10). Advisories: A4 C52 domain text says near-pi disagreement occurs ''in every implementation''
       -- false (src 2.7e-15, gtsam ~1e-7); A5 negative-theta ValueError in gamma_coefficients untested.'
+    note: Remediated in 8e1ecae; awaiting verifier ruling.
   - id: M1-F24
     resolved: false
     summary: 'Rounding-band survivors (verify-M1-010): B1/B2 so3_exp and batch Rodrigues Taylor c + th^6/200000
@@ -610,10 +622,15 @@ milestones:
       vs 3.5e-16), B4 kappa1 t4/720.00002 (5.8e-16 vs 1.1e-16). The pass-8 pins (1.3x/2.3x/4.5x clean)
       still admit them; rule 1''s threshold is at or below 1 ulp here. PROCESS DECISION PENDING (owner):
       pins ~1 ulp above clean, or a sub-ulp floor in the equivalence rules.'
+    note: 'Owner chose a sub-ulp floor. Rule 4, sub-ulp floor (owner decision 2026-10-15): a mutant is
+      equivalent if its sup-norm error over the affected domain exceeds the clean sup-norm error by at
+      most 2 ulp of the quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x inside the
+      tightest claim tolerance for that quantity. Applies to every milestone. To be re-ruled under rule
+      4 by the next verifier.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -860,10 +877,18 @@ milestones:
   - role: verifier
     agent_id: verify-M2-012
     started: '2026-10-15T23:30:12+00:00'
+    finished: '2026-10-16T01:27:23+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C35 (minus-sign Forster prediction off DOP853 by 2.4525 m = |g| Dt^2). 25/25
+      confirmed; F29 FIXED (own 60-digit mpmath covariance agrees with the complex-step reference to <=
+      1.2e-14; old R0^T chart was 1.7e-10 off at 4000 steps). 60 new mutants: 43 killed, 15 equivalent,
+      2 non-equivalent (F30). Commit d6f52f8.'
+  - role: implementer
+    agent_id: impl-M2-016-remediation
+    started: '2026-10-16T01:27:23+00:00'
     finished: null
     outcome: running
-    note: Twelfth pass with a fresh planted claim; rules on F29 (75f941e) incl. the complex-step reference
-      change.
+    note: 'Kill F30: tighten Eq. (22b) test to 1e-14; mirror Eq. (19) reference test at large |xi|/|Gamma|.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1104,7 +1129,7 @@ milestones:
     resolution: Ruled FIXED by verify-M2-011 (docs/verification/stage-b_m2-baselines_pass11.md); remainder
       is M2-F29.
   - id: M2-F29
-    resolved: false
+    resolved: true
     summary: '6 non-equivalent survivors (verify-M2-011), all from per-step angles outside the tested
       1e-7..0.5 rad band: Z07 B1 noise input I - K/2 above |w dt| > 0.6 (cov error 0.17 at 0.7 rad); Z08
       A_RR = I below 1e-8 in B1 and B2 (7.7e-6 rel at 5e-9 rad/step over 4000 steps -- stationary IMU);
@@ -1115,10 +1140,25 @@ milestones:
       per-step angles 3e-9, 9e-9 rad (>= 1000 steps) and 1, 2, 3 rad (widen _cexp |t| <= 4 guard) to F28_STEP_ANGLES;
       tighten test_c11 to 1e-14 or widen its bbar_g range.'
     note: Remediated in 75f941e; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M2-012 (docs/verification/stage-b_m2-baselines_pass12.md); remainder
+      is M2-F30.
+  - id: M2-F30
+    resolved: false
+    summary: '2 non-equivalent survivors (verify-M2-012): A07 Eq. (22b) Rbreve Gamma/2 x(1+5e-14) moves
+      the residual 7.9e-14 at |Gamma| ~ 2 (clean 8.9e-16) under both C11-facing tests'' 1e-13 bound; A11
+      Eq. (19) 1/2 -> 1/2 + 3e-14 breaks the C11 identity by 2.2e-13 (> claim''s 1e-13) and no test notices
+      -- src''s Eq. (19) is never checked against a reference at large |xi| or |Gamma| (test_c11 covers
+      |Gamma| <~ 0.09). Fix: tighten the F29 Eq. (22b) test to 1e-14; add the mirror test, src rotation_residual_eq19
+      vs a retyped Eq. (22b) or denominator-cleared Eq. (16) at J_R ~ N(0,1) and |xi| up to the C07 chart
+      edge, bound 1e-14. Notes: J_FD_EPS 1e-7 round-off-limited (1e-6 8x better), C_FD_EPS 1e-5 beats
+      1e-6 by 12x -- inside tolerances, not defects. Rule 4, sub-ulp floor (owner decision 2026-10-15):
+      a mutant is equivalent if its sup-norm error over the affected domain exceeds the clean sup-norm
+      error by at most 2 ulp of the quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x
+      inside the tightest claim tolerance for that quantity. Applies to every milestone.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M3-S05
@@ -1242,9 +1282,19 @@ milestones:
   - role: verifier
     agent_id: verify-M3-005
     started: '2026-10-15T23:29:19+00:00'
+    finished: '2026-10-16T01:27:23+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C44 (diag(1,1,-1) satisfies both orthogonality families, handedness error
+      2; without P2 the QCQP converged to det -1 in 83/180 blocks). 36/36 confirmed; F06 FIXED. 176 new
+      mutants: 175 killed of 183 runs incl. replays; 8 survived, 5 equivalent, 3 non-equivalent (F07). No spurious feasible points.
+      Commit e6823a1.'
+  - role: implementer
+    agent_id: impl-M3-007
+    started: '2026-10-16T01:27:23+00:00'
     finished: null
     outcome: running
-    note: Fifth pass with a fresh planted claim; rules on F06 (519864f).
+    note: 'Kill F07: anisotropic rho-dominant decoder guard, gravity shape test, isfinite in make_params;
+      loosen fragile projection bounds; read-only cached Instance arrays.'
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1308,7 +1358,7 @@ milestones:
     resolution: Ruled FIXED by verify-M3-004 (docs/verification/stage-b_m3-qcqp-derivation_pass4.md);
       remainder is M3-F06.
   - id: M3-F06
-    resolved: false
+    resolved: true
     summary: '7 non-equivalent low survivors (verify-M3-004): (1) truth_state returns one shared bias
       array for all keyframes, the cached Instance b_true -- in-place edits corrupt other keyframes and
       the cache; (2) truth_state velocity arrays alias Instance.truth; (3) cost.terms default variant
@@ -1321,6 +1371,22 @@ milestones:
       Q; redundant rows rank-deficient (472/453); C35 margin needs rotations orthogonal to ~1e-15; report
       rounded point''s own constraint residual.'
     note: Remediated in 519864f; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M3-005 (docs/verification/stage-b_m3-qcqp-derivation_pass5.md);
+      remainder is M3-F07.
+  - id: M3-F07
+    resolved: false
+    summary: '3 non-equivalent low survivors (verify-M3-005): p5-lf-zmax-pre-s decoder max|z| skips the
+      rho entries in the anisotropic layout (n=136 z with rho ~1e13, s=1 decodes instead of raising);
+      p5-gb-guard-noshape make_params([0,0,-9.81,0]) accepted, 4th entry dropped -- the advertised shape
+      check is untested; p5-gb-guard-finite make_params accepts g_z = -inf -- add an isfinite check in
+      src plus a test. Non-blocking: projection orth/det bounds (4e-15) only ~1.2x over the worst of 21
+      seeds and share LAPACK SVD with src -- loosen or drop them (the pin kills with ~5x); gravity test
+      bound to C24 is nominal. M4 risks: dense Q cancellation (1.0e-8 vs factored 6.2e-22); handedness
+      rows are load-bearing (C44) -- never prune P2/RH/RS; Instance arrays writable while cached -- make
+      them read-only. Rule 4, sub-ulp floor (owner decision 2026-10-15): a mutant is equivalent if its
+      sup-norm error over the affected domain exceeds the clean sup-norm error by at most 2 ulp of the
+      quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x inside the tightest claim tolerance
+      for that quantity. Applies to every milestone.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
