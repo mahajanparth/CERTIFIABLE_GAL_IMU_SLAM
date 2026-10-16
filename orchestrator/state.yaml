@@ -630,7 +630,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -886,9 +886,19 @@ milestones:
   - role: implementer
     agent_id: impl-M2-016-remediation
     started: '2026-10-16T01:27:23+00:00'
+    finished: '2026-10-16T01:38:02+00:00'
+    outcome: completed
+    note: '279 passed (slow incl.); harness 104/104 file-edit replays killed incl. A07, A11. F29 Eq. (22b)
+      test tightened to 1e-14 (clean 8.9e-16, 11x; A07 6.1e-14). New src Eq. (19) vs retyped cleared Eq.
+      (16): (a) J_R ~ N(0,1), 1e-14 abs (A11 1.9e-13); (b) up to the C07 chart edge |xi| = 28.2 with bound
+      1e-14*(1+|xi|) -- orchestrator accepted the scaled bound (flat 1e-14 would leave 2.8x headroom at
+      residual ~25). src and claims unchanged. Commit 803f6e9.'
+  - role: verifier
+    agent_id: verify-M2-013
+    started: '2026-10-16T01:38:02+00:00'
     finished: null
     outcome: running
-    note: 'Kill F30: tighten Eq. (22b) test to 1e-14; mirror Eq. (19) reference test at large |xi|/|Gamma|.'
+    note: Thirteenth pass with a fresh planted claim; rules on F30 (803f6e9) under rules 1-4.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1155,6 +1165,7 @@ milestones:
       a mutant is equivalent if its sup-norm error over the affected domain exceeds the clean sup-norm
       error by at most 2 ulp of the quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x
       inside the tightest claim tolerance for that quantity. Applies to every milestone.'
+    note: Remediated in 803f6e9; awaiting verifier ruling.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
