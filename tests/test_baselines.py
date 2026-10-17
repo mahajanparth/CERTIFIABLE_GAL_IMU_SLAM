@@ -802,6 +802,9 @@ def test_c07_cayley_map_and_its_right_jacobian():
         worst_right = max(worst_right, _max_abs(numeric, B2.cay(phi) @ T.hat(Jd)))
         worst_left = max(worst_left, _max_abs(numeric, T.hat(Jd) @ B2.cay(phi)))
     assert worst_right <= 1e-5, f"right convention {worst_right:.3e}"
+    # M2-F32: a SUP over the 300 directions, never per direction.  For d parallel to phi
+    # the two conventions coincide (pass 13: 4.0e-8 at d = phi / |phi|) and the minimum
+    # over 300 unit directions was 0.025, so a per-direction lower bound would be false.
     assert worst_left >= 1e-1, f"left convention should fail, got {worst_left:.3e}"
 
 

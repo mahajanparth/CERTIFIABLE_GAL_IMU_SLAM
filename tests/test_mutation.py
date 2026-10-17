@@ -2070,3 +2070,112 @@ def test_pass12_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS12_REQUIRED == {m[0] for m in PASS12_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-13 sweep (docs/verification/stage-b_m2-baselines_pass13.md
+# Sec. 5.4 / 5.3, findings M2-F31 and M2-F32), replayed as REAL FILE EDITS.
+#
+# P01-P03 (M2-F31) act on ``src``'s Eq. (19) only at large |xi|.  F30 part (b)'s bound was
+# 1e-14 (1 + |xi|), i.e. 2.9e-13 absolute at the chart edge, 2.9x C11's own 1e-13; it is now
+# 2e-15 (1 + |xi|) (<= 5.84e-14 anywhere on the domain).  The killer compares ``src``'s
+# Eq. (19) with the RETYPED denominator-cleared Eq. (16), never with a copy of ``src``.
+#
+# B07 and B76 (M2-F32) were ruled EQUIVALENT by the verifier (no claim sees them); they
+# are replayed because the two properties they break are now pinned against independent
+# references: ``has_noise`` is False at zero densities, and ``so3_log`` on
+# (2 pi / 3, 161.8 deg) against the 60-digit mpmath Exp.
+# ======================================================================================
+
+_P13_EQ19 = _P12_EQ19
+_P13_HAS_NOISE = _ID + "test_f32_has_noise_is_false_at_zero_densities"
+_P13_LOG = _ID + "test_f32_so3_log_between_2pi_3_and_162_degrees_against_mpmath"
+_P13_EQ19_LINE = "    return (R_j - A) - 0.5 * (R_j + A) @ hat(xi)\n"
+_P13_PARTB = "rotation_residual_eq19 up to the C07 chart edge vs retyped cleared Eq. (16)"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS13_MUTANTS = [
+    # Eq. (19) 1/2 -> 1/2 + 4e-15 for |xi| > 10: C11 identity off 1.81e-13 (pass 13);
+    # F30 (b) 7.2e-15 x (1 + |xi|) vs 2e-15 (clean 4.1e-16).
+    ("P01", "preintegration_cayley.py",
+     [(_P13_EQ19_LINE,
+       "    return (R_j - A) - (0.5 + (4e-15 if float(np.dot(xi, xi)) > 100.0 else 0.0))"
+       " * (R_j + A) @ hat(xi)\n")],
+     (_P13_EQ19,), (_P13_PARTB,)),
+    # Eq. (19) + 2e-13 (every entry) for |xi| > 20: C11 off 2.04e-13, C09 on-manifold
+    # 2.21e-13 (pass 13); F30 (b) 9.6e-15 x (1 + |xi|) vs 2e-15.
+    ("P02", "preintegration_cayley.py",
+     [(_P13_EQ19_LINE,
+       "    return ((R_j - A) - 0.5 * (R_j + A) @ hat(xi)"
+       " + (2e-13 if float(np.dot(xi, xi)) > 400.0 else 0.0))\n")],
+     (_P13_EQ19,), (_P13_PARTB,)),
+    # Eq. (19) xi x (1 + 8e-15) for |xi| > 5: C11 off 1.81e-13 (pass 13); F30 (b)
+    # 7.2e-15 x (1 + |xi|) vs 2e-15.
+    ("P03", "preintegration_cayley.py",
+     [(_P13_EQ19_LINE,
+       "    return (R_j - A) - 0.5 * (R_j + A) @ hat(np.asarray(xi, dtype=float)"
+       " * ((1.0 + 8e-15) if float(np.dot(xi, xi)) > 25.0 else 1.0))\n")],
+     (_P13_EQ19,), (_P13_PARTB,)),
+    # has_noise: sigma_a >= 0 -> True at zero densities (covariance unchanged: exact 0).
+    ("B07", "preintegration_forster.py",
+     [("                    or np.any(np.asarray(self.sigma_a) > 0.0))",
+       "                    or np.any(np.asarray(self.sigma_a) >= 0.0))")],
+     (_P13_HAS_NOISE,), ("has_noise is True, not False",)),
+    # so3_log keeps the generic theta / (2 sin theta) branch up to cos = -0.95: 4.4e-15 ..
+    # 5.3e-15 at 156-162 deg vs 2e-15 (clean <= 8.9e-16).
+    ("B76", "trajectory.py",
+     [("LOG_NEAR_PI_COS = -0.5\n", "LOG_NEAR_PI_COS = -0.95\n")],
+     (_P13_LOG,), ("vs mpmath",)),
+]
+
+PASS13_REQUIRED = {"P01", "P02", "P03", "B07", "B76"}
+
+
+@pytest.fixture(scope="module")
+def pass13_runs(tmp_path_factory):
+    """The unmutated control and every PASS13 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS13_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass13_control"), killers)
+    assert code == 0, f"control copy fails a pass-13 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass13_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS13_MUTANTS))
+
+
+@pytest.mark.claim("M2-F31")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS13_MUTANTS,
+                         ids=[m[0] for m in PASS13_MUTANTS])
+def test_pass13_mutant_is_killed_as_a_file_edit(pass13_runs, mutant_id, src_file, edit,
+                                                killers, messages):
+    """Each pass-13 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass13_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F31")
+def test_pass13_killers_are_reference_checks():
+    """Every pass-13 killer lives in the input-dependence module (never this file), and
+    every listed survivor is replayed.  LOCATION only; that each killer is a reference
+    check was established by reading them: F30 (b) compares src's Eq. (19) with a retyped
+    cleared Eq. (16); the F32 so3_log test compares src with a 60-digit mpmath Exp; the
+    F32 has_noise test checks the flag against the stated rule (no positive density ->
+    False), not against src."""
+    for m in PASS13_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS13_REQUIRED == {m[0] for m in PASS13_MUTANTS}

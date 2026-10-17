@@ -29,7 +29,9 @@ src/trajectory.py
 hat(a)                       a                     test_traj_so3_helpers
 vee(A)                       A                     test_traj_so3_helpers
 so3_exp(w)                   w (both branches)     test_traj_so3_helpers
-so3_log(R)                   R (both branches)     test_traj_so3_helpers
+so3_log(R)                   R (both branches)     test_traj_so3_helpers,
+                             (2 pi/3 .. 161.8 deg) test_f32_so3_log_between_2pi_3_and_
+                                                     162_degrees_against_mpmath
 M1(w, T)                     w (both branches), T  test_traj_M1_M2
 M2(w, T)                     w (both branches), T  test_traj_M1_M2
 NavTriple(R, v, p)           R, v, p               test_traj_navtriple_and_edge_fields,
@@ -63,6 +65,8 @@ ForsterPreintegration(...)   bias_hat (b_g, b_a    test_b1_single_step_reads_eve
 .has_noise                   sigma_g, sigma_a      test_b1_single_step_reads_every_field
                              (+ the cov gate,      test_f23_initial_covariance_propagates_
                              M2-F23)                 at_zero_density
+                             (False at zero,       test_f32_has_noise_is_false_at_zero_
+                             M2-F32)                 densities
 .noise_covariances(dt)       dt, sigma_g, sigma_a  test_b1_noise_covariances
 .retract(phi)                phi                   test_b1_single_step_reads_every_field
 ._propagate_covariance       (via integrate_*)     test_b1_single_step_reads_every_field,
@@ -2603,9 +2607,26 @@ def test_f29_eq22b_matches_a_retyped_eq19_at_large_gamma():
 
 #: M2-F30 (pass 12, A11): ``src``'s Eq. (19) against an independent reference at large
 #: ``|xi|``.  Clean: <= 8.9e-16 abs (J_R ~ N(0, 1) regime) and <= 4.4e-16 x (1 + |xi|) (chart
-#: regime, |xi| up to 2 tan(1.5) = 28.2), over five seeds each, so >= 11x / 22x headroom.
+#: regime, |xi| up to 2 tan(1.5) = 28.2), so >= 11x / 4.5x headroom.
+#:
+#: M2-F31 (pass 13, P01-P03): the chart-regime bound was 1e-14 (1 + |xi|), i.e. 2.9e-13
+#: ABSOLUTE at the chart edge -- 2.9x C11's own 1e-13 -- and three Eq. (19) edits acting
+#: only at large |xi| broke the C11 identity by 1.8e-13 .. 2.0e-13 under it.  It is now
+#: 2e-15 (1 + |xi|): at most 2e-15 x (1 + 28.2) = 5.84e-14 anywhere on the domain, which is
+#: strictly inside C11's 1e-13 and C09's tau/10 = 1e-13 at EVERY |xi| <= 28.2.  Clean, per
+#: (1 + |xi|), over 11 seeds of the test's distribution: <= 4.44e-16 (4.5x headroom).
 F30_EQ19_ABS = 1e-14
-F30_EQ19_PER_XI = 1e-14
+F30_EQ19_PER_XI = 2e-15
+#: M2-F31 part (c): the C11 identity itself at the chart edge, scaled like part (b) and
+#: for the same reason.  A FLAT 1e-14 is not attainable there: Y' = R_j hat(J_R b_g) has
+#: entries ~|xi| ~ 28, whose ulp is 3.6e-15, and the clean error reaches 7.1e-15 in both
+#: comparisons over 20 seeds of this distribution (1.4x headroom), and 1.07e-14 for src
+#: Eq. (22b) vs src Eq. (19) when ``J_R bbar_g`` (not ``bbar_g``) is drawn U(-0.5, 0.5) -- a
+#: clean FAILURE.  Per (1 + |xi|) clean is <= 6.1e-16 over 20 seeds (3.3x headroom; 4.4e-16
+#: at the test's seed); max over the domain 5.84e-14 < C11's 1e-13.
+F31_C11_PER_XI = 2e-15
+#: the C07 chart edge, ``2 tan(3 / 2)``; no bound below may exceed a claim tolerance there
+F31_CHART_EDGE = 2.0 * np.tan(1.5)
 
 
 def _cleared_eq16(R_i, R_j, dRbar, xi):
@@ -2629,7 +2650,17 @@ def test_f30_eq19_matches_a_retyped_cleared_eq16_at_large_xi():
         Clean 8.9e-16; A11 1.9e-13.
     (b) ``|xi| = 2 tan(theta/2)``, ``theta ~ U(0, 3)`` (up to the M2-C07 chart edge, |xi| up
         to 28.2): the residual's entries reach ~25, so the bound scales as
-        ``1e-14 (1 + |xi|)``.  Clean 4.4e-16 x (1 + |xi|); A11 5.3e-14 x (1 + |xi|)."""
+        ``2e-15 (1 + |xi|)`` (M2-F31: it was ``1e-14 (1 + |xi|)``, 2.9e-13 absolute at the
+        chart edge).  Clean 4.4e-16 x (1 + |xi|); A11 5.3e-14 x (1 + |xi|); pass-13 P01 /
+        P02 / P03 7.2e-15 / 9.6e-15 / 7.2e-15 x (1 + |xi|).
+    (c) the C11 identity itself at the chart edge: ``xi = J_R (b_g - bbar_g)`` with ``J_R`` a
+        scaled rotation, ``bbar_g ~ U(-0.5, 0.5)`` and ``b_g`` chosen so ``|xi|`` follows (b);
+        ``src``'s Eq. (22b) against the RETYPED cleared Eq. (16) at the same ``xi``, and
+        against ``src``'s Eq. (19) (the identity as C11 states it), at ``2e-15 (1 + |xi|)``."""
+    # every bound here must stay strictly inside C11's 1e-13 on the WHOLE domain (M2-F31)
+    assert F30_EQ19_ABS < 1e-13
+    assert F30_EQ19_PER_XI * (1.0 + F31_CHART_EDGE) < 1e-13
+    assert F31_C11_PER_XI * (1.0 + F31_CHART_EDGE) < 1e-13
     rng = _rng(20261016)
     worst_j = 0.0
     for _ in range(2000):
@@ -2658,6 +2689,88 @@ def test_f30_eq19_matches_a_retyped_cleared_eq16_at_large_xi():
     assert worst_c <= F30_EQ19_PER_XI, (
         f"rotation_residual_eq19 up to the C07 chart edge vs retyped cleared Eq. (16): "
         f"{worst_c:.3e} x (1 + |xi|) > {F30_EQ19_PER_XI:.0e} x (1 + |xi|)")
+
+    rng = _rng(20261018)
+    worst_ref, worst_19 = 0.0, 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        u = rng.standard_normal(3)
+        target = 2.0 * np.tan(rng.uniform(0.0, 3.0) / 2.0) * u / np.linalg.norm(u)
+        J_R = rng.uniform(0.5, 2.0) * iexp(rng.uniform(-np.pi, np.pi, 3))
+        bbar_g = rng.uniform(-0.5, 0.5, 3)
+        b_g = bbar_g + np.linalg.solve(J_R, target)
+        xi = J_R @ (b_g - bbar_g)               # the claim's xi, as evaluated in double
+        scale = 1.0 + float(np.linalg.norm(xi))
+        r22 = B2.rotation_residual_eq22b(R_i, R_j, dRbar, J_R, b_g, bbar_g)
+        worst_ref = max(worst_ref, mabs(r22, _cleared_eq16(R_i, R_j, dRbar, xi)) / scale)
+        worst_19 = max(worst_19, mabs(r22, B2.rotation_residual_eq19(R_i, R_j, dRbar, xi))
+                       / scale)
+    assert worst_ref <= F31_C11_PER_XI, (
+        f"C11 at the C07 chart edge: rotation_residual_eq22b vs retyped cleared Eq. (16): "
+        f"{worst_ref:.3e} x (1 + |xi|) > {F31_C11_PER_XI:.0e} x (1 + |xi|)")
+    assert worst_19 <= F31_C11_PER_XI, (
+        f"C11 at the C07 chart edge: rotation_residual_eq22b vs rotation_residual_eq19: "
+        f"{worst_19:.3e} x (1 + |xi|) > {F31_C11_PER_XI:.0e} x (1 + |xi|)")
+
+
+# --------------------------------------------------------------------------------------
+# M2-F32 (pass 13, advisory): two properties no test pinned
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.claim("M2-F32")
+def test_f32_has_noise_is_false_at_zero_densities():
+    """``has_noise`` is "some density is POSITIVE", so at exactly zero densities it is
+    False -- for B1 and B2, with the defaults, scalar zeros, per-axis zero vectors, and
+    every mixture.  Pass 13 (B07): ``sigma_a >= 0`` made it True at zero densities.  The
+    covariance is unaffected there (``A 0 A^T + B 0 B^T`` is exactly 0), so only the flag
+    itself can see it; the positive side is pinned by the F27 / F28 has_noise tests."""
+    failures = []
+    zeros = (("default", None), ("0.0", 0.0), ("np.zeros(3)", np.zeros(3)),
+             ("[0, 0, 0] list", [0.0, 0.0, 0.0]))
+    for cls in (B1.ForsterPreintegration, B2.CayleyPreintegration):
+        for gname, sg in zeros:
+            for aname, sa in zeros:
+                kw = {}
+                if sg is not None:
+                    kw["sigma_g"] = sg
+                if sa is not None:
+                    kw["sigma_a"] = sa
+                pim = cls(bias_hat=BIAS_BOTH.copy(), **kw)
+                if pim.has_noise is not False:
+                    failures.append(f"{cls.__name__} with sigma_g = {gname}, sigma_a = "
+                                    f"{aname}: has_noise is {pim.has_noise!r}, not False")
+    assert not failures, "has_noise at zero densities:\n" + "\n".join(failures)
+
+
+#: ``so3_log`` on (2 pi / 3, arccos(-0.95) = 161.8 deg), against the 60-digit ``mpmath``
+#: Exp: absolute.  NOT a claim tolerance -- no claim reaches this angle range (pass 13,
+#: B76); it pins the branch choice the docstring of ``LOG_NEAR_PI_COS`` argues for.  Clean
+#: <= 8.9e-16 (2 ulp of pi) over 5 seeds x 1600 draws, so 2.25x headroom; with the generic
+#: branch kept up to cos = -0.95 (B76) the error grows like eps / sin(theta) and reaches
+#: 4.4e-15 .. 5.3e-15 on the same draws.
+F32_LOG_ABS = 2e-15
+
+
+@pytest.mark.claim("M2-F32")
+def test_f32_so3_log_between_2pi_3_and_162_degrees_against_mpmath():
+    """``so3_log(R)`` for ``R`` = the 60-digit ``mpmath`` Exp of ``phi`` (rounded to
+    double), ``|phi|`` on 16 angles from ``2 pi / 3 + 1e-3`` to ``arccos(-0.95) - 1e-4``,
+    100 random axes each, against ``phi``, absolute :data:`F32_LOG_ABS`."""
+    mpmath = _mp()
+    rng = _rng(20261019)
+    failures = []
+    for th in np.linspace(2.0 * np.pi / 3.0 + 1e-3, np.arccos(-0.95) - 1e-4, 16):
+        worst = 0.0
+        for _ in range(100):
+            phi = th * _unit(rng.normal(size=3))
+            R = _mp_to_np(_mp_exp(mpmath, [mpmath.mpf(float(x)) for x in phi]))
+            worst = max(worst, mabs(T.so3_log(R), phi))
+        _check(failures, f"so3_log at theta = {np.degrees(th):.2f} deg vs mpmath", worst,
+               F32_LOG_ABS)
+    _assert_no_failures(failures)
 
 
 #: positive densities down to the smallest positive normal float and the smallest
