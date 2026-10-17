@@ -1252,7 +1252,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M3-S06
@@ -1395,9 +1395,19 @@ milestones:
   - role: verifier
     agent_id: verify-M3-006
     started: '2026-10-16T02:15:06+00:00'
+    finished: '2026-10-17T01:33:55+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C45 (tr(tau I - Sigma^-1) <= 0 with equality only if isotropic; indefinite
+      in 10000/10000; on the instance the iso/aniso cost ratio spans [0.13, 1.73]). 36/36 confirmed; F07
+      FIXED (735/750 output groups bitwise identical, the 15 differences intended). 217 new mutants: 182
+      killed, 31 equivalent, 4 non-equivalent (F08). Interrupted once by the API session limit and resumed.
+      Commit 9ce5819.'
+  - role: implementer
+    agent_id: impl-M3-008
+    started: '2026-10-17T01:33:55+00:00'
     finished: null
     outcome: running
-    note: Sixth pass with a fresh planted claim; rules on F07 (75c7908) under rules 1-4.
+    note: Kill F08; fix F09 (pickle regression, cov .base write path) and F10 (assert guards -> raises).
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1477,7 +1487,7 @@ milestones:
     resolution: Ruled FIXED by verify-M3-005 (docs/verification/stage-b_m3-qcqp-derivation_pass5.md);
       remainder is M3-F07.
   - id: M3-F07
-    resolved: false
+    resolved: true
     summary: '3 non-equivalent low survivors (verify-M3-005): p5-lf-zmax-pre-s decoder max|z| skips the
       rho entries in the anisotropic layout (n=136 z with rho ~1e13, s=1 decodes instead of raising);
       p5-gb-guard-noshape make_params([0,0,-9.81,0]) accepted, 4th entry dropped -- the advertised shape
@@ -1491,6 +1501,23 @@ milestones:
       quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x inside the tightest claim tolerance
       for that quantity. Applies to every milestone.'
     note: Remediated in 75c7908; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M3-006 (docs/verification/stage-b_m3-qcqp-derivation_pass6.md);
+      remainder is M3-F08.
+  - id: M3-F08
+    resolved: false
+    summary: '4 non-equivalent low survivors (verify-M3-006): p6-lf-dec-asarray-noflt (decoder np.asarray(z)
+      without dtype=float: float32 z decodes to float32 blocks, projection orthogonality 3.8e-8; float16
+      raises TypeError); p6-cn-vech-tril (vech via tril_indices breaks its documented row-major upper
+      order, unpinned); p6-gb-nav-t1 (nav_to_gal3 default t 0.0 -> 1.0, default untested); p6-in-bbar-nocopy
+      (dropping bbar''s .copy() makes build_instance freeze the CALLER''s array -- the freeze made that
+      copy load-bearing). Non-blocking, from the orchestrator-requested freeze: M3-F09 (a) REGRESSION
+      -- Instance no longer pickles/deepcopies/asdicts (mappingproxy), it pickled at 519864f; (b) cov
+      blocks are views whose .base is a writable 9x9 copy; (c) GTSAM PIMs mutable (acknowledged). M3-F10:
+      terms(inst, BASE, ''aniso'') guard and Layout.rho_v/rho_p rely on assert -- under python -O the
+      vel/pos IMU cost is silently dropped. M4 risks: dense Q cancellation (1.2e-8 vs 6.7e-22), handedness
+      load-bearing (87/177 det -1 without P2), redundant rank 453/472, isotropic weights NOT conservative
+      (C45), C35 tolerance sampler-fragile (7.4e-10 with expm rotations), surrogate gap at bbar = 0, no
+      MOSEK.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
