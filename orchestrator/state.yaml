@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -415,10 +415,20 @@ milestones:
   - role: verifier
     agent_id: verify-M1-011
     started: '2026-10-16T01:27:23+00:00'
+    finished: '2026-10-17T01:20:17+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C64 (claimed position block off up to 8.73 over 1e4 pairs; true v1 t2 to
+      3.6e-15). 55/55 confirmed; F22, F23 FIXED for named survivors. F24 re-ruled under rule 4 with "claim
+      tolerance" read as the test pins: all five non-equivalent (orchestrator: claims C22/C42 state exact
+      identities, so rule 4(b) needs an owner clarification). 118 mutants: 74 killed, 21 equivalent, 23
+      non-equivalent (F24-F29). Interrupted once by the API session limit and resumed. Commit 28bcc9a.'
+  - role: implementer
+    agent_id: impl-M1-011-remediation
+    started: '2026-10-17T01:20:17+00:00'
     finished: null
     outcome: running
-    note: Tenth pass with a fresh planted claim; rules on F22/F23 (8e1ecae) and re-rules F24 under rule
-      4.
+    note: Kill F25-F29 (gravity defaults, magnitude and antipodal fixture guards, c2 pin, theta = THETA_SMALL
+      branch). F24 pending owner clarification of rule 4(b).
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -601,20 +611,24 @@ milestones:
     note: Remediated in 3f735b8; awaiting verifier ruling.
     resolution: Ruled FIXED by verify-M1-010 (docs/verification/m1-gal3-mechanics_pass9.md).
   - id: M1-F22
-    resolved: false
+    resolved: true
     summary: 'G_DEFAULT is not pinned (verify-M1-010): N30 G_DEFAULT = (0,0,+9.81) and N29 -9.80665 survive
       because conftest takes G = gal3.G_DEFAULT and C53 passes gtsam''s gravity explicitly. Fix: an independent
       gravity literal in tests, assert G_DEFAULT against it (or gtsam MakeSharedU(9.81)), call endpoint
       without g in C53.'
     note: Remediated in 8e1ecae; awaiting verifier ruling.
+    resolution: Ruled FIXED for the named survivors by verify-M1-011 (docs/verification/m1-gal3-mechanics_pass10.md);
+      remainder is M1-F25..F27.
   - id: M1-F23
-    resolved: false
+    resolved: true
     summary: 'Gravity guard admits a half-space distribution (H_HEMI: g_y >= 0); under it g_y -> |g_y|
       in gravity_lift (YABS_LIFT) and integrate_truth (YABS_TRUTH) survive. Fix: for blocks of >= 3 draws
       require every component to take both signs with magnitude >= 1 (recorded blocks meet this at >=
       2.10). Advisories: A4 C52 domain text says near-pi disagreement occurs ''in every implementation''
       -- false (src 2.7e-15, gtsam ~1e-7); A5 negative-theta ValueError in gamma_coefficients untested.'
     note: Remediated in 8e1ecae; awaiting verifier ruling.
+    resolution: Ruled FIXED for the named survivors by verify-M1-011 (docs/verification/m1-gal3-mechanics_pass10.md);
+      remainder is M1-F25..F27.
   - id: M1-F24
     resolved: false
     summary: 'Rounding-band survivors (verify-M1-010): B1/B2 so3_exp and batch Rodrigues Taylor c + th^6/200000
@@ -626,7 +640,37 @@ milestones:
       equivalent if its sup-norm error over the affected domain exceeds the clean sup-norm error by at
       most 2 ulp of the quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x inside the
       tightest claim tolerance for that quantity. Applies to every milestone. To be re-ruled under rule
-      4 by the next verifier.'
+      4 by the next verifier. verify-M1-011: all five (plus F19 kappa2 t4/5040.0001) ruled non-equivalent;
+      B3b and B4 fail rule 4(a) outright; B1/B2/B3 fail only 4(b) because it was read against the tightened
+      test pins (1.3e-15, 1e-15), not a claim statement (C22/C42 are exact identities). Pending owner
+      clarification of 4(b).'
+  - id: M1-F25
+    resolved: false
+    summary: '8 per-function g=G_DEFAULT defaults never exercised (gravity_lift, gravity_lift_uncorrected,
+      gravity_element, gravity_generator, endpoint_uncorrected, endpoint_right_time_shift, forster_endpoint,
+      integrate_truth): D_* mutants (default -> -G_DEFAULT) survive. Kill: call each once without g against
+      the retyped literal, or pin each default via inspect.signature.'
+  - id: M1-F26
+    resolved: false
+    summary: 'Gravity magnitude never guarded: H_MAG2 fixture (|g| = 9.81 on every draw, same directions)
+      passes every guard and masks GNORM_* (g -> 9.81 g/|g| in gravity_lift, integrate_truth, forster_endpoint;
+      killed alone at C31 3.145). Kill: require max|g|/min|g| >= 2 on blocks of >= 3 draws, or a retyped
+      literal g set with several magnitudes.'
+  - id: M1-F27
+    resolved: false
+    summary: 'Per-draw antipodal flips (H_ODD: g -> -g where g_x g_y g_z < 0) pass every guard and mask
+      PFLIP_* (lift, truth; killed alone at C31 12.45). Kill: run each random-g check on both g and -g,
+      or add a retyped literal octant set.'
+  - id: M1-F28
+    resolved: false
+    summary: 'c2 accuracy pinned only at 1e-11: F20 (c2 rewritten 1/t2 - theta s/(2 omc t2), rel change
+      1.14e-12) survives. Kill: c2 rel error <= 2.0e-12 on a fixed dense grid on [0.05, 0.055] (clean
+      1.68e-12, F20 2.43e-12).'
+  - id: M1-F29
+    resolved: false
+    summary: 'Branch at exactly theta = THETA_SMALL untested: F41 (theta <= THETA_SMALL) gives kappa1
+      7.75e-13 off and Gamma1inv Gamma1 - I = 1.3e-14 at 0.05. Kill: kappa1 rel error <= 1e-14 at theta
+      = 0.05 exactly. Advisory A4 still open: C52 domain text ''in every implementation'' (deriver edit).'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
