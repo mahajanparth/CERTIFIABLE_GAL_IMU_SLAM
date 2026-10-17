@@ -1,98 +1,65 @@
-# RESUME — where this was left (2026-10-12, session limit)
+# RESUME — where this was left (2026-10-16)
 
-Read this first when restarting. Everything is committed and pushed **except one file**, called out below.
-
-## One-line state
-
-**95 claims derived · 88 confirmed · 7 refuted · 0 milestone gates passed.** All three active milestones
-were independently verified and **blocked on 17 findings**. Remediation was running on all three when the
-session limit hit; it is **partial and must be re-dispatched**.
+Read this first when restarting. The ledger (`orchestrator/state.yaml`) is the source of truth; this file is a
+pointer to it.
 
 ```bash
 cd /home/parth/Desktop/CERTIFIABLE_GAL_IMU_SLAM && source .venv/bin/activate
-PYTHONPATH=. python -m orchestrator.cli status      # computed progress
-PYTHONPATH=. python -m orchestrator.cli gate M0     # blocking reasons, exits 1
+PYTHONPATH=. python -m orchestrator.cli status      # computed progress (orchestrator is not on PATH)
+PYTHONPATH=. python -m orchestrator.cli agents      # run history; "running" rows are in flight
 ```
 
-## ⚠️ The one file not in git — do not lose it
+## One-line state
 
-`orchestrator/seeds.local.yaml` holds the **seeded defects** (deliberately false claims used to test whether
-verifiers are adversarial). It is gitignored **on purpose** — a committed seed is readable by the verifier it
-calibrates, which has already happened once (see below).
+M0 gate PASSED. M1, M2, M3: every real claim CONFIRMED by independent verifiers and every recent planted claim
+caught; each is blocked only by mutation-test survivors under the zero-survivor gate. M4/M5 not started.
 
-- Lives at: `orchestrator/seeds.local.yaml`
-- Backup at: `/home/parth/Desktop/.cgis_SEEDS_BACKUP_DO_NOT_COMMIT.yaml`
+| M | Worktree | Last verifier | In flight |
+|---|---|---|---|
+| M1 | `.cgis_worktrees/m1` | pass 9 (b763ab2): 55/55, F18-F21 fixed, F22-F24 opened | verify-M1-011 (pass 10): F22/F23 remediated in 8e1ecae; F24 to be re-ruled under rule 4 |
+| M2 | `.cgis_worktrees/m2` | pass 12 (d6f52f8): 25/25, F29 fixed, F30 opened | verify-M2-013 (pass 13): F30 remediated in 803f6e9 |
+| M3 | `.cgis_worktrees/m3` | pass 5 (e6823a1): 36/36, F06 fixed, F07 opened | verify-M3-006 (pass 6): F07 remediated in 75c7908 |
 
-A fresh `git clone` will **not** have it. If you clone elsewhere, copy the backup into `orchestrator/`.
+All three verifiers were interrupted once by the API session limit (2026-10-15) and resumed with their scratch
+intact (`m1/_p10/`, `m2/results/p13/`, `m3/_v6scratch/`). If they are gone, re-dispatch with the same brief and seed.
 
-## Exact state per milestone
+## Loop per milestone
 
-| M | Worktree | Suite now | Verifier verdict | Seed | Remediation |
-|---|---|---|---|---|---|
-| **M0** | `.cgis_worktrees/m0` | **14 failed / 26 passed** | 15 CONFIRMED | caught | **MID-REWRITE — broken** |
-| **M1** | `.cgis_worktrees/m1` | **74 passed** | 54 CONFIRMED / 1 REFUTED | both caught | **not started** |
-| **M2** | `.cgis_worktrees/m2` | **65 passed / 1 failed** | 19 CONFIRMED / 5 REFUTED | caught | **nearly done** |
-| M3–M5 | — | — | — | — | not started (need M1 + M2 gated first) |
+remediate -> full suite + mutation harness -> independent verifier with a FRESH planted claim -> record -> gate.
 
-Worktrees are at `/home/parth/Desktop/.cgis_worktrees/{m0,m1,m2,m6}`. Every branch is pushed.
+## Gate equivalence rules (owner decisions)
 
-### M0 — mid-rewrite, currently broken
-The remediation agent was rewriting `tests/test_conventions.py` so tests **read the table** instead of
-hard-coding values (finding M0-F01: 40 of 41 corrupted table fields survived the old suite). It stopped
-partway. The 14 failures are a half-finished rewrite, **not** a regression in the facts — `src/conventions.py`
-was verified correct against the primary sources entry by entry. Commit is labelled `WIP`.
+Zero surviving non-equivalent mutants. Equivalent only by: (1) effect <= 1/10 of the tightest claim tolerance;
+(2) rounding floor, within 8 ulp and no worse than clean; (3) a written proof; (4) **sub-ulp floor (2026-10-15)**:
+at most 2 ulp of the quantity's magnitude worse than clean AND >= 100x inside the tightest claim tolerance.
 
-**To resume:** re-dispatch an M0 remediation agent with the brief in this file's "Re-dispatch" section. It
-should start from the current WIP commit and finish the rewrite, then build `tests/test_mutation.py`.
+## Seeds — the one file not in git
 
-### M1 — clean, remediation not started
-The agent died before editing anything. Suite is green at the last verified commit plus recorded verdicts.
-Six findings to fix, worst first:
-- **M1-F01** the "5000-step ground truth" is decorative — the endpoint relation is an exact algebraic identity
-  of the discrete recursion for *any* `dt`, so a 2-step fixture passes; the Euler state is actually `1.58e-4`
-  from exact, 10x above the tests' own `1e-5` bar. Validate against `solve_ivp(DOP853, rtol=atol=1e-13)`.
-- **M1-F02** constant `(omega, a)` hides swapped accumulation order; `dR @ E -> E @ dR` survives all 55 tests.
+`orchestrator/seeds.local.yaml` (gitignored on purpose). Backup: `/home/parth/Desktop/.cgis_SEEDS_BACKUP_DO_NOT_COMMIT.yaml`.
+Live seeds: M1-S11 (brief M1-C64), M2-S14 (M2-C36), M3-S06 (M3-C45). Write a fresh one, numerically confirmed false,
+for every re-verification. Never put a seed in a tracked file or a dashboard row.
 
-### M2 — one mutant left
-65/66 passing. The single failure is `test_mutation.py::test_mutant_is_killed[M07]` — a mutation that still
-survives `test_c20_galilean_bias_correction_is_right_composed_in_gal3`. Everything else in the remediation
-landed. **The `src/` edits in the WIP commit are not independently re-verified** — re-run the M2 verifier
-after M07 is killed.
+## Ledger editing gotcha
 
-## Re-dispatch
+`ledger.save()` strips the hand-kept seed history blocks for M0-M2. Edit via load/save to a temp file and splice back
+only the touched milestone section, keeping its original `seed:` block.
 
-Every finding, with full measurements, is recorded in two places:
-- `orchestrator/state.yaml` → `blocking_findings` per milestone (the gate reads these)
-- `docs/verification/<branch>.md` on each branch — the verifier's full report
+## Published pages
 
-The original remediation briefs are reproducible from those. The pattern for each milestone is:
-**remediate → re-run the suite → re-run an independent verifier with a FRESH seed → gate.**
+- Agent board (dashboard, fed from its database): https://claude.ai/artifact/KJFrVUJ8BoEdQF55854rV5 —
+  regenerate rows with `PYTHONPATH=. python -m orchestrator.export_dashboard <dir>` and batch-write the changed ones.
+- M3 derivation: https://claude.ai/artifact/D3Nu6aisyzUUFBdW3tZj2k (rebuilt from e6823a1).
 
-**A fresh seed is required for every re-verification.** The current seeds have now been seen by their verifiers.
+## Open items needing an owner or deriver
 
-## Things learned the hard way — keep these
-
-1. **Seeds must never touch a tracked file.** Two derivers wrote seeds into `docs/claims/`; the strip-commit
-   left the originals in `git log -p`. The M2 implementer found its seed that way and disclosed it. Both were
-   voided and replaced. Derivers must report seeds in their hand-back message only.
-2. **Green tests are not evidence.** In all three milestones every claim was bound and passing, and
-   independent verification still found something disqualifying. Mutation testing is what exposed it — make it
-   a standing verifier deliverable.
-3. **Constant / commuting inputs hide order bugs.** Found independently in M1 and M2. Any test of
-   composition or accumulation order needs a time-varying stream.
-4. **The gate now blocks on unresolved verifier findings**, not just on claim status. A claim bound to a test
-   that cannot fail only *looks* verified.
-
-## Corrections made to the original research contract
-
-Kept verbatim at `docs/original_research_contract.md`; `CLAUDE.md` is the corrected, authoritative version.
-
-- **F2** the endpoint relation `X_j = H X_i D` is wrong twice (time block and a `+g*Dt^2` position error).
-  Corrected form reproduces Delama Eq. (18) **bit-identically**.
-- **F3** was incomplete: Cayley carries a `+(alpha/2)u` time coupling never tested at `alpha=0`.
-- **F9** wording was wrong: a 2-keyframe graph has nullity 6, but the null space is **not** the bias block.
-- **3 keyframes / 2 edges / GNSS anchors** is the minimal bias-observable instance, not 2 keyframes.
+- M1-C52 `domain` text says the near-pi disagreement occurs "in every implementation" — false (only gtsam's Gal3
+  Logmap, ~1e-7; src round-trips to 2.2e-15). Claim field: deriver edit.
+- M3 derivation doc cleanup: cites non-existent pre-flight F6/F10/F11; unexplained 39-variable gap vs Rai's
+  n = 39K + 6M + 16; stale measurements vs pass 5; one garbled sentence in Sec. c.3.
+- M4 risks (from M3 verifiers): dense z^T Q z cancellation (max|Q| ~1.1e10 — use the factored cost or rescale);
+  redundant families rank-deficient (472/453); handedness rows load-bearing (never prune P2/RH/RS); report each
+  rounded point's own constraint residual; no MOSEK, so results are not bit-comparable with published tables.
 
 ## Commits
 
-No `Co-Authored-By` trailer, no generated-with footer — your standing instruction. Author `parthmahajan`.
+No `Co-Authored-By` trailer, no generated-with footer. Author `parthmahajan`.
