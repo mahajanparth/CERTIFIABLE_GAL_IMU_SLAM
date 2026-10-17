@@ -13,7 +13,7 @@ from src import imu_dynamics as imu
 from src.gal3 import compose, exp, gal, unpack, wedge
 
 from . import ode_truth
-from .conftest import (G, assert_discrete_converges, assert_gravity_directions_diverse,
+from .conftest import (G, G_LITERAL_SET, assert_discrete_converges, assert_gravity_directions_diverse,
                        assert_rand_g_datasets, assert_stream_non_commuting, rand_axis,
                        rand_gravity, rand_rot, rng)
 
@@ -522,6 +522,26 @@ def test_forster_component_equations(endpoint_dataset, endpoint_datasets_rand_g)
         assert_discrete_converges(d)
         assert_stream_non_commuting(d)
 
+    # LITERAL-g FREE FALL (pass-10 M1-F26 / M1-F27), a BEHAVIOURAL backstop that no edit to
+    # the random-g fixture reaches: with a ZERO increment
+    # (dR, dv, dp) = (I, 0, 0) the Forster equations must give exact free fall,
+    # (R_i, v_i + g Dt, p_i + v_i Dt + g Dt^2 / 2), for each g of the retyped 8-octant,
+    # 8-magnitude G_LITERAL_SET and Dt = +0.4 / -0.3.  Mutation harness:
+    # forster_endpoint_unit_g_9.81 (under the |g| = 9.81 fixture).
+    assert_gravity_directions_diverse(G_LITERAL_SET)   # INPUT GUARD on the literal set
+    r_ff = rng(4310)
+    worst_ff = 0.0
+    for g_l in G_LITERAL_SET:
+        for Dt_ff in (0.4, -0.3):
+            R_i, v_i, p_i = rand_rot(r_ff), 2.0 * r_ff.normal(size=3), 5.0 * r_ff.normal(size=3)
+            R_f, v_f, p_f = gal3.forster_endpoint(R_i, v_i, p_i, I3, np.zeros(3), np.zeros(3),
+                                                  Dt_ff, g_l)
+            worst_ff = max(worst_ff,
+                           float(np.abs(R_f - R_i).max()),
+                           float(np.abs(v_f - (v_i + g_l * Dt_ff)).max()),
+                           float(np.abs(p_f - (p_i + v_i * Dt_ff + 0.5 * g_l * Dt_ff ** 2)).max()))
+    assert worst_ff <= 1e-12, worst_ff
+
 
 @pytest.mark.claim("M1-C44")
 def test_bias_correction_sign():
@@ -850,6 +870,36 @@ def test_gtsam_pim_predict_matches_both_forms():
                       float(np.abs(np.asarray(imu.G_DEFAULT, dtype=float) - g_stated).max()))
     assert np.shape(gal3.G_DEFAULT) == (3,), np.shape(gal3.G_DEFAULT)
     assert pin_default == 0.0, pin_default
+
+    # EVERY src function with a gravity default, called once WITHOUT g, must behave as
+    # the same call with the retyped g_stated passed explicitly (pass-10 M1-F25: only
+    # endpoint's default was exercised; `g=-G_DEFAULT` in any of these 8 survived).
+    # Behavioural, not inspect.signature: what is pinned is what a caller omitting g gets.
+    r_d = rng(5301)
+    R_d0, v_d0, p_d0 = rand_rot(r_d), 2.0 * r_d.normal(size=3), 5.0 * r_d.normal(size=3)
+    X_d0 = gal(R_d0, v_d0, p_d0, 0.0)
+    D_d0 = gal(rand_rot(r_d, scale=0.4), r_d.normal(size=3), r_d.normal(size=3), 0.37)
+    om_d0, acc_d0 = r_d.normal(size=3), r_d.normal(size=3)
+    default_calls = {
+        "gravity_lift": lambda **kw: gal3.gravity_lift(0.37, **kw),
+        "gravity_lift_uncorrected": lambda **kw: gal3.gravity_lift_uncorrected(0.37, **kw),
+        "gravity_element": lambda **kw: gal3.gravity_element(0.37, **kw),
+        "gravity_generator": lambda **kw: gal3.gravity_generator(**kw),
+        "endpoint_uncorrected": lambda **kw: gal3.endpoint_uncorrected(X_d0, D_d0, **kw),
+        "endpoint_right_time_shift":
+            lambda **kw: gal3.endpoint_right_time_shift(X_d0, D_d0, **kw),
+        "forster_endpoint": lambda **kw: np.concatenate([np.ravel(a) for a in (
+            gal3.forster_endpoint(R_d0, v_d0, p_d0, *unpack(D_d0)[:3], 0.37, **kw))]),
+        "integrate_truth": lambda **kw: np.concatenate([np.ravel(a) for a in (
+            *imu.integrate_truth(R_d0, v_d0, p_d0, om_d0, acc_d0, 1e-3, 370, **kw)[0],)]),
+    }
+    bad_defaults = {}
+    for name, call in default_calls.items():
+        diff = float(np.abs(np.asarray(call(), dtype=float)
+                            - np.asarray(call(g=g_stated), dtype=float)).max())
+        if not diff == 0.0:
+            bad_defaults[name] = diff
+    assert not bad_defaults, bad_defaults
 
 
 @pytest.mark.claim("M1-C54")

@@ -11,6 +11,7 @@ import scipy.linalg as sla
 from scipy.spatial.transform import Rotation
 
 from src import gal3
+from src import imu_dynamics as imu
 from src.gal3 import (
     Ad,
     Ad_apply,
@@ -35,6 +36,7 @@ from src.gal3 import (
 
 from .conftest import (  # noqa: F401  (relative import keeps the helpers in one place)
     G,
+    G_LITERAL_SET,
     _rotvec_to_matrix,
     rand_axis,
     rand_gravity,
@@ -554,6 +556,29 @@ def test_log_exp_roundtrip():
     # S08) is 3.31e-15 relative here, against clean 4.30e-16 (headroom 2.3x).  A branch
     # at n < 1e-8 (relative n^2/3 ~ 3e-17) is below rounding and equivalent.
     assert worst_small_rel <= 1e-15, worst_small_rel
+    # The band just ABOVE the n -> 0 branch (pass-10 M1-F24, owner rule 4 of 2026-10-16:
+    # equivalent only within 2 ulp of clean).  The branch moved to n < 5e-8 (theta < 1e-7,
+    # pass-9 B3b) replaces 2 atan2(n, qw)/n by 2/qw, a SYSTEMATIC relative error n^2/3
+    # (<= 8.3e-16) that the log-uniform set above samples too sparsely to see reliably.
+    # 5000 R with theta log-uniform in [5e-8, 1.2e-7] (seed offset 2202), against the
+    # same 50-digit log of the rounded R: sup relative error <= 6.5e-16 (clean 3.59e-16,
+    # 1.81x headroom; B3b 9.65e-16) and the MEAN signed relative error along phi,
+    # |mean((so3_log(R) - ref) . ref / |ref|^2)| <= 1.5e-16 (clean 3.18e-17, 4.7x
+    # headroom; B3b 3.61e-16).  The branch at n < 3e-8 (B3, ruled equivalent) gives 4.79e-16
+    # and 6.57e-17 here: it passes both.
+    r_edge = rng(2202)
+    th_edge = np.exp(r_edge.uniform(np.log(5e-8), np.log(1.2e-7), size=5000))
+    phi_edge = th_edge[:, None] * rand_axis(r_edge, 5000)
+    R_edge = Rotation.from_rotvec(phi_edge).as_matrix()
+    edge_sup = edge_bias = 0.0
+    for R in R_edge:
+        ref = log_mp(R)
+        d_edge = so3_log(R) - ref
+        edge_sup = max(edge_sup, float(np.abs(d_edge).max() / np.linalg.norm(ref)))
+        edge_bias += float(np.dot(d_edge, ref) / np.dot(ref, ref))
+    edge_bias = abs(edge_bias) / len(R_edge)
+    assert edge_bias <= 1.5e-16, edge_bias
+    assert edge_sup <= 6.5e-16, edge_sup
     # Pass-6 so3_log mutants ruled EQUIVALENT by the verifier, with their measured effect
     # (change of so3_log's output, mutant vs clean) against the tolerance-equivalence
     # threshold (1/10 of the tightest bound on so3_log's output in the affected region):
@@ -716,17 +741,65 @@ def test_gamma1_invertibility_and_taylor_branch():
                                     [np.nextafter(5e-2, 0.0)]])
         assert float(grid_poly.max()) < 5e-2 and grid_poly.size == 2001   # INPUT GUARD
         poly_err = [0.0] * 4
+        poly_bias_sum = [0.0] * 4
         for th in grid_poly:
             got = gal3.gamma_coefficients(float(th))
             ref = stated_poly(float(th))
             for i in range(4):
                 poly_err[i] = max(poly_err[i],
                                   float(abs(mp.mpf(got[i]) - ref[i]) / abs(ref[i])))
+                if 0.045 <= th < 0.05:
+                    poly_bias_sum[i] += float((mp.mpf(got[i]) - ref[i]) / ref[i])
+        assert int(((grid_poly >= 0.045) & (grid_poly < 0.05)).sum()) == 1501   # INPUT GUARD
     poly_k1, poly_k2, poly_k3, poly_c2 = poly_err
     assert poly_k1 <= 1e-15, poly_k1
     assert poly_k2 <= 1e-15, poly_k2
     assert poly_k3 <= 1e-15, poly_k3
     assert poly_c2 <= 1e-15, poly_c2
+    # kappa1 / kappa2 tightened (pass-10 M1-F24, owner rule 4 of 2026-10-16: a mutant is
+    # equivalent only within 2 ulp of clean).  On the 1501 theta of the grid in
+    # [0.045, 0.05), where a th^4 perturbation is largest, the MEAN signed relative error
+    # of each coefficient against the stated polynomial: <= 1e-16 for all four (clean
+    # |mean| 4.0e-19 / 5.37e-17 / 5.89e-17 / 5.54e-17 -- the last three are the
+    # rounding of 1/6, 1/24, 1/12; kappa1 t4/720.00002 (pass-9 B4) -3.96e-16, kappa2
+    # t4/5040.0001 (pass-10 F19) -1.72e-16).  And the sup over the grid: kappa1 <= 2.0e-16
+    # (clean 1.09e-16, 1.84x headroom; B4 5.86e-16), kappa2 <= 3.0e-16 (clean 2.18e-16,
+    # 1.38x; F19 3.51e-16).
+    poly_bias = [abs(b) / 1501 for b in poly_bias_sum]
+    assert max(poly_bias) <= 1e-16, poly_bias
+    assert poly_k1 <= 2.0e-16, poly_k1
+    assert poly_k2 <= 3.0e-16, poly_k2
+    # The CLOSED-FORM branch at and just above the switch (pass-10 M1-F28 / M1-F29).
+    # * At theta = 5e-2 EXACTLY, C24 ("Taylor ... for theta < 5e-2") puts the closed form;
+    #   so at 5e-2 and at the next double above, kappa1's relative error against the
+    #   60-digit reference must be <= 1e-14 (clean: 1.69e-16 and 5.3e-17).  Using the
+    #   Taylor branch at 5e-2 (`theta <= THETA_SMALL`, pass-10 F41) gives 7.75e-13.  The
+    #   double just BELOW is the Taylor branch and is pinned by k1_below above.
+    # * c2's closed form on a FIXED dense grid of 4000 theta in [0.05, 0.055] (where its
+    #   cancellation is worst), relative error <= 2.0e-12 against 60-digit mpmath (clean:
+    #   1.68e-12, i.e. 1.19x headroom -- sound only because the grid is fixed).  The
+    #   algebraically identical rewrite 1/t2 - theta s / (2 omc t2) (pass-10 F20) gives
+    #   2.43e-12; the 1e-11 sweep above admits it.
+    with mp.workdps(60):
+        def closed_ref(th):
+            T = mp.mpf(th)
+            s_, c_ = mp.sin(T), mp.cos(T)
+            return (1 - c_) / T ** 2, (1 - T * s_ / (2 * (1 - c_))) / T ** 2
+
+        k1_at_switch = 0.0
+        for th in (5e-2, float(np.nextafter(5e-2, 1.0))):
+            k1_ref, _ = closed_ref(th)
+            k1_at_switch = max(k1_at_switch, float(
+                abs(mp.mpf(gal3.gamma_coefficients(th)[0]) - k1_ref) / abs(k1_ref)))
+        grid_c2 = np.linspace(0.05, 0.055, 4000)
+        assert grid_c2[0] == 5e-2 and grid_c2.size == 4000   # INPUT GUARD
+        c2_dense = 0.0
+        for th in grid_c2:
+            _, c2_ref = closed_ref(float(th))
+            c2_dense = max(c2_dense, float(
+                abs(mp.mpf(gal3.gamma_coefficients(float(th))[3]) - c2_ref) / abs(c2_ref)))
+    assert k1_at_switch <= 1e-14, k1_at_switch
+    assert c2_dense <= 2.0e-12, c2_dense
     # EQUIVALENT MUTANTS (tolerance-equivalence rule: no output moves by more than 1/10
     # of the tightest tolerance any claim states for it):
     # * pass-6 Q17, kappa2 = (1 - s/theta)/theta^2 instead of (theta - s)/(theta^3):
@@ -1128,6 +1201,39 @@ def test_endpoint_relation(endpoint_dataset, endpoint_datasets_rand_g):
         # and that recursion really is a first-order discretisation of the ODE
         assert_discrete_converges(d)
         assert_stream_non_commuting(d)
+
+    # LITERAL-g FREE FALL (pass-10 M1-F26 / M1-F27), a BEHAVIOURAL backstop that no edit to
+    # the random-g fixture reaches: for each g of the retyped
+    # 8-octant, 8-magnitude G_LITERAL_SET and Dt = +0.4 / -0.3,
+    # * a ZERO increment D = (I, 0, 0, Dt): X_j must be exact free fall,
+    #   (R_i, v_i + g Dt, p_i + v_i Dt + g Dt^2 / 2, 0) -- this is the H' block;
+    # * the recursion integrate_truth with omega = 0 and a constant body acceleration a:
+    #   the specific force f = g + R_i a is constant, so the first-order recursion is
+    #   EXACT: (R_i, v_i + f Dt, p_i + v_i Dt + f Dt^2 / 2).
+    # Mutation harness: g -> 9.81 g / |g| (gravity_lift_unit_g_9.81 / integrate_truth_
+    # unit_g_9.81, under the |g| = 9.81 fixture) and g -> -g where g_x g_y g_z < 0
+    # (..._odd_octant_flip, under the odd-octant-flipping fixture).
+    assert_gravity_directions_diverse(G_LITERAL_SET)   # INPUT GUARD on the literal set
+    r_ff = rng(3110)
+    worst_ff_lift = worst_ff_truth = 0.0
+    for g_l in G_LITERAL_SET:
+        for Dt_ff, n_ff in ((0.4, 400), (-0.3, 300)):
+            R_i, v_i, p_i = rand_rot(r_ff), 2.0 * r_ff.normal(size=3), 5.0 * r_ff.normal(size=3)
+            X_ff = gal3.endpoint(gal(R_i, v_i, p_i, 0.0),
+                                 gal(I3, np.zeros(3), np.zeros(3), Dt_ff), g_l)
+            ref_ff = gal(R_i, v_i + g_l * Dt_ff, p_i + v_i * Dt_ff + 0.5 * g_l * Dt_ff ** 2, 0.0)
+            worst_ff_lift = max(worst_ff_lift, float(np.abs(X_ff - ref_ff).max()))
+            a_ff = r_ff.normal(size=3)
+            f_ff = g_l + R_i @ a_ff
+            (R_t, v_t, p_t), _ = imu.integrate_truth(R_i, v_i, p_i, np.zeros(3), a_ff,
+                                                     Dt_ff / n_ff, n_ff, g_l)
+            worst_ff_truth = max(worst_ff_truth,
+                                 float(np.abs(R_t - R_i).max()),
+                                 float(np.abs(v_t - (v_i + f_ff * Dt_ff)).max()),
+                                 float(np.abs(p_t - (p_i + v_i * Dt_ff
+                                                     + 0.5 * f_ff * Dt_ff ** 2)).max()))
+    assert worst_ff_lift <= 1e-12, worst_ff_lift
+    assert worst_ff_truth <= 1e-11, worst_ff_truth
 
 
 @pytest.mark.claim("M1-C32")

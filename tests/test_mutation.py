@@ -143,6 +143,75 @@ YABS_TRUTH = ("src/imu_dynamics.py",
               "    g = np.asarray(g, dtype=float).reshape(3)\n"
               "    g = np.array([g[0], abs(g[1]), g[2]])\n\n    E_s")
 
+# pass-10 M1-F25: each per-function gravity default flipped (g=G_DEFAULT -> -G_DEFAULT)
+D_DEFAULTS = {
+    "gravity_lift": ("src/gal3.py", "def gravity_lift(Dt: float, g=G_DEFAULT)"),
+    "gravity_lift_uncorrected": ("src/gal3.py",
+                                 "def gravity_lift_uncorrected(Dt: float, g=G_DEFAULT)"),
+    "gravity_element": ("src/gal3.py", "def gravity_element(Dt: float, g=G_DEFAULT)"),
+    "gravity_generator": ("src/gal3.py", "def gravity_generator(g=G_DEFAULT)"),
+    "endpoint_uncorrected": ("src/gal3.py", "def endpoint_uncorrected(X_i, D_ij, g=G_DEFAULT)"),
+    "endpoint_right_time_shift": ("src/gal3.py",
+                                  "def endpoint_right_time_shift(X_i, D_ij, g=G_DEFAULT)"),
+    "forster_endpoint": ("src/gal3.py", "def forster_endpoint(R_i, v_i, p_i, dR, dv, dp, Dt, "
+                                        "g=G_DEFAULT)"),
+    "integrate_truth": ("src/imu_dynamics.py",
+                        "def integrate_truth(R0, v0, p0, omega, acc, dt, n, g=G_DEFAULT,"),
+}
+# pass-10 M1-F26: H_MAG2, |g| = 9.81 on every draw with the magnitude draw still consumed
+# (RNG stream, hence every direction, bit-identical to clean), and the GNORM defects it
+# masked (g -> 9.81 g / |g|: hard-coding the standard magnitude)
+H_MAG2 = ("tests/conftest.py", RAND_G_OLD,
+          "    r.uniform(2.0, 20.0, size=None if n is None else (n, 1))\n"
+          "    return 9.81 * rand_axis(r, n)\n")
+# pass-10 M1-F27: H_ODD, g -> -g wherever g_x g_y g_z < 0 (only the four even octants
+# remain), and the PFLIP defects it masked
+H_ODD = ("tests/conftest.py", RAND_G_OLD,
+         "    g = r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)\n"
+         "    flip = np.asarray(np.prod(g, axis=-1) < 0.0)[..., None]\n"
+         "    return np.where(flip, -g, g)\n")
+_LIFT_OLD = ("    g = np.asarray(g, dtype=float).reshape(3)\n"
+             "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, 0.0)\n")
+_TRUTH_OLD = "    g = np.asarray(g, dtype=float).reshape(3)\n\n    E_s"
+_FORST_OLD = ("    g = np.asarray(g, dtype=float).reshape(3)\n"
+              "    R_i = np.asarray(R_i, dtype=float)\n")
+_GNORM = "    g = 9.81 * g / np.linalg.norm(g)\n"
+_PFLIP = "    if g[0] * g[1] * g[2] < 0.0:\n        g = -g\n"
+_G_LINE = "    g = np.asarray(g, dtype=float).reshape(3)\n"
+_FF_LIFT = 'assert worst_ff_lift <= 1e-12, worst_ff_lift'      # the literal-g backstop
+_FF_TRUTH = 'assert worst_ff_truth <= 1e-11, worst_ff_truth'
+_FF_FORST = 'assert worst_ff <= 1e-12, worst_ff'
+_ODE_C31 = 'assert worst_ode <= 1e-9, (d["label"], worst_ode)'
+_ID_C31 = 'assert worst_id <= 1e-12, (d["label"], worst_id)'
+_ODE_C43 = 'assert worst <= 1e-9, (d["label"], worst)'
+# name -> (edit, test, needle ALONE (random-g datasets), needle under the masking fixture
+# with its guard switched off (the literal-g backstop))
+GNORM = {
+    "gravity_lift": (("src/gal3.py", _LIFT_OLD, _LIFT_OLD.replace(_G_LINE, _G_LINE + _GNORM)),
+                     C31, _ODE_C31, _FF_LIFT),
+    "integrate_truth": (("src/imu_dynamics.py", _TRUTH_OLD,
+                         _TRUTH_OLD.replace(_G_LINE, _G_LINE + _GNORM)),
+                        C31, _ID_C31, _FF_TRUTH),
+    "forster_endpoint": (("src/gal3.py", _FORST_OLD,
+                          _FORST_OLD.replace(_G_LINE, _G_LINE + _GNORM)),
+                         C43, _ODE_C43, _FF_FORST),
+}
+PFLIP = {
+    "gravity_lift": (("src/gal3.py", _LIFT_OLD, _LIFT_OLD.replace(_G_LINE, _G_LINE + _PFLIP)),
+                     C31, _ODE_C31, _FF_LIFT),
+    "integrate_truth": (("src/imu_dynamics.py", _TRUTH_OLD,
+                         _TRUTH_OLD.replace(_G_LINE, _G_LINE + _PFLIP)),
+                        C31, _ID_C31, _FF_TRUTH),
+}
+# the magnitude guard switched off (to show the literal-g backstop catches GNORM + H_MAG2
+# on its own; C31 / C43's 4-g datasets are exempt from the octant guard, so PFLIP + H_ODD
+# reaches the backstop with every guard in place)
+MAG_GUARD_OFF = ("tests/conftest.py", "min_signed=1.0, min_mag_ratio=2.0):",
+                 "min_signed=1.0, min_mag_ratio=0.0):")
+# tests holding a random-g block of m >= 8 draws (the octant guard's domain); C31, C34 and
+# C43 use only the 4-g datasets, C45 one draw
+OCTANT_TESTS = [C32, C33, C35, C36, C37, C38]
+
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
     # ---- previously SURVIVING ------------------------------------------------
@@ -758,6 +827,62 @@ MUTATIONS = {
         "src/gal3.py",
         "    if theta < 0.0:\n        raise ValueError(\"theta must be non-negative\")\n", "",
         [C24], {C24: "assert not not_rejected, not_rejected"},
+    ),
+    # ---- tenth-pass SURVIVORS (M1-F25..F29), killed on the intended assertion -------
+    **{f"{name}_default_g_points_up": (                           # pass-10 D_* (M1-F25)
+        path, sig, sig.replace("g=G_DEFAULT", "g=-G_DEFAULT"),
+        [C53], {C53: "assert not bad_defaults, bad_defaults"})
+       for name, (path, sig) in D_DEFAULTS.items()},
+    "fixture_rand_gravity_fixed_magnitude_9.81": (                # pass-10 H_MAG2 (M1-F26)
+        *H_MAG2, SPAN_TESTS,
+        {n: "assert mag_ratio >= min_mag_ratio, mag_ratio" for n in SPAN_TESTS},
+    ),
+    **{f"{name}_unit_g_9.81": (edit[0], edit[1], edit[2], [node], {node: alone})
+       for name, (edit, node, alone, _) in GNORM.items()},         # pass-10 GNORM alone
+    **{f"{name}_unit_g_9.81_under_fixed_magnitude_g": (           # pass-10 GNORM + H_MAG2
+        (H_MAG2, edit), None, None, [node],
+        {node: "assert mag_ratio >= min_mag_ratio, mag_ratio"})
+       for name, (edit, node, _, _) in GNORM.items()},
+    **{f"{name}_unit_g_9.81_under_fixed_magnitude_g_guard_off": (  # ... and the backstop
+        (H_MAG2, MAG_GUARD_OFF, edit), None, None, [node], {node: backstop})
+       for name, (edit, node, _, backstop) in GNORM.items()},
+    "fixture_rand_gravity_odd_octant_flip": (                     # pass-10 H_ODD (M1-F27)
+        *H_ODD, OCTANT_TESTS, {n: "assert octants >= 1, octants" for n in OCTANT_TESTS},
+    ),
+    **{f"{name}_odd_octant_flip": (edit[0], edit[1], edit[2], [node], {node: alone})
+       for name, (edit, node, alone, _) in PFLIP.items()},         # pass-10 PFLIP alone
+    **{f"{name}_odd_octant_flip_under_odd_octant_flip_g": (       # pass-10 PFLIP + H_ODD
+        (H_ODD, edit), None, None, [node], {node: backstop})
+       for name, (edit, node, _, backstop) in PFLIP.items()},
+    "gamma_c2_closed_form_split": (                               # pass-10 F20 (M1-F28)
+        "src/gal3.py",
+        "    c2 = (1.0 - theta * s / (2.0 * omc)) / t2\n",
+        "    c2 = 1.0 / t2 - theta * s / (2.0 * omc * t2)\n",
+        [C24], {C24: "assert c2_dense <= 2.0e-12, c2_dense"},
+    ),
+    # pass-9/10 M1-F24 under the owner's rule 4 of 2026-10-16 (2 ulp of clean): B1, B2, B3
+    # are equivalent; B3b, B4 and F19 exceed 2 ulp
+    "so3_log_small_branch_5e-8": (                                # pass-9 B3b (M1-F24)
+        "src/gal3.py", "    if n < 1e-10:\n", "    if n < 5e-8:\n",
+        [C22], {C22: "assert edge_bias <= 1.5e-16, edge_bias"},
+    ),
+    "gamma_kappa1_th4_over_720.00002": (                          # pass-9 B4 (M1-F24)
+        "src/gal3.py",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 720.0",
+        "kappa1 = 0.5 - t2 / 24.0 + t4 / 720.00002",
+        [C24], {C24: "assert max(poly_bias) <= 1e-16, poly_bias"},
+    ),
+    "gamma_kappa2_th4_over_5040.0001": (                          # pass-10 F19 (M1-F24)
+        "src/gal3.py",
+        "kappa2 = 1.0 / 6.0 - t2 / 120.0 + t4 / 5040.0",
+        "kappa2 = 1.0 / 6.0 - t2 / 120.0 + t4 / 5040.0001",
+        [C24], {C24: "assert max(poly_bias) <= 1e-16, poly_bias"},
+    ),
+    "gamma_coefficients_taylor_at_theta_small": (                 # pass-10 F41 (M1-F29)
+        "src/gal3.py",
+        "        raise ValueError(\"theta must be non-negative\")\n    if theta < THETA_SMALL:\n",
+        "        raise ValueError(\"theta must be non-negative\")\n    if theta <= THETA_SMALL:\n",
+        [C24], {C24: "assert k1_at_switch <= 1e-14, k1_at_switch"},
     ),
 }
 

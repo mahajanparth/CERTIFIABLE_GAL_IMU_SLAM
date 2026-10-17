@@ -23,6 +23,22 @@ SEED = 20241012
 #: ``gal3.G_DEFAULT`` is pinned against it (and against gtsam) in the M1-C53 test.
 G = np.array([0.0, 0.0, -9.81])
 
+#: RETYPED literal gravity set (pass-10 M1-F26 / M1-F27): one vector in EACH of the 8
+#: sign octants, with magnitudes 3.97 .. 14.6 (none equal to 9.81).  Unlike
+#: ``rand_gravity`` draws, no fixture edit can change these without a visible change to
+#: a literal, so a per-draw nonlinear g map in src (hard-coded |g|, sign flip in some
+#: octants) is caught regardless of how the random draws are distributed.
+G_LITERAL_SET = np.array([
+    [1.2, 2.3, 3.1],        # + + +
+    [4.0, 1.1, -6.5],       # + + -
+    [2.5, -7.0, 1.8],       # + - +
+    [9.0, -3.3, -11.0],     # + - -
+    [-1.4, 0.9, 3.6],       # - + +
+    [-5.5, 8.2, -1.7],      # - + -
+    [-0.8, -2.2, 3.5],      # - - +
+    [-6.0, -4.0, -9.81],    # - - -
+])
+
 
 def rng(offset: int = 0) -> np.random.Generator:
     """A fresh generator; ``offset`` keeps independent tests from sharing a stream."""
@@ -152,7 +168,7 @@ def rand_gravity(r, n=None):
 
 
 def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_component=1.0,
-                                      min_span=0.1, min_signed=1.0):
+                                      min_span=0.1, min_signed=1.0, min_mag_ratio=2.0):
     """INPUT GUARD on a block of random-g draws (not evidence about src).
 
     The random-g checks exist to catch defects that are invisible for g parallel to z,
@@ -187,6 +203,23 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
     suite.  Measured ``signed`` on the recorded blocks: 2.102 and 4.321 (the 4-g datasets,
     Dt = +0.4 / -0.3), 16.7..18.8 (the 400..2000-draw blocks); a half-space block has
     signed <= 0.  The single-draw C45 block is exempt (m < 3).
+
+    * for m >= 3, the MAGNITUDES vary: max |g| / min |g| >= ``min_mag_ratio`` (2.0)
+      (``mag_ratio``).
+    * for m >= 8, EVERY one of the 8 sign octants of g occurs at least once
+      (``octants``, the smallest octant count).
+
+    These close pass-10 M1-F26 / M1-F27, two fixtures that preserve every guard above
+    by construction: H_MAG2 (|g| = 9.81 on every draw, directions unchanged) masked a
+    src defect hard-coding the standard magnitude (g -> 9.81 g / |g|), and H_ODD
+    (g -> -g wherever g_x g_y g_z < 0; only four octants remain, each component still
+    takes both signs) masked the matching per-draw sign flip.  Measured on the
+    recorded blocks: mag_ratio 2.537 and 3.430 (the 4-g datasets, Dt = +0.4 / -0.3),
+    9.88..9.97 (the 400..2000-draw blocks); octants 38..229 (the 400..2000-draw
+    blocks; the 4-g datasets are exempt).  Under H_MAG2 mag_ratio is 1.0; under H_ODD
+    four octants are empty (octants = 0).  Guards on marginal statistics cannot exclude
+    every per-draw nonlinear map, so the behavioural backstop is ``G_LITERAL_SET``,
+    which no edit to ``rand_gravity`` reaches.
     """
     gs = np.atleast_2d(np.asarray(gs, dtype=float))
     u = gs / np.linalg.norm(gs, axis=1, keepdims=True)
@@ -208,7 +241,17 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
     if len(gs) >= 3:
         signed = float(min(gs.max(axis=0).min(), (-gs.min(axis=0)).min()))
         assert signed >= min_signed, signed
-    return off_z, perm_gap, spread, comp, span, signed
+    mag_ratio = None
+    if len(gs) >= 3:
+        mags = np.linalg.norm(gs, axis=1)
+        mag_ratio = float(mags.max() / mags.min())
+        assert mag_ratio >= min_mag_ratio, mag_ratio
+    octants = None
+    if len(gs) >= 8:
+        codes = ((gs > 0) * np.array([4, 2, 1])).sum(axis=1)
+        octants = int(np.bincount(codes, minlength=8).min())
+        assert octants >= 1, octants
+    return off_z, perm_gap, spread, comp, span, signed, mag_ratio, octants
 
 
 def assert_rand_g_datasets(datasets):
