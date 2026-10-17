@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -425,10 +425,22 @@ milestones:
   - role: implementer
     agent_id: impl-M1-011-remediation
     started: '2026-10-17T01:20:17+00:00'
+    finished: '2026-10-17T01:44:41+00:00'
+    outcome: completed
+    note: 204 passed (slow incl.); harness 129/129 (28 new), every earlier entry killed on its original
+      assertion. Tests only, src unchanged. F25 behavioural default checks (8 functions, exact 0.0); F26
+      mag_ratio >= 2 (thinnest real block 2.537); F27 octant guard plus G_LITERAL_SET (8 retyped vectors,
+      one per octant, |g| 3.97..14.6) with exact free-fall backstops; F28 c2_dense <= 2e-12 (clean 1.68e-12,
+      1.19x, fixed grid); F29 kappa1 at 0.05 exactly <= 1e-14; F24 B3b band pin in [5e-8, 1.2e-7] (sup
+      6.5e-16, clean 3.59e-16) and B4/F19 mean-signed-error pins (1e-16; kappa2 1.86x) plus sup pins (kappa1
+      2e-16, kappa2 3e-16). Several C22/C24/C31/C43/C53 test_hints no longer describe the tests (claim
+      yaml owner edit). Commit 0ebd5aa.
+  - role: verifier
+    agent_id: verify-M1-012
+    started: '2026-10-17T01:44:41+00:00'
     finished: null
     outcome: running
-    note: Kill F25-F29 (gravity defaults, magnitude and antipodal fixture guards, c2 pin, theta = THETA_SMALL
-      branch). F24 pending owner clarification of rule 4(b).
+    note: Eleventh pass with a fresh planted claim; rules on F24-F29 (0ebd5aa) under amended rule 4.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -646,34 +658,40 @@ milestones:
       clarification of 4(b). Rule 4 amended (owner decision 2026-10-16): the ''>= 100x inside the tightest
       claim tolerance'' clause is DROPPED; rule 4 is now only ''sup-norm error exceeds clean by at most
       2 ulp of the quantity''s magnitude (2*eps*max|value|)''. Under it B1, B2, B3 are equivalent; B3b,
-      B4, F19 still exceed 2 ulp and were added to impl-M1-011-remediation.'
+      B4, F19 still exceed 2 ulp and were added to impl-M1-011-remediation. Remediated in 0ebd5aa; awaiting
+      verifier ruling.'
   - id: M1-F25
     resolved: false
     summary: '8 per-function g=G_DEFAULT defaults never exercised (gravity_lift, gravity_lift_uncorrected,
       gravity_element, gravity_generator, endpoint_uncorrected, endpoint_right_time_shift, forster_endpoint,
       integrate_truth): D_* mutants (default -> -G_DEFAULT) survive. Kill: call each once without g against
       the retyped literal, or pin each default via inspect.signature.'
+    note: Remediated in 0ebd5aa; awaiting verifier ruling.
   - id: M1-F26
     resolved: false
     summary: 'Gravity magnitude never guarded: H_MAG2 fixture (|g| = 9.81 on every draw, same directions)
       passes every guard and masks GNORM_* (g -> 9.81 g/|g| in gravity_lift, integrate_truth, forster_endpoint;
       killed alone at C31 3.145). Kill: require max|g|/min|g| >= 2 on blocks of >= 3 draws, or a retyped
       literal g set with several magnitudes.'
+    note: Remediated in 0ebd5aa; awaiting verifier ruling.
   - id: M1-F27
     resolved: false
     summary: 'Per-draw antipodal flips (H_ODD: g -> -g where g_x g_y g_z < 0) pass every guard and mask
       PFLIP_* (lift, truth; killed alone at C31 12.45). Kill: run each random-g check on both g and -g,
       or add a retyped literal octant set.'
+    note: Remediated in 0ebd5aa; awaiting verifier ruling.
   - id: M1-F28
     resolved: false
     summary: 'c2 accuracy pinned only at 1e-11: F20 (c2 rewritten 1/t2 - theta s/(2 omc t2), rel change
       1.14e-12) survives. Kill: c2 rel error <= 2.0e-12 on a fixed dense grid on [0.05, 0.055] (clean
       1.68e-12, F20 2.43e-12).'
+    note: Remediated in 0ebd5aa; awaiting verifier ruling.
   - id: M1-F29
     resolved: false
     summary: 'Branch at exactly theta = THETA_SMALL untested: F41 (theta <= THETA_SMALL) gives kappa1
       7.75e-13 off and Gamma1inv Gamma1 - I = 1.3e-14 at 0.05. Kill: kappa1 rel error <= 1e-14 at theta
       = 0.05 exactly. Advisory A4 still open: C52 domain text ''in every implementation'' (deriver edit).'
+    note: Remediated in 0ebd5aa; awaiting verifier ruling.
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
