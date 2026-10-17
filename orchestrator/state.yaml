@@ -630,7 +630,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -896,9 +896,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-013
     started: '2026-10-16T01:38:02+00:00'
+    finished: '2026-10-17T01:13:10+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C36 (Sigma scales by k^2: deviation from k-linear 1.0 at k=2, from k^2 <=
+      4.3e-15). 25/25 confirmed. A07/A11 killed; retyped cleared Eq. (16) independent of src. 44 file
+      edits: 30 killed, 8 equivalent, 3 non-equivalent (F31). Interrupted once by the API session limit
+      and resumed. Commit 0e1d946.'
+  - role: implementer
+    agent_id: impl-M2-017-remediation
+    started: '2026-10-17T01:13:10+00:00'
     finished: null
     outcome: running
-    note: Thirteenth pass with a fresh planted claim; rules on F30 (803f6e9) under rules 1-4.
+    note: 'Kill F31: tighten part (b) to 2e-15*(1+|xi|), add C11 identity at the chart edge at 1e-14;
+      F32 advisories.'
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1153,7 +1163,7 @@ milestones:
     resolution: Ruled FIXED by verify-M2-012 (docs/verification/stage-b_m2-baselines_pass12.md); remainder
       is M2-F30.
   - id: M2-F30
-    resolved: false
+    resolved: true
     summary: '2 non-equivalent survivors (verify-M2-012): A07 Eq. (22b) Rbreve Gamma/2 x(1+5e-14) moves
       the residual 7.9e-14 at |Gamma| ~ 2 (clean 8.9e-16) under both C11-facing tests'' 1e-13 bound; A11
       Eq. (19) 1/2 -> 1/2 + 3e-14 breaks the C11 identity by 2.2e-13 (> claim''s 1e-13) and no test notices
@@ -1166,6 +1176,19 @@ milestones:
       error by at most 2 ulp of the quantity''s magnitude (2 * eps * max|value|), AND it stays >= 100x
       inside the tightest claim tolerance for that quantity. Applies to every milestone.'
     note: Remediated in 803f6e9; awaiting verifier ruling.
+    resolution: A07/A11 killed per verify-M2-013 (docs/verification/stage-b_m2-baselines_pass13.md); the
+      scaled part-(b) bound the orchestrator accepted is too loose -- remainder is M2-F31.
+  - id: M2-F31
+    resolved: false
+    summary: 'Part (b) of the F30 Eq. (19) test uses 1e-14*(1+|xi|), accepted by the orchestrator in error:
+      at the chart edge |xi| = 28.2 it allows 2.9e-13 absolute, 2.9x C11''s own 1e-13 tolerance, while
+      clean is 3.55e-15. Survivors (src Eq. (19) edits active only at large |xi|): P01 1/2 -> 1/2 + 4e-15
+      for |xi| > 10 (C11 identity off 1.81e-13); P02 +2e-13 for |xi| > 20 (C11 2.04e-13, C09 on-manifold
+      2.21e-13); P03 xi*(1+8e-15) for |xi| > 5 (C11 1.81e-13). Fix: bound part (b) at 2e-15*(1+|xi|) (5.2x
+      headroom) and add a check of the C11 identity itself on the chart-edge draws at 1e-14. Advisory
+      M2-F32 (no claim affected): C07(b) ''left convention fails by >= 1e-1'' holds only as a max over
+      directions (min 0.025 over 300 dirs, 4.0e-8 for d || phi); has_noise False at zero densities untested
+      (B07); so3_log accuracy between 2pi/3 and ~162 deg unpinned (B76).'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
