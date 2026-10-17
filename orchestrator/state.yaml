@@ -643,7 +643,10 @@ milestones:
       4 by the next verifier. verify-M1-011: all five (plus F19 kappa2 t4/5040.0001) ruled non-equivalent;
       B3b and B4 fail rule 4(a) outright; B1/B2/B3 fail only 4(b) because it was read against the tightened
       test pins (1.3e-15, 1e-15), not a claim statement (C22/C42 are exact identities). Pending owner
-      clarification of 4(b).'
+      clarification of 4(b). Rule 4 amended (owner decision 2026-10-16): the ''>= 100x inside the tightest
+      claim tolerance'' clause is DROPPED; rule 4 is now only ''sup-norm error exceeds clean by at most
+      2 ulp of the quantity''s magnitude (2*eps*max|value|)''. Under it B1, B2, B3 are equivalent; B3b,
+      B4, F19 still exceed 2 ulp and were added to impl-M1-011-remediation.'
   - id: M1-F25
     resolved: false
     summary: '8 per-function g=G_DEFAULT defaults never exercised (gravity_lift, gravity_lift_uncorrected,
@@ -674,7 +677,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -949,10 +952,20 @@ milestones:
   - role: implementer
     agent_id: impl-M2-017-remediation
     started: '2026-10-17T01:13:10+00:00'
+    finished: '2026-10-17T01:31:38+00:00'
+    outcome: completed
+    note: '287 passed (slow incl.); harness 170/170, P01-P03, B07, B76 killed by reference tests. Part
+      (b) now 2e-15*(1+|xi|) (clean 4.4e-16, 4.5x; 5.84e-14 at the chart edge, inside C11 1e-13, asserted
+      at run time). New part (c): C11 identity at the chart edge at 2e-15*(1+|xi|) instead of the requested
+      flat 1e-14 (flat would leave 1.4x headroom since one ulp of |xi|~28 is 3.6e-15; orchestrator accepted
+      -- stays inside 1e-13 everywhere). F32: has_noise False test, so3_log 2pi/3..162 deg pin (2e-15,
+      2.25x), C07(b) comment. src and claims unchanged. Commit daebf66.'
+  - role: verifier
+    agent_id: verify-M2-014
+    started: '2026-10-17T01:31:38+00:00'
     finished: null
     outcome: running
-    note: 'Kill F31: tighten part (b) to 2e-15*(1+|xi|), add C11 identity at the chart edge at 1e-14;
-      F32 advisories.'
+    note: Fourteenth pass with a fresh planted claim; rules on F31 (daebf66) under amended rule 4.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1233,6 +1246,9 @@ milestones:
       M2-F32 (no claim affected): C07(b) ''left convention fails by >= 1e-1'' holds only as a max over
       directions (min 0.025 over 300 dirs, 4.0e-8 for d || phi); has_noise False at zero densities untested
       (B07); so3_log accuracy between 2pi/3 and ~162 deg unpinned (B76).'
+    note: 'Remediated in daebf66; awaiting verifier ruling. Rule 4 amended (owner decision 2026-10-16):
+      the ''>= 100x inside the tightest claim tolerance'' clause is DROPPED; rule 4 is now only ''sup-norm
+      error exceeds clean by at most 2 ulp of the quantity''s magnitude (2*eps*max|value|)''.'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
