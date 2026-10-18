@@ -1358,7 +1358,7 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M3-S07
@@ -1523,10 +1523,20 @@ milestones:
   - role: verifier
     agent_id: verify-M3-007
     started: '2026-10-18T03:55:29+00:00'
+    finished: '2026-10-18T04:29:02+00:00'
+    outcome: completed
+    note: 'Caught planted M3-C46 (theta = 2 arctan(|phi|/2); claimed form off up to 0.68 rad). 36/36 confirmed;
+      F08, F09, F10 FIXED (1343/1383 output groups bitwise identical, the 40 differences intended). 204
+      new mutants: 179 killed, 20 equivalent, 5 non-equivalent (F11). Corrected M4 risk R2: P2 is the
+      ONLY handedness guard -- RH/RS degenerate where w = J_R b_g ~ 1e-25 (det -1 in 36-49 of 90-120 blocks).
+      Commit b0b3a27.'
+  - role: implementer
+    agent_id: impl-M3-009
+    started: '2026-10-18T04:29:02+00:00'
     finished: null
     outcome: running
-    note: Seventh pass with a fresh planted claim; rules on F08-F10 (daace65) under amended rule 4; single
-      BLAS thread, hard timeouts.
+    note: Kill F11 (dv/dp pins; FrozenDict semantics); fix F12 (FrozenDict internal mutability, standalone
+      round trip); conftest BLAS pin.
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1623,7 +1633,7 @@ milestones:
     resolution: Ruled FIXED by verify-M3-006 (docs/verification/stage-b_m3-qcqp-derivation_pass6.md);
       remainder is M3-F08.
   - id: M3-F08
-    resolved: false
+    resolved: true
     summary: '4 non-equivalent low survivors (verify-M3-006): p6-lf-dec-asarray-noflt (decoder np.asarray(z)
       without dtype=float: float32 z decodes to float32 blocks, projection orthogonality 3.8e-8; float16
       raises TypeError); p6-cn-vech-tril (vech via tril_indices breaks its documented row-major upper
@@ -1638,6 +1648,20 @@ milestones:
       (C45), C35 tolerance sampler-fragile (7.4e-10 with expm rotations), surrogate gap at bbar = 0, no
       MOSEK.'
     note: Remediated in daace65 (with F09, F10); awaiting verifier ruling.
+    resolution: Ruled FIXED (with F09, F10) by verify-M3-007 (docs/verification/stage-b_m3-qcqp-derivation_pass7.md);
+      remainder is M3-F11.
+  - id: M3-F11
+    resolved: false
+    summary: '5 non-equivalent low survivors (verify-M3-007): p7v-gb-inc-Dt-literal (G uses Dt = 0.5 literal
+      instead of pim.deltaTij(): dv 3.55e-15 vs clean 0, C24-style error at bbar = 0 truth 1.1e-13 ->
+      2.6e-13 iso, 3.4e-15 -> 3.6e-13 aniso; dv/dp pinned only to 1e-13 -- tighten to 1e-15 / 1.5e-15);
+      four in the new FrozenDict: missing key returns None (0 in I.gnss True), len wrong (gnss 3, cov
+      10), FrozenDict(u) aliases the caller''s dict, standalone copy/deepcopy/pickle returns a plain mutable
+      dict. Non-blocking M3-F12: FrozenDict._d is a plain mutable dict (writing instance(''true'').gnss._d[1]
+      changes the cached instance and the GNSS cost); a standalone FrozenDict round trip returns writable
+      arrays; pickle protocols 0/1 SIGABRT inside GTSAM PIM pickling (not a src regression). M4: P2 is
+      the only handedness guard (pass-6 ''P2 or RH/RS'' was wrong); J FD error ~1e-14 uses 1/9 of C24''s
+      budget at bbar = 0 (2/3 with C34''s 1e6 weight) -- h = 0.3 or an LS refit gives ~2e-15.'
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
