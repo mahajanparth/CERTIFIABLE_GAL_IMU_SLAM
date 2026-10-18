@@ -749,7 +749,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M2-S01
@@ -1035,9 +1035,19 @@ milestones:
   - role: verifier
     agent_id: verify-M2-014
     started: '2026-10-17T01:31:38+00:00'
+    finished: '2026-10-18T04:28:28+00:00'
+    outcome: completed
+    note: 'Caught planted M2-C37 (J_Cay missing 1/(1+|phi|^2/4): 2.49e-3 at |phi| <= 0.1 vs claimed 1e-9).
+      25/25 confirmed; F31 FIXED, F32 closed. 66 edits: 38 killed, 22 equivalent, 6 non-equivalent (F34,
+      F35). The three "hung" mutants were not hangs (BLAS/load): alone they finish in 231-413 s. Found
+      latent src defect F33. Commit bc3a7f7.'
+  - role: implementer
+    agent_id: impl-M2-018-remediation
+    started: '2026-10-18T04:28:28+00:00'
     finished: null
     outcome: running
-    note: Fourteenth pass with a fresh planted claim; rules on F31 (daebf66) under amended rule 4.
+    note: Fix latent src defect F33 (stable M2 series); kill F34 (chart-edge check vs mpmath) and F35
+      (large-Gamma draws).
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1308,7 +1318,7 @@ milestones:
     resolution: A07/A11 killed per verify-M2-013 (docs/verification/stage-b_m2-baselines_pass13.md); the
       scaled part-(b) bound the orchestrator accepted is too loose -- remainder is M2-F31.
   - id: M2-F31
-    resolved: false
+    resolved: true
     summary: 'Part (b) of the F30 Eq. (19) test uses 1e-14*(1+|xi|), accepted by the orchestrator in error:
       at the chart edge |xi| = 28.2 it allows 2.9e-13 absolute, 2.9x C11''s own 1e-13 tolerance, while
       clean is 3.55e-15. Survivors (src Eq. (19) edits active only at large |xi|): P01 1/2 -> 1/2 + 4e-15
@@ -1321,6 +1331,30 @@ milestones:
     note: 'Remediated in daebf66; awaiting verifier ruling. Rule 4 amended (owner decision 2026-10-16):
       the ''>= 100x inside the tightest claim tolerance'' clause is DROPPED; rule 4 is now only ''sup-norm
       error exceeds clean by at most 2 ulp of the quantity''s magnitude (2*eps*max|value|)''.'
+    resolution: Ruled FIXED by verify-M2-014 (docs/verification/stage-b_m2-baselines_pass14.md); remainder
+      is M2-F34/F35.
+  - id: M2-F33
+    resolved: false
+    summary: 'LATENT src defect (verify-M2-014): trajectory.M2(w, T) closed form cancels catastrophically
+      for 1e-8 < |w| <~ 1e-2: dp off expm by 0.70 m at |w| = 2e-8 rad/s (T = 0.5), 6.2e-5 at 1e-6, 4.1e-9
+      at 1e-4 (M1 much less). No M2 claim affected (fixtures use |w| ~ 0.4), but C02''s domain note implies
+      validity above 1e-8, and Edge.exact_increment feeds M3/M4. Fix in src with a stable series below
+      a switch, plus a sweep test against expm/mpmath over |w| in [1e-10, 1]. Orchestrator: treated as
+      blocking because it is a real defect, not a test gap.'
+  - id: M2-F34
+    resolved: false
+    summary: '5 non-equivalent survivors inside the F30(b)/F31(c) bound (5.84e-14 at |xi| = 28.2 is 5.8x
+      rule-1 tau/10 and coarser than rule 4''s 2 ulp of max|r| ~ 26 = 1.17e-14): Q01/Q01b/Q01c Eq. (19)
+      1/2 -> 0.5000000000000007/03/04 (rule-4 excess 3.2e-14 / 1.42e-14 / 2.1e-14), Q03 Eq. (19) + 3.5e-14
+      for |xi| > 20, Q05 Eq. (22b) Y'' x(1 + 1.5e-15) for |J_R b_g| > 8. Fix: a check concentrated at
+      the chart edge |xi| in [20, 28.2] at ~1.9e-14 absolute vs mpmath (verifier: kills Q01, Q01c, Q03,
+      Q05; Q01b borderline) -- measure and kill all five.'
+  - id: M2-F35
+    resolved: false
+    summary: 'G01: Eq. (22b) Gamma/2 x(1 + 1e-12) for |J_R bbar_g| > 5 breaks the C11 identity by 1.6e-11
+      (> 1e-13), but no test draws |Gamma| above ~2.8 and C11 states no Gamma domain. Orchestrator choice:
+      add large-Gamma draws to the tests (no claim edit). Notes: D61 (tau from trace x(1+4e-16)) ruled
+      equivalent at 0.95x of the rule-4 allowance on the fixture domain (0.92-1.04x on synthetic decades).'
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
