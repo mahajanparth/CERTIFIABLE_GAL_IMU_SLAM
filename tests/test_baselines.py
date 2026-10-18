@@ -987,6 +987,31 @@ def test_c11_affine_lift_is_algebraically_identical_to_eq19():
                                                                b_g, bbar_g)))
     assert worst <= 1e-13, f"Eq. (22b) vs Eq. (19) {worst:.3e}"
 
+    # M2-F35 (pass 14): the draws above give |Gamma| = |J_R bbar_g| <~ 0.09, and C11 states
+    # no domain in Gamma.  Large Gamma, |J_R bbar_g| ~ U(2, 40), J_R a scaled rotation (a
+    # well-conditioned J_R, so J_R bbar_g is not itself a cancellation), at C11's own 1e-13.
+    # Clean <= 1.68e-14 over 11 seeds (entries of Gamma ~40, ulp 7.1e-15), so 6x headroom;
+    # Rbreve's Gamma/2 x (1 + 1e-12) for |J_R bbar_g| > 5 (G01) gives 1.9e-11.
+    rng = np.random.default_rng(20261022)
+    worst_large, largest_gamma = 0.0, 0.0
+    for _ in range(2000):
+        R_i = T.so3_exp(rng.uniform(-np.pi / 2, np.pi / 2, 3))
+        R_j = T.so3_exp(rng.uniform(-np.pi / 2, np.pi / 2, 3))
+        dRbar = T.so3_exp(rng.uniform(-0.5, 0.5, 3))
+        J_R = rng.uniform(0.5, 2.0) * T.so3_exp(rng.uniform(-np.pi, np.pi, 3))
+        u = rng.standard_normal(3)
+        bbar_g = np.linalg.solve(J_R, rng.uniform(2.0, 40.0) * u / np.linalg.norm(u))
+        b_g = bbar_g + rng.uniform(-0.5, 0.5, 3)
+        largest_gamma = max(largest_gamma, float(np.linalg.norm(J_R @ bbar_g)))
+        xi = J_R @ (b_g - bbar_g)
+        worst_large = max(worst_large,
+                          _max_abs(B2.rotation_residual_eq19(R_i, R_j, dRbar, xi),
+                                   B2.rotation_residual_eq22b(R_i, R_j, dRbar, J_R,
+                                                              b_g, bbar_g)))
+    assert largest_gamma > 35.0, f"large-Gamma draw reached only {largest_gamma:.1f}"
+    assert worst_large <= 1e-13, (
+        f"Eq. (22b) vs Eq. (19) at |Gamma| in [2, 40]: {worst_large:.3e}")
+
 
 @pytest.mark.claim("M2-C12")
 def test_c12_isotropic_precision_is_structurally_forced():

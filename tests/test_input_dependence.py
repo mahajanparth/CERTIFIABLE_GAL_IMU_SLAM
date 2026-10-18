@@ -32,8 +32,9 @@ so3_exp(w)                   w (both branches)     test_traj_so3_helpers
 so3_log(R)                   R (both branches)     test_traj_so3_helpers,
                              (2 pi/3 .. 161.8 deg) test_f32_so3_log_between_2pi_3_and_
                                                      162_degrees_against_mpmath
-M1(w, T)                     w (both branches), T  test_traj_M1_M2
-M2(w, T)                     w (both branches), T  test_traj_M1_M2
+M1(w, T)                     w (all three          test_traj_M1_M2,
+M2(w, T)                     branches), T (both    test_f33_M1_M2_across_rates_against_
+                             signs)                  mpmath_block_expm
 NavTriple(R, v, p)           R, v, p               test_traj_navtriple_and_edge_fields,
                                                    test_f18_constructors_do_not_alias
 Edge(index, omega_body,      omega_body, f_body,   test_traj_navtriple_and_edge_fields,
@@ -178,6 +179,9 @@ bias_jacobian_recursion(     gyro, accel, dt,      test_b3_bias_jacobian_recursi
 Notes.
 * ``CayleyPreintegration`` has no inputs beyond ``ForsterPreintegration``'s and
   ``variant``; it is exercised through ``integrate_edge(cls=CayleyPreintegration)``.
+* ``M_SERIES_SWITCH`` (M2-F33) is exercised on both sides (``th |T|`` from 1e-10 to 2.3)
+  by ``test_f33_M1_M2_across_rates_against_mpmath_block_expm``, which kills its removal
+  (switch 0, the pre-F33 closed form: 3.7e8 off-diagonal-relative at |w| ~ 1e-8).
 * The module constants ``SMALL_ANGLE``, ``FD_EPS``, ``J_FD_EPS``, ``C_FD_EPS``,
   ``GAL3_BLOCK_FOR_NAVSTATE`` and the fixture literals are DEFINITIONS (C01 pins the
   literals); the defaults that read them are covered by passing other values explicitly.
@@ -2910,3 +2914,199 @@ def test_f28_eq21c_at_large_velocity_and_duration():
                                                db[0:3], db[3:6]),
                     _ieq21c(R_i, p_i, p_j, v_i, dpbar, Dt, g, A_pg, A_pa, db)), TIER0)
     _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F33 (pass 14, latent src defect): M1 / M2 between the 1e-8 series switch and ~1e-2
+# --------------------------------------------------------------------------------------
+
+
+def _mp_block_expm_M1_M2(mpmath, w, Tt):
+    """``M1(T)``, ``M2(T)`` as blocks (0, 1) and (0, 2) of ``expm(A T)`` for the 9x9 block
+    generator ``A = [[hat(w), I, 0], [0, 0, I], [0, 0, 0]]``, in ``mpmath`` (40 digits).
+    No closed form and no series: ``d/dT`` of the block exponential gives exactly
+    ``M1' = Exp(w T)``, ``M2' = M1``, so this is the definition, evaluated independently."""
+    mpmath.mp.dps = 40
+    A = mpmath.zeros(9, 9)
+    Tm = mpmath.mpf(float(Tt))
+    wm = [mpmath.mpf(float(x)) for x in w]
+    W = [[0, -wm[2], wm[1]], [wm[2], 0, -wm[0]], [-wm[1], wm[0], 0]]
+    for i in range(3):
+        for j in range(3):
+            A[i, j] = W[i][j] * Tm
+        A[i, 3 + i] = Tm
+        A[3 + i, 6 + i] = Tm
+    E = mpmath.expm(A)
+    return [[[E[i, c + j] for j in range(3)] for i in range(3)] for c in (3, 6)]
+
+
+#: M2-F33.  ``M1`` / ``M2`` against :func:`_mp_block_expm_M1_M2`: the error on the
+#: OFF-diagonal entries (where the ``K`` and ``K^2`` terms live; on the diagonal they sit
+#: under ``T`` / ``T^2/2`` and are sub-ulp at small rates) over the largest off-diagonal
+#: reference entry, and the whole matrix over its largest entry.  Clean (the series below
+#: ``th |T| = 2``): <= 3.1e-16 off-diagonal and <= 2.3e-16 whole, at every |w| decade in
+#: [1e-10, 1], so 3.2x headroom.  The pre-F33 closed form above 1e-8: 1.0 (M1) and 3.7e8
+#: (M2) at |w| ~ 1e-8, 1.4e-6 (M2) at 1e-3, 1.1e-12 at 0.1 -- off-diagonal-relative.
+F33_M_REL = 1e-15
+#: |w| log-spaced over [1e-10, 1] (both sides of SMALL_ANGLE = 1e-8), durations of both
+#: signs; ``T = +-2.3`` carries ``th |T|`` across the 2.0 series switch
+F33_RATES = np.logspace(-10.0, 0.0, 41)
+F33_DURATIONS = (0.5, -0.5, 1.0, -1.0, 2.3, -2.3)
+F33_DIRS = (np.array([0.62, -0.48, 0.55]), np.array([-0.41, 0.70, 0.52]),
+            np.array([0.30, 0.85, -0.43]))
+
+
+@pytest.mark.claim("M2-F33")
+def test_f33_M1_M2_across_rates_against_mpmath_block_expm():
+    """``M1(w, T)``, ``M2(w, T)`` for |w| in [1e-10, 1] (41 log-spaced), T in +-0.5, +-1,
+    +-2.3 and three directions, against the 40-digit ``mpmath`` block exponential.
+
+    Pass 14 (M2-F33): the closed form's ``T - sin(th T)/th`` and especially
+    ``T^2/2 - (1 - cos th T)/th^2`` cancel catastrophically for 1e-8 < |w| <~ 1e-2: dp was
+    0.70 m off at |w| = 2e-8 rad/s over 0.5 s.  No test sampled that range."""
+    mpmath = _mp()
+    m = ~np.eye(3, dtype=bool)
+    failures = []
+    for nw in F33_RATES:
+        for Tt in F33_DURATIONS:
+            for d in F33_DIRS:
+                w = nw * _unit(d)
+                refs = _mp_block_expm_M1_M2(mpmath, w, Tt)
+                for name, got, ref in (("M1", T.M1(w, Tt), refs[0]),
+                                       ("M2", T.M2(w, Tt), refs[1])):
+                    err = np.array([[abs(float(mpmath.mpf(float(got[i, j])) - ref[i][j]))
+                                     for j in range(3)] for i in range(3)])
+                    want = np.abs(np.array([[float(ref[i][j]) for j in range(3)]
+                                            for i in range(3)]))
+                    where = f"{name}(|w| = {nw:.2e}, T = {Tt}) vs mpmath block expm"
+                    _check(failures, f"{where} (off-diagonal, rel)",
+                           float(err[m].max() / want[m].max()), F33_M_REL)
+                    _check(failures, f"{where} (whole matrix, rel)",
+                           float(err.max() / want.max()), F33_M_REL)
+    _assert_no_failures(failures)
+
+
+# --------------------------------------------------------------------------------------
+# M2-F34 / M2-F35 (pass 14): Eq. (19) and Eq. (22b) at the C07 chart edge and at large
+# Gamma, against a 40-digit mpmath Eq. (19) evaluated at the SAME double inputs
+# --------------------------------------------------------------------------------------
+
+
+def _mp_mat(mpmath, A):
+    return mpmath.matrix([[mpmath.mpf(float(x)) for x in row] for row in np.asarray(A)])
+
+
+def _mp_eq19(mpmath, R_i, R_j, dRbar, xi):
+    """Rai Eq. (19), RETYPED, in ``mpmath``: ``(R_j - A) - (1/2)(R_j + A) hat(xi)`` with
+    ``A = R_i dRbar``; ``xi`` is a list of ``mpf`` (exact, never rounded to double)."""
+    A = _mp_mat(mpmath, R_i) * _mp_mat(mpmath, dRbar)
+    Rj = _mp_mat(mpmath, R_j)
+    return (Rj - A) - (Rj + A) * _mp_hat(mpmath, xi) / 2
+
+
+def _mp_xi(mpmath, J_R, b_g, bbar_g):
+    """``J_R (b_g - bbar_g)`` exactly (in ``mpmath``) from the double inputs."""
+    J = _mp_mat(mpmath, J_R)
+    d = [mpmath.mpf(float(b)) - mpmath.mpf(float(bb)) for b, bb in zip(b_g, bbar_g)]
+    return [sum(J[i, k] * d[k] for k in range(3)) for i in range(3)]
+
+
+def _mp_abs_err(got, ref):
+    """max |got - ref| entrywise, the difference taken in ``mpmath`` (no double rounding)."""
+    import mpmath
+    return max(abs(float(mpmath.mpf(float(got[i, j])) - ref[i, j]))
+               for i in range(3) for j in range(3))
+
+
+#: M2-F34.  The F30 (b) / F31 (c) bounds scale as 2e-15 (1 + |xi|), i.e. up to 5.84e-14
+#: at the chart edge, and five Eq. (19) / (22b) edits whose error is confined to, or grows
+#: with, large |xi| lived under them (pass 14: Q01, Q01b, Q01c, Q03, Q05).  Here the draws
+#: are CONCENTRATED at the edge, |xi| ~ U(20, 2 tan 1.5 = 28.2), and the reference is the
+#: exact (40-digit) Eq. (19) at the same double inputs, so the clean error is only the
+#: double evaluation's own rounding.  Absolute bounds, measured over 21 seeds x 2000 draws:
+#:
+#: * Eq. (19): clean <= 6.54e-15 (2.0x headroom under 1.3e-14).  Weakest seed of each
+#:   mutant: Q01b (1/2 -> 1/2 + 3 ulp) 2.01e-14 (1.55x over), Q01c 2.47e-14, Q01 3.78e-14,
+#:   Q03 (+3.5e-14 for |xi| > 20) 4.06e-14.
+#: * Eq. (22b) with ``xi = J_R (b_g - bbar_g)`` at the edge: clean <= 8.27e-15 (1.69x under
+#:   1.4e-14); Q05 (Y' x (1 + 1.5e-15) for |J_R b_g| > 8) 2.44e-14 (1.74x over).
+#:
+#: Both lie below the owner's rule-4 threshold on this domain (clean + 2 eps max|r| ~
+#: 1.9e-14) and an order under C11's / C09's 1e-13.
+F34_EQ19_EDGE_ABS = 1.3e-14
+F34_EQ22B_EDGE_ABS = 1.4e-14
+F34_XI_MIN = 20.0
+
+
+@pytest.mark.claim("M2-F34")
+def test_f34_eq19_and_eq22b_at_the_chart_edge_against_mpmath():
+    """``rotation_residual_eq19`` (|xi| ~ U(20, 28.2), any direction) and
+    ``rotation_residual_eq22b`` (``J_R`` a scaled rotation, ``bbar_g ~ U(-0.5, 0.5)``,
+    ``b_g`` chosen so ``|J_R (b_g - bbar_g)|`` ~ U(20, 28.2)) against the 40-digit mpmath
+    Eq. (19) at the same double inputs (for (22b), with the exact ``xi``), 2000 draws each,
+    ``R_i, R_j`` anywhere and ``|dRbar| <= 1.7``."""
+    mpmath = _mp()
+    mpmath.mp.dps = 40
+    assert F34_EQ19_EDGE_ABS < 1e-13 and F34_EQ22B_EDGE_ABS < 1e-13
+    rng = _rng(20261020)
+    worst19, worst22 = 0.0, 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        xi = rng.uniform(F34_XI_MIN, F31_CHART_EDGE) * _unit(rng.standard_normal(3))
+        worst19 = max(worst19, _mp_abs_err(
+            B2.rotation_residual_eq19(R_i, R_j, dRbar, xi),
+            _mp_eq19(mpmath, R_i, R_j, dRbar, [mpmath.mpf(float(x)) for x in xi])))
+        J_R = rng.uniform(0.5, 2.0) * iexp(rng.uniform(-np.pi, np.pi, 3))
+        bbar_g = rng.uniform(-0.5, 0.5, 3)
+        target = rng.uniform(F34_XI_MIN, F31_CHART_EDGE) * _unit(rng.standard_normal(3))
+        b_g = bbar_g + np.linalg.solve(J_R, target)
+        worst22 = max(worst22, _mp_abs_err(
+            B2.rotation_residual_eq22b(R_i, R_j, dRbar, J_R, b_g, bbar_g),
+            _mp_eq19(mpmath, R_i, R_j, dRbar, _mp_xi(mpmath, J_R, b_g, bbar_g))))
+    failures = []
+    _check(failures, "rotation_residual_eq19 at |xi| in [20, 28.2] vs 40-digit mpmath "
+           "Eq. (19)", worst19, F34_EQ19_EDGE_ABS)
+    _check(failures, "rotation_residual_eq22b at |J_R (b_g - bbar_g)| in [20, 28.2] vs "
+           "40-digit mpmath Eq. (19)", worst22, F34_EQ22B_EDGE_ABS)
+    _assert_no_failures(failures)
+
+
+#: M2-F35.  C11 states no domain in ``Gamma = hat(J_R bbar_g)``, and no test drew
+#: |Gamma| above ~2.8 (pass 14, G01: Rbreve's Gamma/2 x (1 + 1e-12) for |J_R bbar_g| > 5
+#: broke the identity by 1.6e-11 unseen).  Here |J_R bbar_g| ~ U(2, 40) with ``J_R`` a
+#: scaled rotation (well conditioned: a random ``N(0, 1)`` J_R with a large ``bbar_g``
+#: makes ``J_R bbar_g`` itself lose ~1e-12 to cancellation, an input artefact, not a
+#: defect).  Entries of Gamma reach ~40 (ulp 7.1e-15), so the bound is absolute 5e-14:
+#: clean <= 1.68e-14 over 11 seeds x 2000 draws (3.0x headroom), and half C11's 1e-13;
+#: G01 1.9e-11.
+F35_EQ22B_LARGE_GAMMA_ABS = 5e-14
+
+
+@pytest.mark.claim("M2-F35")
+def test_f35_eq22b_at_large_gamma_against_mpmath():
+    """``rotation_residual_eq22b`` with |J_R bbar_g| ~ U(2, 40), ``b_g - bbar_g`` ~
+    U(-0.5, 0.5) per axis, against the 40-digit mpmath Eq. (19) at the exact
+    ``xi = J_R (b_g - bbar_g)``, 2000 draws, at :data:`F35_EQ22B_LARGE_GAMMA_ABS`."""
+    mpmath = _mp()
+    mpmath.mp.dps = 40
+    assert F35_EQ22B_LARGE_GAMMA_ABS < 1e-13
+    rng = _rng(20261021)
+    worst, worst_gamma = 0.0, 0.0
+    for _ in range(2000):
+        R_i = iexp(rng.uniform(-np.pi, np.pi, 3))
+        R_j = iexp(rng.uniform(-np.pi, np.pi, 3))
+        dRbar = iexp(rng.uniform(-1.0, 1.0, 3))
+        J_R = rng.uniform(0.5, 2.0) * iexp(rng.uniform(-np.pi, np.pi, 3))
+        gamma = rng.uniform(2.0, 40.0) * _unit(rng.standard_normal(3))
+        bbar_g = np.linalg.solve(J_R, gamma)
+        b_g = bbar_g + rng.uniform(-0.5, 0.5, 3)
+        worst_gamma = max(worst_gamma, float(np.linalg.norm(J_R @ bbar_g)))
+        worst = max(worst, _mp_abs_err(
+            B2.rotation_residual_eq22b(R_i, R_j, dRbar, J_R, b_g, bbar_g),
+            _mp_eq19(mpmath, R_i, R_j, dRbar, _mp_xi(mpmath, J_R, b_g, bbar_g))))
+    assert worst_gamma > 35.0, f"the draw never reached large Gamma ({worst_gamma:.1f})"
+    assert worst <= F35_EQ22B_LARGE_GAMMA_ABS, (
+        f"rotation_residual_eq22b at |Gamma| in [2, 40] vs 40-digit mpmath Eq. (19): "
+        f"{worst:.3e} > {F35_EQ22B_LARGE_GAMMA_ABS:.0e}")

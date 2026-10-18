@@ -707,6 +707,7 @@ def _run_c01_in_copy(tmp_path, edit=None):
                     ignore=shutil.ignore_patterns("__pycache__"))
     (root / "tests").mkdir(parents=True)
     shutil.copy(repo / "tests" / "test_baselines.py", root / "tests")
+    shutil.copy(repo / "tests" / "conftest.py", root / "tests")   # BLAS thread caps
     shutil.copy(repo / "conftest.py", root)
     shutil.copy(repo / "pyproject.toml", root)
     if edit:
@@ -1043,7 +1044,8 @@ def test_pass5_survivor_is_killed_end_to_end(monkeypatch, mutant_id, apply_mutat
 
 def _run_in_copy(root, nodeids, src_file=None, edit=None):
     """Copy ``src``, the two claim-test modules (``tests/test_baselines.py``,
-    ``tests/test_input_dependence.py``), ``conftest.py`` and ``pyproject.toml`` into
+    ``tests/test_input_dependence.py``), both ``conftest.py`` files (the one under
+    ``tests`` caps the BLAS threads) and ``pyproject.toml`` into
     ``root``, optionally apply ``edit`` (``[(old, new), ...]``, each anchor unique) to
     ``src/<src_file>``, and run ``nodeids`` there.  A node id without ``::`` names a test
     in ``test_baselines.py``; otherwise it is a full ``tests/<file>::<test>`` id."""
@@ -1056,7 +1058,7 @@ def _run_in_copy(root, nodeids, src_file=None, edit=None):
     shutil.copytree(repo / "src", root / "src",
                     ignore=shutil.ignore_patterns("__pycache__"))
     (root / "tests").mkdir(parents=True)
-    for name in ("test_baselines.py", "test_input_dependence.py"):
+    for name in ("test_baselines.py", "test_input_dependence.py", "conftest.py"):
         shutil.copy(repo / "tests" / name, root / "tests")
     shutil.copy(repo / "conftest.py", root)
     shutil.copy(repo / "pyproject.toml", root)
@@ -2179,3 +2181,111 @@ def test_pass13_killers_are_reference_checks():
         for k in m[3]:
             assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
     assert PASS13_REQUIRED == {m[0] for m in PASS13_MUTANTS}
+
+
+# ======================================================================================
+# Survivors of the verifier's pass-14 sweep (docs/verification/stage-b_m2-baselines_pass14.md
+# Sec. 5.4, findings M2-F34, M2-F35) and a revert of the M2-F33 src fix, replayed as REAL
+# FILE EDITS.  Every killer compares ``src`` with a 40-digit ``mpmath`` reference retyped
+# in the input-dependence module (Eq. (19) at the same double inputs; the 9x9 block
+# exponential for M1 / M2), never with a copy of ``src``.  Measured effect on the killer
+# at its seed (vs the bound; clean in brackets) is in each comment.
+# ======================================================================================
+
+_P14_EDGE = _ID + "test_f34_eq19_and_eq22b_at_the_chart_edge_against_mpmath"
+_P14_GAMMA = _ID + "test_f35_eq22b_at_large_gamma_against_mpmath"
+_P14_M = _ID + "test_f33_M1_M2_across_rates_against_mpmath_block_expm"
+_P14_EQ19_LINE = _P13_EQ19_LINE
+_P14_EQ19_MSG = "rotation_residual_eq19 at |xi| in [20, 28.2] vs 40-digit mpmath Eq. (19)"
+_P14_EQ22B_MSG = "rotation_residual_eq22b at |J_R (b_g - bbar_g)| in [20, 28.2]"
+
+#: ``(id, src file, edit, killer node ids, texts that must ALL be on 'E ' lines)``
+PASS14_MUTANTS = [
+    # Eq. (19) 1/2 -> 1/2 + 6 ulp: 3.88e-14 vs 1.3e-14 (clean 4.96e-15).
+    ("Q01", "preintegration_cayley.py",
+     [(_P14_EQ19_LINE, _P14_EQ19_LINE.replace("0.5 *", "0.5000000000000007 *"))],
+     (_P14_EDGE,), (_P14_EQ19_MSG,)),
+    # Eq. (19) 1/2 -> 1/2 + 3 ulp: 2.10e-14 vs 1.3e-14 (weakest of 21 seeds 2.01e-14).
+    ("Q01b", "preintegration_cayley.py",
+     [(_P14_EQ19_LINE, _P14_EQ19_LINE.replace("0.5 *", "0.5000000000000003 *"))],
+     (_P14_EDGE,), (_P14_EQ19_MSG,)),
+    # Eq. (19) 1/2 -> 1/2 + 4 ulp: 2.46e-14 vs 1.3e-14.
+    ("Q01c", "preintegration_cayley.py",
+     [(_P14_EQ19_LINE, _P14_EQ19_LINE.replace("0.5 *", "0.5000000000000004 *"))],
+     (_P14_EDGE,), (_P14_EQ19_MSG,)),
+    # Eq. (19) + 3.5e-14 (every entry) for |xi| > 20: 4.05e-14 vs 1.3e-14.
+    ("Q03", "preintegration_cayley.py",
+     [(_P14_EQ19_LINE,
+       "    return ((R_j - A) - 0.5 * (R_j + A) @ hat(xi)"
+       " + (3.5e-14 if float(np.dot(xi, xi)) > 400.0 else 0.0))\n")],
+     (_P14_EDGE,), (_P14_EQ19_MSG,)),
+    # Eq. (22b) Y' x (1 + 1.5e-15) for |J_R b_g| > 8: 2.62e-14 vs 1.4e-14 (clean 6.7e-15).
+    ("Q05", "preintegration_cayley.py",
+     [("    Yp = R_j @ Xi\n",
+       "    Yp = R_j @ Xi * ((1.0 + 1.5e-15)"
+       " if float(np.linalg.norm(J_R @ np.asarray(b_g))) > 8.0 else 1.0)\n")],
+     (_P14_EDGE,), (_P14_EQ22B_MSG,)),
+    # Eq. (22b) Rbreve's Gamma/2 x (1 + 1e-12) for |J_R bbar_g| > 5: 1.97e-11 vs 5e-14
+    # (clean 1.27e-14); test_c11's own large-Gamma loop also sees it (1.96e-11 vs 1e-13).
+    ("G01", "preintegration_cayley.py",
+     [("    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0)",
+       "    Rbreve = dRbar @ (np.eye(3) - Gamma / 2.0 * ((1.0 + 1e-12)"
+       " if float(np.linalg.norm(J_R @ np.asarray(bbar_g))) > 5.0 else 1.0))")],
+     (_P14_GAMMA,), ("rotation_residual_eq22b at |Gamma| in [2, 40] vs 40-digit mpmath",)),
+    # the M2-F33 fix reverted (closed form at every th >= SMALL_ANGLE): off-diagonal
+    # relative error up to 1.0 (M1) / 3.7e8 (M2) at |w| ~ 1e-8 vs 1e-15 (clean 3.1e-16).
+    ("F33-revert", "trajectory.py",
+     [("M_SERIES_SWITCH = 2.0\n", "M_SERIES_SWITCH = 0.0\n")],
+     (_P14_M,), ("M1(|w| = 1.00e-08", "M2(|w| = 1.00e-08", "vs mpmath block expm")),
+]
+
+PASS14_REQUIRED = {"Q01", "Q01b", "Q01c", "Q03", "Q05", "G01", "F33-revert"}
+
+
+@pytest.fixture(scope="module")
+def pass14_runs(tmp_path_factory):
+    """The unmutated control and every PASS14 mutant, each in its own copy, in parallel.
+    The control must pass every killer, or no kill below means anything."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    killers = sorted({k for m in PASS14_MUTANTS for k in m[3]})
+    code, out = _run_in_copy(tmp_path_factory.mktemp("pass14_control"), killers)
+    assert code == 0, f"control copy fails a pass-14 killer:\n{out[-3000:]}"
+
+    def run(m):
+        mutant_id, src_file, edit, nodeids, _ = m
+        root = tmp_path_factory.mktemp(f"pass14_{mutant_id}")
+        return mutant_id, _run_in_copy(root, list(nodeids), src_file, edit)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(8, (os.cpu_count() or 2) // 2))) as pool:
+        return dict(pool.map(run, PASS14_MUTANTS))
+
+
+@pytest.mark.claim("M2-F34")
+@pytest.mark.parametrize("mutant_id,src_file,edit,killers,messages", PASS14_MUTANTS,
+                         ids=[m[0] for m in PASS14_MUTANTS])
+def test_pass14_mutant_is_killed_as_a_file_edit(pass14_runs, mutant_id, src_file, edit,
+                                                killers, messages):
+    """Each pass-14 mutant, edited on disk, fails its reference killers on the intended
+    assertions."""
+    code, out = pass14_runs[mutant_id]
+    assert code != 0, f"{mutant_id} (file-level edit of {src_file}) SURVIVES {killers}"
+    failed_on = _failure_lines(out)
+    for text in messages:
+        assert text in failed_on, (
+            f"{mutant_id} kills {killers}, but not on the intended assertion "
+            f"({text!r} is on no 'E ' line):\n{out[-3000:]}")
+
+
+@pytest.mark.claim("M2-F34")
+def test_pass14_killers_are_reference_checks():
+    """Every pass-14 killer lives in the input-dependence module (never this file), and
+    every listed survivor is replayed.  LOCATION only; that each killer is a reference
+    check was established by reading them: F34 / F35 compare src's Eq. (19) / (22b) with a
+    retyped 40-digit mpmath Eq. (19) at the same double inputs; F33 compares src's M1 / M2
+    with a 40-digit mpmath exponential of the 9x9 block generator."""
+    for m in PASS14_MUTANTS:
+        for k in m[3]:
+            assert k.startswith(_ID), f"{m[0]}: killer {k} is not an input-dependence test"
+    assert PASS14_REQUIRED == {m[0] for m in PASS14_MUTANTS}

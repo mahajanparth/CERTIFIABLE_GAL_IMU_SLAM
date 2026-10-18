@@ -22,6 +22,7 @@ Chaining (claim M2-C02 / M2-C03)::
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -97,17 +98,52 @@ def so3_log(R) -> np.ndarray:
     return th * a
 
 
+#: M2-F33.  For ``x = th |T|`` below this, ``M1`` and ``M2`` are evaluated from the even
+#: power series of their scalar coefficients instead of the closed form.  The closed form's
+#: ``T - sin(x)/th`` and ``T^2/2 - (1 - cos x)/th^2`` cancel: measured against 50-digit
+#: mpmath, its coefficient error is 1.9e-4 relative at x = 1e-3, 1.3e-11 at 0.1, 2.3e-14
+#: on [0.5, 0.75), 2.3e-15 on [1, 1.25), 7.4e-16 on [1.75, 2), 5.8e-16 on [2, 2.25).  The
+#: 12-term series is <= 2.2e-16 relative on all of [0, 2.25) (truncation x^24/27! <= 1.6e-21
+#: at x = 2), so 2.0 is a switch at which both sides are within a few ulp.
+M_SERIES_SWITCH = 2.0
+
+#: ``c_n(x) = sum_k (-1)^k x^(2k) / (2k + n)!`` for ``n = 2, 3, 4``, 12 terms each, so that
+#: ``(1 - cos x)/x^2 = c_2``, ``(x - sin x)/x^3 = c_3``, ``(x^2/2 - 1 + cos x)/x^4 = c_4``.
+_M_SERIES_TERMS = 12
+_M_SERIES = tuple(tuple((-1.0) ** k / float(math.factorial(2 * k + n))
+                        for k in range(_M_SERIES_TERMS)) for n in (2, 3, 4))
+
+
+def _m_series_coefficients(x: float):
+    """``(c_2, c_3, c_4)`` at ``x`` by Horner's rule in ``x^2`` (see ``_M_SERIES``)."""
+    x2 = x * x
+    out = []
+    for coeffs in _M_SERIES:
+        r = 0.0
+        for c in reversed(coeffs):
+            r = r * x2 + c
+        out.append(r)
+    return tuple(out)
+
+
 def M1(w, T: float) -> np.ndarray:
     """``int_0^T Exp(w s) ds`` in closed form (claim M2-C02).
 
     ``M1(T) = T I + ((1 - cos(th T)) / th) K + (T - sin(th T) / th) K^2`` with
-    ``th = ||w||`` and ``K = hat(w) / th`` the *unit-axis* skew.
+    ``th = ||w||`` and ``K = hat(w) / th`` the *unit-axis* skew.  For ``th |T|`` below
+    :data:`M_SERIES_SWITCH` the same function is evaluated from the series of its
+    coefficients (M2-F33), ``T I + T^2 c_2(th T) hat(w) + T^3 c_3(th T) hat(w)^2``.
     """
     w = np.asarray(w, dtype=float)
     th = float(np.linalg.norm(w))
     if th < SMALL_ANGLE:
         K = hat(w)
         return T * np.eye(3) + 0.5 * T**2 * K + (T**3 / 6.0) * (K @ K)
+    if th * abs(T) < M_SERIES_SWITCH:
+        # M2-F33: the closed form cancels for small th T; use the even series instead
+        W = hat(w)
+        c2, c3, _ = _m_series_coefficients(th * T)
+        return T * np.eye(3) + (T**2 * c2) * W + (T**3 * c3) * (W @ W)
     K = hat(w) / th
     return (T * np.eye(3)
             + ((1.0 - np.cos(th * T)) / th) * K
@@ -118,12 +154,20 @@ def M2(w, T: float) -> np.ndarray:
     """``int_0^T M1(s) ds`` in closed form (claim M2-C02).
 
     ``M2(T) = (T^2/2) I + ((T - sin(th T)/th)/th) K + (T^2/2 - (1 - cos(th T))/th^2) K^2``.
+    For ``th |T|`` below :data:`M_SERIES_SWITCH`: ``(T^2/2) I + T^3 c_3(th T) hat(w)
+    + T^4 c_4(th T) hat(w)^2`` (M2-F33).
     """
     w = np.asarray(w, dtype=float)
     th = float(np.linalg.norm(w))
     if th < SMALL_ANGLE:
         K = hat(w)
         return 0.5 * T**2 * np.eye(3) + (T**3 / 6.0) * K + (T**4 / 24.0) * (K @ K)
+    if th * abs(T) < M_SERIES_SWITCH:
+        # M2-F33: the K^2 coefficient T^2/2 - (1 - cos th T)/th^2 cancels catastrophically
+        # for small th T (0.70 m of dp at |w| = 2e-8, T = 0.5); use the even series instead
+        W = hat(w)
+        _, c3, c4 = _m_series_coefficients(th * T)
+        return 0.5 * T**2 * np.eye(3) + (T**3 * c3) * W + (T**4 * c4) * (W @ W)
     K = hat(w) / th
     return (0.5 * T**2 * np.eye(3)
             + ((T - np.sin(th * T) / th) / th) * K
