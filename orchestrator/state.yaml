@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -460,10 +460,13 @@ milestones:
   - role: verifier
     agent_id: verify-M1-013
     started: '2026-10-18T04:27:18+00:00'
-    finished: null
-    outcome: running
-    note: Twelfth pass with a fresh planted claim; rules on F30-F33 (3b3ad27) incl. whether the literal
-      backstops close the gravity-fixture class.
+    finished: '2026-10-18T04:54:20+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C66 (Gamma1 is the LEFT Jacobian: |Gamma1 - Jr| up to 0.911, Jl to 3.8e-14).
+      55/55 confirmed; F30-F33 FIXED for named survivors; backstop references verified independent and
+      correct (<= 7e-15). Gravity-fixture class NOT closed: no finite literal set closes defects confined
+      to regions the domain does not exclude. 147 mutants: 118 killed, 6 equivalent, 23 non-equivalent
+      (F34-F37). Commit 45bf2d9.'
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -722,7 +725,7 @@ milestones:
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
     resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F30
-    resolved: false
+    resolved: true
     summary: 'Gravity guards check |g| ratio, not range: H_LOW (|g| in (2, 11.5)) passes every guard and
       both literal backstops (G_LITERAL_SET components only reach 9.0/8.2/11.0), masking CLIP_* (g clipped
       to +-11.5) in gravity_lift, integrate_truth, forster_endpoint, gravity_lift_uncorrected, gravity_element,
@@ -730,15 +733,17 @@ milestones:
       -- every g-dependent function gets an exact retyped-literal backstop spanning magnitudes ~2..20,
       all octants, and one large (~19) component per axis and sign.'
     note: Remediated in 3b3ad27; awaiting verifier ruling.
+    resolution: Ruled FIXED for the named survivors by verify-M1-013 (docs/verification/m1-gal3-mechanics_pass12.md).
   - id: M1-F31
-    resolved: false
+    resolved: true
     summary: 'C34 (uncorrected form) has no literal-g backstop and no octant coverage (only the two 4-g
       datasets): H_ODD_DS masks PFLIP_UNC; GNORM_UNC (|g| hard-coded 9.81) survives with the magnitude
       guard off. Kill: literal free-fall check on C34 (expected (R_i, v_i + g Dt, p_i + v_i Dt + 3 g Dt^2/2,
       Dt)), and literal checks for gravity_element and gravity_generator.'
     note: Remediated in 3b3ad27; awaiting verifier ruling.
+    resolution: Ruled FIXED for the named survivors by verify-M1-013 (docs/verification/m1-gal3-mechanics_pass12.md).
   - id: M1-F32
-    resolved: false
+    resolved: true
     summary: 'lift_navstate time block pinned only at 1e-12 although C38/C40 say 0 exactly: S43b/S43d
       (time 5e-13) survive. Kill: lift_navstate(N)[3,4] == 0.0 exactly. Advisory M1-F33: the F28 c2 pin
       passes only because libm sin is correctly rounded on all 4000 grid points; with any 1-ulp sin clean
@@ -746,6 +751,32 @@ milestones:
       sin values src uses (clean 9.92e-13, rewrite 1.68e-12, bound 1.3e-12). B3b mean check has ~1 ulp
       of arctan2 headroom against a biased libm (advisory).'
     note: Remediated in 3b3ad27; awaiting verifier ruling.
+    resolution: Ruled FIXED for the named survivors by verify-M1-013 (docs/verification/m1-gal3-mechanics_pass12.md).
+  - id: M1-F34
+    resolved: false
+    summary: 'Small-component deadzone (g = where(|g| < 0.25, 0, g)) is the identity on all 23 literal
+      vectors (smallest nonzero component 0.3) and on G; paired with fixture FZ (random components pushed
+      out of (-0.25, 0.25)) it survives at all 6 g-dependent sites with every guard on. Alone killed (C31
+      0.0087 .. C32 0.24). Proposed: literal vectors with components 0, +-1e-3, +-1e-2, +-0.1 per axis,
+      plus a small-component coverage guard.'
+  - id: M1-F35
+    resolved: false
+    summary: 'Magnitude band: literal |g| has a gap (14.59, 18.70) holding ~22% of the stated distribution;
+      g x 1.05 for 14.7 < |g| < 18.6 survives at all 6 sites with fixture FB2 (band folded to the top)
+      under every guard. Proposed: literal magnitude ladder with gaps <= 1 m/s^2 over (2, 20), plus a
+      magnitude-bin coverage guard. Verifier: the owner must fix a coverage resolution before ''class
+      closed'' is decidable.'
+  - id: M1-F36
+    resolved: false
+    summary: 'ADVISORY: every backstop has omega = 0; a g x rotation coupling in endpoint (g -> G + dR(g
+      - G)) survives only with all guards off. Proposed: one backstop with a rotating increment D = expm(Dt
+      (omega, a, 0, 1)^) referenced against expm(Dt zeta_g^) X_i D built in the test.'
+  - id: M1-F37
+    resolved: false
+    summary: 'structural_residual C02 checks use only positive deviations: six sign-blind edits survive
+      (F13 abs(X[3,3]) - 1, SR1-SR5 signed terms; e.g. X33 = 0.5 or det > 1 unflagged). Kill: add negative
+      probes. Advisory: C50 is tested only at the identity -- at a general base point with v != 0 a nonzero
+      time component gives a 1.2e-4 first-order error at s = 1e-5. A4 (C52 domain text) still open.'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
