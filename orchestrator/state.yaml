@@ -1270,10 +1270,10 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M3-S06
+    id: M3-S07
     caught: null
     published: false
   agent_runs:
@@ -1423,9 +1423,22 @@ milestones:
   - role: implementer
     agent_id: impl-M3-008
     started: '2026-10-17T01:33:55+00:00'
+    finished: '2026-10-18T03:55:29+00:00'
+    outcome: completed
+    note: 'test_qcqp 82 passed in 70 s (slow incl., OPENBLAS_NUM_THREADS=1); harness 97/97 killed (15
+      new). 140 claim-level arrays bitwise identical before/after. F08 killed (decoder already upcast
+      -- now pinned; vech order; nav_to_gal3 default; caller bbar not aliased). F09(a) pickle/deepcopy/asdict
+      restored via FrozenDict + __reduce__ (16357 bytes); F09(b) _freeze copies any array with a .base;
+      F10 asserts -> ValueError, tested under python -O. Diagnosed the 26 h hang: OpenBLAS oversubscription
+      (up to 64 threads at load ~30) in pre-existing test_c18; with one BLAS thread it runs in 18.5 s.
+      Commit daace65.'
+  - role: verifier
+    agent_id: verify-M3-007
+    started: '2026-10-18T03:55:29+00:00'
     finished: null
     outcome: running
-    note: Kill F08; fix F09 (pickle regression, cov .base write path) and F10 (assert guards -> raises).
+    note: Seventh pass with a fresh planted claim; rules on F08-F10 (daace65) under amended rule 4; single
+      BLAS thread, hard timeouts.
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1536,6 +1549,7 @@ milestones:
       load-bearing (87/177 det -1 without P2), redundant rank 453/472, isotropic weights NOT conservative
       (C45), C35 tolerance sampler-fragile (7.4e-10 with expm rotations), surrogate gap at bbar = 0, no
       MOSEK.'
+    note: Remediated in daace65 (with F09, F10); awaiting verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
