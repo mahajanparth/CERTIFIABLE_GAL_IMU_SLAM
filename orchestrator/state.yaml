@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M1-S01
@@ -447,10 +447,23 @@ milestones:
   - role: implementer
     agent_id: impl-M1-012-remediation
     started: '2026-10-18T04:07:19+00:00'
+    finished: '2026-10-18T04:27:18+00:00'
+    outcome: completed
+    note: '235 passed in 152-174 s; harness 160/160 (31 new), every entry on its expected assertion. Tests
+      only. G_BACKSTOP_SET: 23 retyped g (|g| 1.98..19.98, every octant >= 2x, |component| >= 18.9 per
+      axis and sign) with src-independent closed-form free-fall backstops appended to C31-C38, C43 (clean
+      <= 9.1e-13, >= 11x headroom). Class closure shown: 5 self-designed degenerate fixtures + g-dependent
+      defects killed by the backstops with every random-g guard off. Also mag_max >= 14 and dataset parity
+      guards; exact lift time rows (F32); c2 reference on the same double sin values, pin 1.2e-12 (1.18x
+      clean, 1.15x to F20, robust to +-1 ulp sin) (F33); BLAS threads pinned to 1 in conftest. Commit
+      3b3ad27.'
+  - role: verifier
+    agent_id: verify-M1-013
+    started: '2026-10-18T04:27:18+00:00'
     finished: null
     outcome: running
-    note: Close the gravity-fixture class with literal backstops on every g-dependent function (F30, F31);
-      exact lift time (F32); platform-robust c2 pin (F33); pin BLAS threads in conftest.
+    note: Twelfth pass with a fresh planted claim; rules on F30-F33 (3b3ad27) incl. whether the literal
+      backstops close the gravity-fixture class.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -716,12 +729,14 @@ milestones:
       gravity_generator (each killed alone). Orchestrator direction: close the CLASS, not the instance
       -- every g-dependent function gets an exact retyped-literal backstop spanning magnitudes ~2..20,
       all octants, and one large (~19) component per axis and sign.'
+    note: Remediated in 3b3ad27; awaiting verifier ruling.
   - id: M1-F31
     resolved: false
     summary: 'C34 (uncorrected form) has no literal-g backstop and no octant coverage (only the two 4-g
       datasets): H_ODD_DS masks PFLIP_UNC; GNORM_UNC (|g| hard-coded 9.81) survives with the magnitude
       guard off. Kill: literal free-fall check on C34 (expected (R_i, v_i + g Dt, p_i + v_i Dt + 3 g Dt^2/2,
       Dt)), and literal checks for gravity_element and gravity_generator.'
+    note: Remediated in 3b3ad27; awaiting verifier ruling.
   - id: M1-F32
     resolved: false
     summary: 'lift_navstate time block pinned only at 1e-12 although C38/C40 say 0 exactly: S43b/S43d
@@ -730,6 +745,7 @@ milestones:
       gives 3.05e-12..3.72e-12 > 2e-12. Make it platform-robust: evaluate the reference on the same double
       sin values src uses (clean 9.92e-13, rewrite 1.68e-12, bound 1.3e-12). B3b mean check has ~1 ulp
       of arctan2 headroom against a biased libm (advisory).'
+    note: Remediated in 3b3ad27; awaiting verifier ruling.
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
