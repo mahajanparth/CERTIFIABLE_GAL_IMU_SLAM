@@ -49,8 +49,12 @@ from .conftest import (  # noqa: F401  (relative import keeps the helpers in one
     assert_discrete_converges,
     assert_gravity_directions_diverse,
     assert_rand_g_datasets,
+    assert_rand_g_datasets_parity,
     assert_stream_non_commuting,
     assert_term_exercised,
+    assert_backstop_set_covers,
+    freefall_cases,
+    mat5,
 )
 
 I3 = np.eye(3)
@@ -776,15 +780,29 @@ def test_gamma1_invertibility_and_taylor_branch():
     #   Taylor branch at 5e-2 (`theta <= THETA_SMALL`, pass-10 F41) gives 7.75e-13.  The
     #   double just BELOW is the Taylor branch and is pinned by k1_below above.
     # * c2's closed form on a FIXED dense grid of 4000 theta in [0.05, 0.055] (where its
-    #   cancellation is worst), relative error <= 2.0e-12 against 60-digit mpmath (clean:
-    #   1.68e-12, i.e. 1.19x headroom -- sound only because the grid is fixed).  The
-    #   algebraically identical rewrite 1/t2 - theta s / (2 omc t2) (pass-10 F20) gives
-    #   2.43e-12; the 1e-11 sweep above admits it.
+    #   cancellation is worst), relative error <= 1.2e-12 against the stated formula
+    #   evaluated at 60 digits ON THE SAME DOUBLE INPUTS src uses: s = np.sin(theta) and
+    #   1 - cos(theta) = 2 np.sin(theta / 2)^2, both rounded to double first (pass-11
+    #   M1-F33).  Against the exact sin this pin passed only because this host's np.sin is
+    #   correctly rounded at all 4000 points (a faithful <= 1-ulp libm gives clean up to
+    #   3.7e-12).  With the reference on src's own sin values only src's +, *, / rounding
+    #   is measured, so the result no longer depends on libm: clean 9.92e-13 on this host
+    #   and <= 1.015e-12 with every sin input moved by -1, 0 or +1 ulp at random (8
+    #   trials, plus all-up / all-down); the algebraically identical rewrite
+    #   1/t2 - theta s / (2 omc t2) (pass-10 F20) gives 1.68e-12 here and >= 1.38e-12
+    #   under the same perturbations.  Headroom 1.18x for clean, 1.15x margin to F20.  The
+    #   1e-11 sweep above admits F20.
     with mp.workdps(60):
         def closed_ref(th):
             T = mp.mpf(th)
             s_, c_ = mp.sin(T), mp.cos(T)
             return (1 - c_) / T ** 2, (1 - T * s_ / (2 * (1 - c_))) / T ** 2
+
+        def c2_on_src_inputs(th):
+            T = mp.mpf(th)
+            s_d = mp.mpf(float(np.sin(th)))
+            omc_d = 2 * mp.mpf(float(np.sin(0.5 * th))) ** 2
+            return (1 - T * s_d / (2 * omc_d)) / T ** 2
 
         k1_at_switch = 0.0
         for th in (5e-2, float(np.nextafter(5e-2, 1.0))):
@@ -795,11 +813,11 @@ def test_gamma1_invertibility_and_taylor_branch():
         assert grid_c2[0] == 5e-2 and grid_c2.size == 4000   # INPUT GUARD
         c2_dense = 0.0
         for th in grid_c2:
-            _, c2_ref = closed_ref(float(th))
+            c2_ref = c2_on_src_inputs(float(th))
             c2_dense = max(c2_dense, float(
                 abs(mp.mpf(gal3.gamma_coefficients(float(th))[3]) - c2_ref) / abs(c2_ref)))
     assert k1_at_switch <= 1e-14, k1_at_switch
-    assert c2_dense <= 2.0e-12, c2_dense
+    assert c2_dense <= 1.2e-12, c2_dense
     # EQUIVALENT MUTANTS (tolerance-equivalence rule: no output moves by more than 1/10
     # of the tightest tolerance any claim states for it):
     # * pass-6 Q17, kappa2 = (1 - s/theta)/theta^2 instead of (theta - s)/(theta^3):
@@ -1235,6 +1253,36 @@ def test_endpoint_relation(endpoint_dataset, endpoint_datasets_rand_g):
     assert worst_ff_lift <= 1e-12, worst_ff_lift
     assert worst_ff_truth <= 1e-11, worst_ff_truth
 
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: the endpoint (gravity_lift) and the recursion integrate_truth (exact for
+    # constant specific force; its gravity-free increment must be D = (I, a Dt, a Dt^2/2,
+    # Dt)).  Mutation harness: CLIP (np.clip(g, -11.5, 11.5)) in gravity_lift /
+    # integrate_truth under H_LOW with every random-g guard switched off, and the
+    # degenerate-fixture compounds (fixed g, narrow |g| band, cone, g_x = 0).
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_lift = bs_truth = 0.0
+    for c in freefall_cases(rng(3111)):
+        ref = mat5(c["R_j"], c["v_j"], c["p_j"], 0.0)
+        X_bs = gal3.endpoint(mat5(c["R_i"], c["v_i"], c["p_i"], 0.0), c["D"], c["g"])
+        bs_lift = max(bs_lift, float(np.abs(X_bs - ref).max()))
+        n_bs = int(round(abs(c["Dt"]) / 1e-3))
+        (R_t, v_t, p_t), (dR_t, dv_t, dp_t, Dt_t) = imu.integrate_truth(
+            c["R_i"], c["v_i"], c["p_i"], np.zeros(3), c["a"], c["Dt"] / n_bs, n_bs, c["g"])
+        bs_truth = max(bs_truth, float(np.abs(R_t - c["R_j"]).max()),
+                       float(np.abs(v_t - c["v_j"]).max()),
+                       float(np.abs(p_t - c["p_j"]).max()),
+                       float(np.abs(mat5(dR_t, dv_t, dp_t, Dt_t) - c["D"]).max()))
+    assert bs_lift <= 1e-12, bs_lift
+    assert bs_truth <= 1e-11, bs_truth
+
+    # INPUT GUARD, deliberately LAST (pass-11 M1-F31): see assert_rand_g_datasets_parity
+    assert_rand_g_datasets_parity(endpoint_datasets_rand_g)
+
 
 @pytest.mark.claim("M1-C32")
 def test_gravity_element_is_one_exponential():
@@ -1298,6 +1346,36 @@ def test_gravity_element_is_one_exponential():
     assert worst_expm_rg <= 1e-10, worst_expm_rg
     assert worst_other_rg <= 1e-12, worst_other_rg
 
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: X_j = G(Dt) X_i D_ij with G(Dt) = gravity_element(Dt, g), and = expm(Dt
+    # zeta_g^) X_i D_ij with zeta_g = gravity_generator(g) put into a 5x5 BY HAND and
+    # exponentiated by scipy; and the generator must be (0, g, 0, -1) exactly.  Mutation
+    # harness: CLIP in gravity_element / gravity_generator under H_LOW.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_elem = bs_gen = bs_gen_vec = 0.0
+    for c in freefall_cases(rng(3201)):
+        X_i = mat5(c["R_i"], c["v_i"], c["p_i"], 0.0)
+        ref = mat5(c["R_j"], c["v_j"], c["p_j"], 0.0)
+        Dt, g = c["Dt"], c["g"]
+        bs_elem = max(bs_elem, float(np.abs(
+            gal3.gravity_element(Dt, g) @ X_i @ c["D"] - ref).max()))
+        zeta = np.asarray(gal3.gravity_generator(g), dtype=float)
+        Z = np.zeros((5, 5))
+        Z[0:3, 0:3] = [[0.0, -zeta[2], zeta[1]], [zeta[2], 0.0, -zeta[0]],
+                       [-zeta[1], zeta[0], 0.0]]
+        Z[0:3, 3], Z[0:3, 4], Z[3, 4] = zeta[3:6], zeta[6:9], zeta[9]
+        bs_gen = max(bs_gen, float(np.abs(sla.expm(Dt * Z) @ X_i @ c["D"] - ref).max()))
+        bs_gen_vec = max(bs_gen_vec, float(np.abs(
+            zeta - np.concatenate([np.zeros(3), g, np.zeros(3), [-1.0]])).max()))
+    assert bs_elem <= 1e-12, bs_elem
+    assert bs_gen <= 1e-10, bs_gen
+    assert bs_gen_vec == 0.0, bs_gen_vec
+
 
 @pytest.mark.claim("M1-C33")
 def test_gravity_one_parameter_subgroup():
@@ -1330,6 +1408,23 @@ def test_gravity_one_parameter_subgroup():
     assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_rg <= 1e-10, worst_rg
     assert worst_def_rg <= 1e-10, worst_def_rg
+
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: G(s1) G(s2) X_i D_ij with s1 + s2 = Dt (s1 = 0.37 Dt) is the free fall over Dt.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_sub = 0.0
+    for c in freefall_cases(rng(3301)):
+        s1 = 0.37 * c["Dt"]
+        s2 = c["Dt"] - s1
+        lhs = (gal3.gravity_element(s1, c["g"]) @ gal3.gravity_element(s2, c["g"])
+               @ mat5(c["R_i"], c["v_i"], c["p_i"], 0.0) @ c["D"])
+        bs_sub = max(bs_sub, float(np.abs(lhs - mat5(c["R_j"], c["v_j"], c["p_j"], 0.0)).max()))
+    assert bs_sub <= 1e-12, bs_sub
 
 
 @pytest.mark.claim("M1-C34")
@@ -1374,6 +1469,35 @@ def test_uncorrected_endpoint_is_wrong_twice(endpoint_dataset, endpoint_datasets
         assert_discrete_converges(d)
         assert_stream_non_commuting(d)
 
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here (pass-11 M1-F31: the uncorrected form had no behavioural backstop): the claim's
+    # (R_j, v_j, p_j + g Dt^2, Dt) -- at a = 0 that is (R_i, v_i + g Dt,
+    # p_i + v_i Dt + 3 g Dt^2 / 2, Dt), checked independently against hand-built 5x5
+    # products and a DOP853 solve -- from endpoint_uncorrected AND from
+    # gravity_lift_uncorrected(Dt, g) X_i D_ij.  Mutation harness: CLIP, PFLIP (odd-octant
+    # flip, under H_ODD_DS) and GNORM (|g| -> 9.81, under H_MAG2 with the magnitude guard
+    # off) in gravity_lift_uncorrected.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_unc = bs_unc_lift = 0.0
+    for c in freefall_cases(rng(3401)):
+        Dt, g = c["Dt"], c["g"]
+        X_i = mat5(c["R_i"], c["v_i"], c["p_i"], 0.0)
+        ref_u = mat5(c["R_j"], c["v_j"], c["p_j"] + g * Dt * Dt, Dt)
+        bs_unc = max(bs_unc, float(np.abs(gal3.endpoint_uncorrected(X_i, c["D"], g)
+                                          - ref_u).max()))
+        bs_unc_lift = max(bs_unc_lift, float(np.abs(
+            gal3.gravity_lift_uncorrected(Dt, g) @ X_i @ c["D"] - ref_u).max()))
+    assert bs_unc <= 1e-12, bs_unc
+    assert bs_unc_lift <= 1e-12, bs_unc_lift
+
+    # INPUT GUARD, deliberately LAST (pass-11 M1-F31): see assert_rand_g_datasets_parity
+    assert_rand_g_datasets_parity(endpoint_datasets_rand_g)
+
 
 def _forster_by_hand(X_i, D, g):
     """(R_j, v_j, p_j) from the component equations written here (not src)."""
@@ -1417,6 +1541,22 @@ def test_right_time_shift_corrupts_position(algebraic_instances):
     assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_p_rg <= 1e-10, worst_p_rg
     assert worst_t_rg <= 1e-12, worst_t_rg
+
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: H' X_i D_ij T(-Dt) = (R_j, v_j, p_j - v_j Dt, 0).
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_right = 0.0
+    for c in freefall_cases(rng(3501)):
+        rhs = gal3.endpoint_right_time_shift(mat5(c["R_i"], c["v_i"], c["p_i"], 0.0),
+                                             c["D"], c["g"])
+        bs_right = max(bs_right, float(np.abs(
+            rhs - mat5(c["R_j"], c["v_j"], c["p_j"] - c["v_j"] * c["Dt"], 0.0)).max()))
+    assert bs_right <= 1e-12, bs_right
 
 
 @pytest.mark.claim("M1-C36")
@@ -1500,6 +1640,23 @@ def test_endpoint_only_valid_on_zero_time_slice(algebraic_instances):
     nonfinite_bad = [t for t in (np.nan, np.inf, -np.inf) if not refused(t)]
     assert not nonfinite_bad, nonfinite_bad
 
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: with t_i in {+0.7, -1.3}, T(-Dt) H' X_i D_ij = (R_j, v_j, p_j + g Dt t_i, t_i).
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_ti = 0.0
+    for k, c in enumerate(freefall_cases(rng(3601))):
+        t_i = (0.7, -1.3)[k % 2]
+        rhs = gal3.endpoint(mat5(c["R_i"], c["v_i"], c["p_i"], t_i), c["D"], c["g"],
+                            check_time=False)
+        bs_ti = max(bs_ti, float(np.abs(
+            rhs - mat5(c["R_j"], c["v_j"], c["p_j"] + c["g"] * c["Dt"] * t_i, t_i)).max()))
+    assert bs_ti <= 1e-12, bs_ti
+
 
 # ==========================================================================
 # the NavState (SE_2(3)) side
@@ -1567,6 +1724,44 @@ def test_two_endpoint_forms_agree(algebraic_instances):
     assert worst_u_rg <= 1e-12, worst_u_rg
     assert worst_form_rg <= 1e-9, worst_form_rg
     assert worst_time_rg <= 1e-12, worst_time_rg
+
+    # The lift has time block 0 and W_g = T(-Dt) H' T(Dt) EXACTLY (pass-11 M1-F32): the
+    # 1e-12 bounds above admit a lift whose time entry is 5e-13 (S43b / S43d), which also
+    # passes the keyframe guard and then carries a g Dt t_i position error.  So the lifted
+    # element's last two rows must be EXACTLY (0 0 0 1 0; 0 0 0 0 1), on 500 random
+    # NavStates (|p|, |v| ~ 5 N(0, I)).
+    r_l = rng(3810)
+    lift_not_exact = 0
+    for _ in range(500):
+        L = gal3.lift_navstate(gal3.navstate(rand_rot(r_l), 5.0 * r_l.normal(size=3),
+                                             5.0 * r_l.normal(size=3)))
+        lift_not_exact += int(not np.array_equal(L[3:5, :], I5[3:5, :]))
+    assert lift_not_exact == 0, lift_not_exact
+
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: T(-Dt) H' T(Dt) = (I, g Dt, +g Dt^2 / 2, 0); form (a) = endpoint and form (b) =
+    # W_g (T(-Dt) X_i T(Dt)) U_g, with W_g, U_g lifted from NavStates built here, are the
+    # free fall.  Mutation harness: CLIP in gravity_lift under H_LOW.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_conj = bs_forms = 0.0
+    for c in freefall_cases(rng(3801)):
+        Dt, g = c["Dt"], c["g"]
+        T_m, T_p = mat5(I3, np.zeros(3), np.zeros(3), -Dt), mat5(I3, np.zeros(3), np.zeros(3), Dt)
+        bs_conj = max(bs_conj, float(np.abs(T_m @ gal3.gravity_lift(Dt, g) @ T_p
+                                            - mat5(I3, g * Dt, 0.5 * g * Dt * Dt, 0.0)).max()))
+        X_i = mat5(c["R_i"], c["v_i"], c["p_i"], 0.0)
+        ref = mat5(c["R_j"], c["v_j"], c["p_j"], 0.0)
+        W_g = gal3.lift_navstate(gal3.navstate(I3, 0.5 * g * Dt * Dt, g * Dt))
+        U_g = gal3.lift_navstate(gal3.navstate(I3, 0.5 * c["a"] * Dt * Dt, c["a"] * Dt))
+        bs_forms = max(bs_forms, float(np.abs(gal3.endpoint(X_i, c["D"], g) - ref).max()),
+                       float(np.abs(W_g @ (T_m @ X_i @ T_p) @ U_g - ref).max()))
+    assert bs_conj <= 1e-12, bs_conj
+    assert bs_forms <= 1e-12, bs_forms
 
 
 @pytest.mark.claim("M1-C39")
@@ -1687,6 +1882,18 @@ def test_phi_dt_is_an_automorphism_not_a_translation():
     assert worst_shift_neg <= 1e-12, worst_shift_neg
     assert worst_c_neg <= 1e-12, worst_c_neg
     assert worst_lift_neg <= 1e-12, worst_lift_neg
+
+    # (v) "restricted to the t = 0 slice, EXACTLY" (pass-11 M1-F32): the lift of
+    #     Phi_Dt(N) has last two rows exactly (0 0 0 1 0; 0 0 0 0 1).  The 1e-12 bounds
+    #     above admit a lift time of 5e-13 (S43b / S43d).
+    r_x = rng(4002)
+    lift_not_exact = 0
+    for _ in range(500):
+        R, p, v = rand_rot(r_x), r_x.normal(size=3), r_x.normal(size=3)
+        Dt_x = float(r_x.uniform(-3.0, 3.0))
+        L = gal3.lift_navstate(gal3.navstate_phi(gal3.navstate(R, p, v), Dt_x))
+        lift_not_exact += int(not np.array_equal(L[3:5, :], I5[3:5, :]))
+    assert lift_not_exact == 0, lift_not_exact
 
 
 # ==========================================================================

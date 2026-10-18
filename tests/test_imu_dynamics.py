@@ -13,8 +13,10 @@ from src import imu_dynamics as imu
 from src.gal3 import compose, exp, gal, unpack, wedge
 
 from . import ode_truth
-from .conftest import (G, G_LITERAL_SET, assert_discrete_converges, assert_gravity_directions_diverse,
-                       assert_rand_g_datasets, assert_stream_non_commuting, rand_axis,
+from .conftest import (G, G_LITERAL_SET, assert_backstop_set_covers, assert_discrete_converges,
+                       assert_gravity_directions_diverse, assert_rand_g_datasets,
+                       assert_rand_g_datasets_parity,
+                       assert_stream_non_commuting, freefall_cases, mat5, rand_axis,
                        rand_gravity, rand_rot, rng)
 
 I3 = np.eye(3)
@@ -90,6 +92,33 @@ def test_gtsam_navstate_endpoint_form(endpoint_dataset, endpoint_datasets_rand_g
     # fail.  The sign is pinned by worst_alg above and by the ODE comparisons.
     assert_gravity_directions_diverse(gs)   # INPUT GUARD (pass-7 F1)
     assert worst_alg <= 1e-12, worst_alg
+
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: forster_endpoint with the exact increment (I, a Dt, a Dt^2 / 2), and gtsam's
+    # W_ij Phi_Dt(X_i) U_ij itself, are the free fall.  Mutation harness: CLIP in
+    # forster_endpoint under H_LOW.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_forst37 = bs_gtsam = 0.0
+    for c in freefall_cases(rng(3701)):
+        Dt, g, a = c["Dt"], c["g"], c["a"]
+        R_f, v_f, p_f = gal3.forster_endpoint(c["R_i"], c["v_i"], c["p_i"], I3, a * Dt,
+                                              0.5 * a * Dt * Dt, Dt, g)
+        bs_forst37 = max(bs_forst37, float(np.abs(R_f - c["R_j"]).max()),
+                         float(np.abs(v_f - c["v_j"]).max()), float(np.abs(p_f - c["p_j"]).max()))
+        N = _navstate_form_b(c["R_i"], c["v_i"], c["p_i"], I3, a * Dt, 0.5 * a * Dt * Dt, Dt, g)
+        bs_gtsam = max(bs_gtsam, float(np.abs(N.attitude().matrix() - c["R_j"]).max()),
+                       float(np.abs(N.velocity() - c["v_j"]).max()),
+                       float(np.abs(N.position() - c["p_j"]).max()))
+    assert bs_forst37 <= 1e-12, bs_forst37
+    assert bs_gtsam <= 1e-12, bs_gtsam
+
+    # INPUT GUARD, deliberately LAST (pass-11 M1-F31): see assert_rand_g_datasets_parity
+    assert_rand_g_datasets_parity(endpoint_datasets_rand_g)
 
 
 # ==========================================================================
@@ -541,6 +570,30 @@ def test_forster_component_equations(endpoint_dataset, endpoint_datasets_rand_g)
                            float(np.abs(v_f - (v_i + g_l * Dt_ff)).max()),
                            float(np.abs(p_f - (p_i + v_i * Dt_ff + 0.5 * g_l * Dt_ff ** 2)).max()))
     assert worst_ff <= 1e-12, worst_ff
+
+    # FREE-FALL BACKSTOP on the retyped literal G_BACKSTOP_SET (pass-11 M1-F30 / M1-F31):
+    # |g| 1.98 .. 19.98, every sign octant, |g_k| up to 19.9 on each axis and sign;
+    # Dt = +0.4, -0.3, +1.1; constant body acceleration a in {0, N(0, I)}.  The expected
+    # values are the exact closed-form constant-specific-force kinematics of
+    # conftest.freefall_cases (numpy written there, nothing from src), so a g-dependent src
+    # defect is caught here whatever the random-g fixtures look like.
+    # Here: forster_endpoint with the exact increment (I, a Dt, a Dt^2 / 2), and the 5x5
+    # endpoint, are the free fall.  Mutation harness: CLIP in forster_endpoint under H_LOW.
+    assert_backstop_set_covers()   # INPUT GUARD on the literal set
+    bs_forst = bs_endpt = 0.0
+    for c in freefall_cases(rng(4311)):
+        Dt, g, a = c["Dt"], c["g"], c["a"]
+        R_f, v_f, p_f = gal3.forster_endpoint(c["R_i"], c["v_i"], c["p_i"], I3, a * Dt,
+                                              0.5 * a * Dt * Dt, Dt, g)
+        bs_forst = max(bs_forst, float(np.abs(R_f - c["R_j"]).max()),
+                       float(np.abs(v_f - c["v_j"]).max()), float(np.abs(p_f - c["p_j"]).max()))
+        X_e = gal3.endpoint(mat5(c["R_i"], c["v_i"], c["p_i"], 0.0), c["D"], g)
+        bs_endpt = max(bs_endpt, float(np.abs(X_e - mat5(c["R_j"], c["v_j"], c["p_j"], 0.0)).max()))
+    assert bs_forst <= 1e-12, bs_forst
+    assert bs_endpt <= 1e-12, bs_endpt
+
+    # INPUT GUARD, deliberately LAST (pass-11 M1-F31): see assert_rand_g_datasets_parity
+    assert_rand_g_datasets_parity(endpoint_datasets_rand_g)
 
 
 @pytest.mark.claim("M1-C44")

@@ -206,11 +206,109 @@ PFLIP = {
 # the magnitude guard switched off (to show the literal-g backstop catches GNORM + H_MAG2
 # on its own; C31 / C43's 4-g datasets are exempt from the octant guard, so PFLIP + H_ODD
 # reaches the backstop with every guard in place)
-MAG_GUARD_OFF = ("tests/conftest.py", "min_signed=1.0, min_mag_ratio=2.0):",
-                 "min_signed=1.0, min_mag_ratio=0.0):")
+# (pass-11: the guard now has two magnitude parts, mag_ratio and the range top mag_max;
+# "switched off" means both)
+MAG_GUARD_OFF = ("tests/conftest.py",
+                 "min_signed=1.0, min_mag_ratio=2.0,\n"
+                 "                                      min_max_mag=14.0):",
+                 "min_signed=1.0, min_mag_ratio=0.0,\n"
+                 "                                      min_max_mag=0.0):")
 # tests holding a random-g block of m >= 8 draws (the octant guard's domain); C31, C34 and
 # C43 use only the 4-g datasets, C45 one draw
 OCTANT_TESTS = [C32, C33, C35, C36, C37, C38]
+
+# ---- pass-11 M1-F30 / M1-F31 / M1-F32 ---------------------------------------------------
+# H_LOW: |g| ~ U(2, 11.5) in place of U(2, 20) (directions and RNG stream unchanged)
+H_LOW = ("tests/conftest.py", RAND_G_OLD, RAND_G_OLD.replace("r.uniform(2.0, 20.0,",
+                                                            "r.uniform(2.0, 11.5,"))
+# EVERY random-g guard switched off (assert_gravity_directions_diverse returns at once):
+# under it ANY random-g fixture reaches the claim checks, so a kill must come from the
+# literal free-fall backstops, which do not depend on rand_gravity or on these guards
+ALL_GUARDS_OFF = ("tests/conftest.py",
+                  "    gs = np.atleast_2d(np.asarray(gs, dtype=float))\n",
+                  "    return None\n    gs = np.atleast_2d(np.asarray(gs, dtype=float))\n")
+# H_ODD_DS: the odd-octant flip applied ONLY to the two 4-g endpoint datasets
+H_ODD_DS = ("tests/conftest.py",
+            "        g = np.repeat(rand_gravity(r, 4), 10, axis=0)\n",
+            "        g4 = rand_gravity(r, 4)\n"
+            "        g4 = np.where((np.prod(g4, axis=-1) < 0.0)[:, None], -g4, g4)\n"
+            "        g = np.repeat(g4, 10, axis=0)\n")
+_UNC_OLD = (_G_LINE + "    return gal(_I3, g * Dt, 0.5 * g * Dt * Dt, 0.0)\n")
+_ELEM_OLD = (_G_LINE + "    return gal(_I3, g * Dt, -0.5 * g * Dt * Dt, -Dt)\n")
+_GEN_OLD = (_G_LINE + "    return np.concatenate([np.zeros(3), g, np.zeros(3), [-1.0]])\n")
+_CLIP = "    g = np.clip(g, -11.5, 11.5)\n"
+_SITE_OLD = {"gravity_lift": ("src/gal3.py", _LIFT_OLD),
+             "integrate_truth": ("src/imu_dynamics.py", _TRUTH_OLD),
+             "forster_endpoint": ("src/gal3.py", _FORST_OLD),
+             "gravity_lift_uncorrected": ("src/gal3.py", _UNC_OLD),
+             "gravity_element": ("src/gal3.py", _ELEM_OLD),
+             "gravity_generator": ("src/gal3.py", _GEN_OLD)}
+
+
+def _site_edit(site, extra):
+    """Insert ``extra`` right after the g-normalising line of one g-consuming function."""
+    path, old = _SITE_OLD[site]
+    return (path, old, old.replace(_G_LINE, _G_LINE + extra))
+
+
+_MAG_MAX = "assert mag_max >= min_max_mag, mag_max"
+_PARITY = 'assert parity >= 1, (d["label"], parity)'
+_BS = {"lift": "assert bs_lift <= 1e-12, bs_lift", "truth": "assert bs_truth <= 1e-11, bs_truth",
+       "forst": "assert bs_forst <= 1e-12, bs_forst",
+       "forst37": "assert bs_forst37 <= 1e-12, bs_forst37",
+       "unc": "assert bs_unc <= 1e-12, bs_unc", "elem": "assert bs_elem <= 1e-12, bs_elem",
+       "gen": "assert bs_gen <= 1e-10, bs_gen", "sub": "assert bs_sub <= 1e-12, bs_sub",
+       "conj": "assert bs_conj <= 1e-12, bs_conj", "endpt": "assert bs_endpt <= 1e-12, bs_endpt"}
+# site -> (CLIP alone: {test: needle}, CLIP + H_LOW + every guard off: {test: needle})
+CLIP = {
+    "gravity_lift": ({C31: _ODE_C31},
+                     {C31: _BS["lift"], C38: _BS["conj"], C43: _BS["endpt"]}),
+    "integrate_truth": ({C31: _ID_C31}, {C31: _BS["truth"]}),
+    "forster_endpoint": ({C43: _ODE_C43}, {C37: _BS["forst37"], C43: _BS["forst"]}),
+    "gravity_lift_uncorrected": ({C34: 'assert worst_p <= 1e-9, (d["label"], worst_p)'},
+                                 {C34: _BS["unc"]}),
+    "gravity_element": ({C32: "assert worst_def_rg <= 1e-12, worst_def_rg"},
+                        {C32: _BS["elem"], C33: _BS["sub"]}),
+    "gravity_generator": ({C32: "assert worst_gen_rg == 0.0, worst_gen_rg"}, {C32: _BS["gen"]}),
+}
+# Degenerate-fixture compounds of the implementer's own design (pass-11 brief: "show the
+# class is closed").  Each fixture confines the random g to a region on which the paired
+# src defect is the IDENTITY (and G = (0, 0, -9.81) is inside the region too), and every
+# random-g guard is switched off, so nothing but a literal backstop can kill it.
+# name -> (fixture new text for RAND_G_OLD, site, defect line(s), {test: needle})
+OWN_COMPOUNDS = {
+    # g within 30 deg of -z; defect g_z -> -|g_z| (identity whenever g_z <= 0)
+    "cone_minus_z__gravity_element_gz_neg_abs": (
+        "    u = rand_axis(r, n) + np.array([0.0, 0.0, -2.0])\n"
+        "    u = u / np.linalg.norm(u, axis=-1, keepdims=True)\n"
+        "    return r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * u\n",
+        "gravity_element", "    g = np.array([g[0], g[1], -abs(g[2])])\n",
+        {C32: _BS["elem"], C33: _BS["sub"]}),
+    # |g| in a narrow band around 9.8; defect: g shrunk by 10 % when |g| > 12
+    "band_9.7_9.9__uncorrected_shrinks_large_g": (
+        "    return r.uniform(9.7, 9.9, size=None if n is None else (n, 1)) * rand_axis(r, n)\n",
+        "gravity_lift_uncorrected",
+        "    if np.linalg.norm(g) > 12.0:\n        g = 0.9 * g\n",
+        {C34: _BS["unc"]}),
+    # |g| in (8, 11); defect: g doubled when |g| < 5 (small-magnitude coverage)
+    "band_8_11__generator_doubles_small_g": (
+        "    return r.uniform(8.0, 11.0, size=None if n is None else (n, 1)) * rand_axis(r, n)\n",
+        "gravity_generator", "    if np.linalg.norm(g) < 5.0:\n        g = 2.0 * g\n",
+        {C32: _BS["gen"]}),
+    # g in the y-z plane (g_x = 0 exactly); defect: g_x doubled
+    "plane_gx0__forster_doubles_gx": (
+        "    g = r.uniform(2.0, 20.0, size=None if n is None else (n, 1)) * rand_axis(r, n)\n"
+        "    g[..., 0] = 0.0\n"
+        "    return g\n",
+        "forster_endpoint", "    g = np.array([2.0 * g[0], g[1], g[2]])\n",
+        {C37: _BS["forst37"], C43: "assert worst_ff <= 1e-12, worst_ff"}),
+    # |g| <= 11.5 AND within 30 deg of -z; defect: saturation at 11.5 in integrate_truth
+    "low_cone__truth_clip": (
+        "    u = rand_axis(r, n) + np.array([0.0, 0.0, -2.0])\n"
+        "    u = u / np.linalg.norm(u, axis=-1, keepdims=True)\n"
+        "    return r.uniform(2.0, 11.5, size=None if n is None else (n, 1)) * u\n",
+        "integrate_truth", _CLIP, {C31: _BS["truth"]}),
+}
 
 # id -> (file, old, new, tests that must ALL fail[, {test: failing-assertion substring}])
 MUTATIONS = {
@@ -858,7 +956,7 @@ MUTATIONS = {
         "src/gal3.py",
         "    c2 = (1.0 - theta * s / (2.0 * omc)) / t2\n",
         "    c2 = 1.0 / t2 - theta * s / (2.0 * omc * t2)\n",
-        [C24], {C24: "assert c2_dense <= 2.0e-12, c2_dense"},
+        [C24], {C24: "assert c2_dense <= 1.2e-12, c2_dense"},     # pass-11 M1-F33 pin
     ),
     # pass-9/10 M1-F24 under the owner's rule 4 of 2026-10-16 (2 ulp of clean): B1, B2, B3
     # are equivalent; B3b, B4 and F19 exceed 2 ulp
@@ -884,6 +982,55 @@ MUTATIONS = {
         "        raise ValueError(\"theta must be non-negative\")\n    if theta <= THETA_SMALL:\n",
         [C24], {C24: "assert k1_at_switch <= 1e-14, k1_at_switch"},
     ),
+    # ---- eleventh-pass SURVIVORS (M1-F30..F32), killed on the intended assertion ------
+    "fixture_rand_gravity_low_magnitude_2_11.5": (                # pass-11 H_LOW (M1-F30)
+        *H_LOW, SPAN_TESTS, {n: _MAG_MAX for n in SPAN_TESTS},
+    ),
+    **{f"{site}_clip_11.5": (*_site_edit(site, _CLIP), list(alone), alone)
+       for site, (alone, _) in CLIP.items()},                     # pass-11 CLIP alone
+    **{f"{site}_clip_11.5_under_low_magnitude_g": (               # pass-11 CLIP + H_LOW
+        (H_LOW, _site_edit(site, _CLIP)), None, None, list(alone),
+        {n: _MAG_MAX for n in alone})
+       for site, (alone, _) in CLIP.items()},
+    **{f"{site}_clip_11.5_under_low_magnitude_g_all_guards_off": (  # ... and the backstop
+        (H_LOW, ALL_GUARDS_OFF, _site_edit(site, _CLIP)), None, None, list(bs), bs)
+       for site, (_, bs) in CLIP.items()},
+    "fixture_endpoint_datasets_odd_octant_flip": (                # pass-11 H_ODD_DS (M1-F31)
+        *H_ODD_DS, ENDPOINT_TESTS, {n: _PARITY for n in ENDPOINT_TESTS},
+    ),
+    "gravity_lift_uncorrected_odd_octant_flip": (                 # pass-11 PFLIP_UNC alone
+        *_site_edit("gravity_lift_uncorrected", _PFLIP), [C34],
+        {C34: 'assert worst_p <= 1e-9, (d["label"], worst_p)'},
+    ),
+    "gravity_lift_uncorrected_odd_octant_flip_under_dataset_odd_octant_flip": (
+        (H_ODD_DS, _site_edit("gravity_lift_uncorrected", _PFLIP)), None, None,
+        [C34], {C34: _BS["unc"]},                                 # pass-11 PFLIP_UNC + H_ODD_DS
+    ),
+    "gravity_lift_uncorrected_unit_g_9.81": (                     # pass-11 GNORM_UNC alone
+        *_site_edit("gravity_lift_uncorrected", _GNORM), [C34],
+        {C34: 'assert worst_p <= 1e-9, (d["label"], worst_p)'},
+    ),
+    "gravity_lift_uncorrected_unit_g_9.81_under_fixed_magnitude_g_guard_off": (
+        (H_MAG2, MAG_GUARD_OFF, _site_edit("gravity_lift_uncorrected", _GNORM)), None, None,
+        [C34], {C34: _BS["unc"]},                                 # pass-11 GNORM_UNC + H_MAG2
+    ),
+    "lift_navstate_time_5e-13": (                                 # pass-11 S43b (M1-F32)
+        "src/gal3.py", "    return gal(N[0:3, 0:3], N[0:3, 4], N[0:3, 3], 0.0)\n",
+        "    return gal(N[0:3, 0:3], N[0:3, 4], N[0:3, 3], 5e-13)\n",
+        [C38, C40], {C38: "assert lift_not_exact == 0, lift_not_exact",
+                     C40: "assert lift_not_exact == 0, lift_not_exact"},
+    ),
+    "lift_navstate_time_half_1e-12_N33": (                        # pass-11 S43d (M1-F32)
+        "src/gal3.py", "    return gal(N[0:3, 0:3], N[0:3, 4], N[0:3, 3], 0.0)\n",
+        "    return gal(N[0:3, 0:3], N[0:3, 4], N[0:3, 3], 1e-12 * N[3, 3] * 0.5)\n",
+        [C38, C40], {C38: "assert lift_not_exact == 0, lift_not_exact",
+                     C40: "assert lift_not_exact == 0, lift_not_exact"},
+    ),
+    # ---- class closure: own degenerate-fixture compounds, every random-g guard off -----
+    **{f"own_{name}": (
+        (("tests/conftest.py", RAND_G_OLD, fixture), ALL_GUARDS_OFF, _site_edit(site, defect)),
+        None, None, list(needles), needles)
+       for name, (fixture, site, defect, needles) in OWN_COMPOUNDS.items()},
 }
 
 

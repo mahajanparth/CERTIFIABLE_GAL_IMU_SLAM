@@ -5,9 +5,23 @@ Every sample count in docs/claims/M1.yaml is an independent draw from
 """
 from __future__ import annotations
 
-import numpy as np
-import pytest
-from scipy.spatial.transform import Rotation
+import os
+
+# Pin the BLAS / OpenMP thread pools to ONE thread, BEFORE numpy (and with it OpenBLAS)
+# is imported anywhere in the test process.  On a loaded multi-core host the default
+# (one thread per core in every process) oversubscribes the CPU: the mutation harness
+# runs several pytest subprocesses at once, each doing many tiny matrix products, and a
+# run that takes ~40 s pinned was observed to crawl for hours (pass-11, mutant S08).
+# Assigned here, not only in a shell, so every run of the suite is protected; the
+# harness subprocesses inherit os.environ and so are pinned too.  The suite result is
+# unchanged by the pins (impl-M1-012: 235 passed with them, with and without the shell
+# exports; the claim tests' operands are 3x3 / 5x5, below any BLAS threading threshold).
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ[_var] = "1"
+
+import numpy as np  # noqa: E402  (must follow the thread pins above)
+import pytest  # noqa: E402
+from scipy.spatial.transform import Rotation  # noqa: E402
 
 from src import gal3
 from src import imu_dynamics as imu
@@ -38,6 +52,98 @@ G_LITERAL_SET = np.array([
     [-0.8, -2.2, 3.5],      # - - +
     [-6.0, -4.0, -9.81],    # - - -
 ])
+
+#: RETYPED literal gravity set for the FREE-FALL BACKSTOPS (pass-11 M1-F30 / M1-F31).
+#: Three passes running, a narrower random-g fixture (fixed |g|, an octant flip, |g| in
+#: (2, 11.5)) passed every statistical guard and masked a g-dependent src defect (hard
+#: coded |g|, sign flip, saturation ``np.clip(g, -11.5, 11.5)``).  Guards on a random
+#: block's statistics cannot rule out every per-draw map, so EVERY g-consuming src
+#: function (gravity_lift, gravity_lift_uncorrected, gravity_element,
+#: gravity_generator, integrate_truth, forster_endpoint, and the endpoint forms of
+#: M1-C31..C38 / C43) is also checked against exact closed-form constant-specific-force
+#: kinematics on THIS set, which no edit to ``rand_gravity`` or to the datasets reaches.
+#: It spans the claims' stated |g| range (2, 20): G_LITERAL_SET's 8 octant vectors
+#: (|g| 3.97 .. 14.6), four of |g| ~ 2 (1.98 .. 2.08), one per axis AND sign with a
+#: component of magnitude 18.9 .. 19.9, two with every component of magnitude >= 11.3
+#: (|g| ~ 20), and three more of |g| 18.7 .. 19.6.  Every sign octant occurs at least twice.
+#: (No finite set excludes a defect acting only beyond its largest entries; the set
+#: covers the stated range up to its top, |g_k| = 19.9.)
+G_BACKSTOP_SET = np.vstack([G_LITERAL_SET, np.array([
+    [1.1, -1.2, 1.3],       # + - +   |g| 2.08
+    [-1.0, 1.4, -1.0],      # - + -   |g| 1.99
+    [1.2, 1.0, -1.3],       # + + -   |g| 2.03
+    [-1.3, -1.2, -0.9],     # - - -   |g| 1.99
+    [19.0, 0.5, -0.8],      # +x large
+    [-19.9, 0.7, 1.1],      # -x large
+    [0.6, 19.4, 0.9],       # +y large
+    [-0.7, -18.9, -1.2],    # -y large
+    [0.3, -0.9, 19.6],      # +z large
+    [1.3, 0.4, -19.3],      # -z large
+    [11.6, -11.5, 11.4],    # every component large, |g| 19.92
+    [-11.7, 11.3, -11.6],   # every component large, |g| 19.98
+    [-15.2, -9.1, 6.0],     # - - +   |g| 18.7
+    [7.3, 13.1, 12.2],      # + + +   |g| 19.3
+    [16.5, -4.2, -9.7],     # + - -   |g| 19.6
+])])
+
+#: Dt values of the free-fall backstops: both signs, and a long one (g Dt^2 large)
+BACKSTOP_DT = (0.4, -0.3, 1.1)
+
+
+def assert_backstop_set_covers(gs=None):
+    """INPUT GUARD on the literal backstop set (data only, nothing from src).
+
+    Deliberately independent of ``assert_gravity_directions_diverse`` (a mutant that
+    switches the random-g guards off leaves this one in place).  Requires: every sign
+    octant at least once (``bs_octants``); min |g| <= 2.1 and max |g| >= 19.9 (the
+    stated range (2, 20), ``bs_mag``); and for EACH axis a component >= +18.9 and one
+    <= -18.9 (``bs_axis``, the smallest of those six margins).
+    """
+    gs = G_BACKSTOP_SET if gs is None else np.asarray(gs, dtype=float)
+    codes = ((gs > 0) * np.array([4, 2, 1])).sum(axis=1)
+    bs_octants = int(np.bincount(codes, minlength=8).min())
+    assert bs_octants >= 1, bs_octants
+    mags = np.linalg.norm(gs, axis=1)
+    bs_mag = (float(mags.min()), float(mags.max()))
+    assert bs_mag[0] <= 2.1 and bs_mag[1] >= 19.9, bs_mag
+    bs_axis = float(min(gs.max(axis=0).min(), (-gs.min(axis=0)).min()))
+    assert bs_axis >= 18.9, bs_axis
+    return bs_octants, bs_mag, bs_axis
+
+
+def mat5(R, v, p, t) -> np.ndarray:
+    """The 5x5 Gal(3) matrix [[R, v, p], [0, 1, t], [0, 0, 1]], built here (not src)."""
+    X = np.eye(5)
+    X[0:3, 0:3] = np.asarray(R, dtype=float)
+    X[0:3, 3] = np.asarray(v, dtype=float).reshape(3)
+    X[0:3, 4] = np.asarray(p, dtype=float).reshape(3)
+    X[3, 4] = float(t)
+    return X
+
+
+def freefall_cases(r):
+    """The free-fall backstop instances: for every g of ``G_BACKSTOP_SET``, every Dt of
+    ``BACKSTOP_DT`` and a body acceleration a in {0, N(0, I)}: a random keyframe
+    (R_i, v_i, p_i) and the EXACT closed-form solution of the navigation ODE with
+    omega = 0 and constant a, i.e. constant specific force f = g + R_i a:
+
+        R_j = R_i,  v_j = v_i + f Dt,  p_j = p_i + v_i Dt + f Dt^2 / 2,
+
+    and the matching exact gravity-free increment D = (I, a Dt, a Dt^2 / 2, Dt).
+    Everything is numpy arithmetic written here; nothing comes from src.
+    Yields dicts with keys g, Dt, R_i, v_i, p_i, a, D, R_j, v_j, p_j.
+    """
+    for g in G_BACKSTOP_SET:
+        for Dt in BACKSTOP_DT:
+            for a_scale in (0.0, 1.0):
+                R_i = rand_rot(r)
+                v_i, p_i = 2.0 * r.normal(size=3), 5.0 * r.normal(size=3)
+                a = a_scale * r.normal(size=3)
+                f = g + R_i @ a
+                yield dict(g=g, Dt=Dt, R_i=R_i, v_i=v_i, p_i=p_i, a=a,
+                           D=mat5(np.eye(3), a * Dt, 0.5 * a * Dt * Dt, Dt),
+                           R_j=R_i, v_j=v_i + f * Dt,
+                           p_j=p_i + v_i * Dt + 0.5 * f * Dt * Dt)
 
 
 def rng(offset: int = 0) -> np.random.Generator:
@@ -168,7 +274,8 @@ def rand_gravity(r, n=None):
 
 
 def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_component=1.0,
-                                      min_span=0.1, min_signed=1.0, min_mag_ratio=2.0):
+                                      min_span=0.1, min_signed=1.0, min_mag_ratio=2.0,
+                                      min_max_mag=14.0):
     """INPUT GUARD on a block of random-g draws (not evidence about src).
 
     The random-g checks exist to catch defects that are invisible for g parallel to z,
@@ -220,6 +327,17 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
     four octants are empty (octants = 0).  Guards on marginal statistics cannot exclude
     every per-draw nonlinear map, so the behavioural backstop is ``G_LITERAL_SET``,
     which no edit to ``rand_gravity`` reaches.
+
+    * for m >= 3, the TOP of the stated range (2, 20) is reached: max |g| >=
+      ``min_max_mag`` (14.0) (``mag_max``).
+
+    This closes the FIXTURE half of pass-11 M1-F30: H_LOW (|g| ~ U(2, 11.5)) has
+    mag_max <= 11.5.  Measured: 19.82 and 18.47 (the 4-g datasets), >= 19.9 on the
+    400..2000-draw blocks, 14.59 on G_LITERAL_SET (hence 14.0, not 15).  The fixture
+    half of M1-F31 is ``assert_rand_g_datasets_parity``.  The SRC half of both -- any
+    g-dependent defect a degenerate fixture could hide -- is closed by the free-fall
+    backstops on ``G_BACKSTOP_SET`` (``freefall_cases``), which do not depend on these
+    guards at all.
     """
     gs = np.atleast_2d(np.asarray(gs, dtype=float))
     u = gs / np.linalg.norm(gs, axis=1, keepdims=True)
@@ -251,7 +369,11 @@ def assert_gravity_directions_diverse(gs, min_angle=0.5, min_perm_gap=1.0, min_c
         codes = ((gs > 0) * np.array([4, 2, 1])).sum(axis=1)
         octants = int(np.bincount(codes, minlength=8).min())
         assert octants >= 1, octants
-    return off_z, perm_gap, spread, comp, span, signed, mag_ratio, octants
+    mag_max = None
+    if len(gs) >= 3:
+        mag_max = float(np.linalg.norm(gs, axis=1).max())
+        assert mag_max >= min_max_mag, mag_max
+    return off_z, perm_gap, spread, comp, span, signed, mag_ratio, octants, mag_max
 
 
 def assert_rand_g_datasets(datasets):
@@ -280,6 +402,22 @@ def assert_rand_g_datasets(datasets):
         g_distinct = np.unique(d["g"], axis=0)
         assert len(g_distinct) == 4, len(g_distinct)
         assert_gravity_directions_diverse(g_distinct)
+
+
+def assert_rand_g_datasets_parity(datasets):
+    """INPUT GUARD on ``endpoint_datasets_rand_g`` (pass-11 M1-F31), called at the END of
+    the dataset tests: in each dataset, g_x g_y g_z takes BOTH signs among its 4 distinct
+    g (``parity``, the smaller count).  The octant guard exempts m = 4 blocks, so a
+    dataset-local odd-octant flip (H_ODD_DS) passed every guard.  Measured parity: 1 and 1
+    (Dt = +0.4 / -0.3); under H_ODD_DS 0.  It is called LAST so that every older mutant
+    (e.g. pass-10's PFLIP + H_ODD, killed by the literal backstop of M1-C31) still dies on
+    its original assertion; the src half (PFLIP in gravity_lift_uncorrected) is caught
+    earlier, by the free-fall backstop.
+    """
+    for d in datasets:
+        prod = np.prod(np.unique(d["g"], axis=0), axis=1)
+        parity = int(min((prod > 0).sum(), (prod < 0).sum()))
+        assert parity >= 1, (d["label"], parity)
 
 
 @pytest.fixture(scope="session")
