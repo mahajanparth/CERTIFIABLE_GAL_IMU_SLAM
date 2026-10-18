@@ -749,7 +749,7 @@ milestones:
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
-  status: implementing
+  status: verifying
   claims: []
   seed:
     id: M2-S01
@@ -1044,10 +1044,21 @@ milestones:
   - role: implementer
     agent_id: impl-M2-018-remediation
     started: '2026-10-18T04:28:28+00:00'
+    finished: '2026-10-18T04:52:33+00:00'
+    outcome: completed
+    note: '298 passed (213 s); harness 178/178 (7 new). F33 src fix: 12-term even series for M1/M2 coefficients
+      below x = th*T = 2 (M2 error at |w| = 1e-8: 0.50 -> 2e-25; <= 3.1e-16 rel across |w| in [1e-10,
+      1] vs 40-digit block expm; fixture moves <= 1.9e-16). F34 chart-edge tests vs 40-digit Eq. (19)
+      at 1.3e-14 / 1.4e-14 (clean worst of 21 seeds 2.0x / 1.69x; Q01b killed at 1.55x worst seed). F35
+      large-Gamma loop in test_c11 at 1e-13 and a reference test at 5e-14 (G01 ~2e-11). conftest BLAS
+      pin. C02 domain note and C11 Gamma domain need claim-file edits. Commit a5f87f2.'
+  - role: verifier
+    agent_id: verify-M2-015
+    started: '2026-10-18T04:52:33+00:00'
     finished: null
     outcome: running
-    note: Fix latent src defect F33 (stable M2 series); kill F34 (chart-edge check vs mpmath) and F35
-      (large-Gamma draws).
+    note: Fifteenth pass with a fresh planted claim; rules on F33-F35 (a5f87f2) incl. the trajectory.py
+      series fix.
   blocking_findings:
   - id: M2-F01
     resolved: true
@@ -1341,6 +1352,7 @@ milestones:
       validity above 1e-8, and Edge.exact_increment feeds M3/M4. Fix in src with a stable series below
       a switch, plus a sweep test against expm/mpmath over |w| in [1e-10, 1]. Orchestrator: treated as
       blocking because it is a real defect, not a test gap.'
+    note: Remediated in a5f87f2; awaiting verifier ruling.
   - id: M2-F34
     resolved: false
     summary: '5 non-equivalent survivors inside the F30(b)/F31(c) bound (5.84e-14 at |xi| = 28.2 is 5.8x
@@ -1349,12 +1361,14 @@ milestones:
       for |xi| > 20, Q05 Eq. (22b) Y'' x(1 + 1.5e-15) for |J_R b_g| > 8. Fix: a check concentrated at
       the chart edge |xi| in [20, 28.2] at ~1.9e-14 absolute vs mpmath (verifier: kills Q01, Q01c, Q03,
       Q05; Q01b borderline) -- measure and kill all five.'
+    note: Remediated in a5f87f2; awaiting verifier ruling.
   - id: M2-F35
     resolved: false
     summary: 'G01: Eq. (22b) Gamma/2 x(1 + 1e-12) for |J_R bbar_g| > 5 breaks the C11 identity by 1.6e-11
       (> 1e-13), but no test draws |Gamma| above ~2.8 and C11 states no Gamma domain. Orchestrator choice:
       add large-Gamma draws to the tests (no claim edit). Notes: D61 (tau from trace x(1+4e-16)) ruled
       equivalent at 0.95x of the rule-4 allowance on the fixture domain (0.92-1.04x on synthetic decades).'
+    note: Remediated in a5f87f2; awaiting verifier ruling.
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
