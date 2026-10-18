@@ -67,6 +67,14 @@ K_LARGE = T + "test_decoder_large_scales_decode"
 K_DETSIGN = T + "test_project_so3_det_correction_is_exact"
 K_ANISORHO = T + "test_decoder_s_guard_counts_aniso_rho_entries"
 K_READONLY = T + "test_cached_instance_arrays_are_read_only"
+K_DTYPE = T + "test_decoder_promotes_to_float64"
+K_VECH = T + "test_vech_order_is_row_major_upper_triangle"
+K_NAVT = T + "test_nav_to_gal3_default_time_is_zero"
+K_BBARCOPY = T + "test_build_instance_does_not_freeze_or_alias_callers_bbar"
+K_NOBASE = T + "test_instance_arrays_have_no_writable_base"
+K_PICKLE = T + "test_instance_pickle_and_deepcopy_round_trip"
+K_ANISOGUARD = T + "test_aniso_guards_raise_value_error"
+K_UNDERO = T + "test_aniso_guards_raise_under_python_O"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -251,8 +259,48 @@ MUTANTS = [
      "build_instance skips freezing entirely", [K_READONLY]),
     ("p7-in-edges-not-frozen", "instance.py", "return dataclasses.replace(inst, edges=edges, **kw)",
      "return dataclasses.replace(inst, **kw)", "edge arrays (dR, J, W_*, cov) left writable", [K_READONLY]),
-    ("p7-in-dict-writable", "instance.py", "return types.MappingProxyType({k: _freeze(v) for k, v in x.items()})",
+    ("p7-in-dict-writable", "instance.py", "return FrozenDict({k: _freeze(v) for k, v in x.items()})",
      "return {k: _freeze(v) for k, v in x.items()}", "gnss / cov dicts left mutable", [K_READONLY]),
+    # -- verifier pass 6 survivors (M3-F08) and the src changes for M3-F09 / M3-F10 --
+    ("p6-lf-dec-asarray-noflt", "lifting.py", "z = np.asarray(z, dtype=float)", "z = np.asarray(z)",
+     "decoder keeps float32 / float16 (7 digits lost, or TypeError)", [K_DTYPE]),
+    ("p6-cn-vech-tril", "constraints.py", "A[np.triu_indices(A.shape[0])]", "A[np.tril_indices(A.shape[0])]",
+     "vech in lower-triangular order", [K_VECH]),
+    ("p6-gb-nav-t1", "gtsam_boundary.py", "def nav_to_gal3(ns: gtsam.NavState, t: float = 0.0)",
+     "def nav_to_gal3(ns: gtsam.NavState, t: float = 1.0)", "NavState lift defaults to t = 1", [K_NAVT]),
+    ("p6-in-bbar-nocopy", "instance.py", "bbar = np.asarray(bbar, dtype=float).copy()",
+     "bbar = np.asarray(bbar, dtype=float)", "build_instance freezes and aliases the caller's bbar", [K_BBARCOPY]),
+    ("p8-in-fz-view-nocopy", "instance.py", "        if x.base is not None:\n            x = x.copy()\n", "",
+     "views frozen in place: the cov blocks keep a writable 9x9 base", [K_NOBASE]),
+    ("p8-in-reduce-dropped", "instance.py",
+     "    def __reduce__(self):\n        return (_rebuild, (type(self)",
+     "    def _no_reduce(self):\n        return (_rebuild, (type(self)",
+     "default dataclass pickling: unpickled Instance / EdgeData arrays writable", [K_PICKLE]),
+    ("p8-fd-reduce-dropped", "instance.py", "    def __reduce__(self):\n        return (FrozenDict, (self._d,))\n", "",
+     "FrozenDict without __reduce__: pickle / deepcopy raise", [K_PICKLE]),
+    ("p8-in-rebuild-nofreeze", "instance.py", "        return _frozen(cls(**kw))", "        return cls(**kw)",
+     "unpickled Instance not re-frozen", [K_PICKLE]),
+    ("p8-in-rebuild-edge-nofreeze", "instance.py", "return cls(**{k: _freeze(v) for k, v in kw.items()})",
+     "return cls(**kw)", "an EdgeData unpickled on its own is writable", [K_PICKLE]),
+    ("p8-co-aniso-guard-pass", "cost.py",
+     'raise ValueError(f"the anisotropic cost variant needs the n = 136 layout, got n = {layout.n}")', "pass",
+     "terms' own aniso-layout guard removed", [K_ANISOGUARD, K_UNDERO]),
+    ("p8-co-aniso-guard-assert", "cost.py",
+     'if variant == "aniso" and not layout.aniso:\n        raise ValueError(f"the anisotropic cost variant needs the n = 136 layout, got n = {layout.n}")',
+     'if variant == "aniso":\n        assert layout.aniso, "anisotropic variant needs the n = 136 layout"',
+     "the pre-F10 assert (stripped by python -O)", [K_ANISOGUARD, K_UNDERO]),
+    ("p8-lf-rho_v-guard-pass", "lifting.py",
+     'raise ValueError("Layout.rho_v exists only on the anisotropic layout (n = 136)")', "pass",
+     "rho_v on the n = 124 layout returns out-of-range slots", [K_ANISOGUARD, K_UNDERO]),
+    ("p8-lf-rho_p-guard-pass", "lifting.py",
+     'raise ValueError("Layout.rho_p exists only on the anisotropic layout (n = 136)")', "pass",
+     "rho_p on the n = 124 layout returns out-of-range slots", [K_ANISOGUARD, K_UNDERO]),
+    ("p8-lf-rho_v-guard-assert", "lifting.py",
+     '        if not self.aniso:\n            raise ValueError("Layout.rho_v exists only on the anisotropic layout (n = 136)")',
+     "        assert self.aniso", "the pre-F10 rho_v assert", [K_ANISOGUARD, K_UNDERO]),
+    ("p8-lf-rho_p-guard-assert", "lifting.py",
+     '        if not self.aniso:\n            raise ValueError("Layout.rho_p exists only on the anisotropic layout (n = 136)")',
+     "        assert self.aniso", "the pre-F10 rho_p assert", [K_ANISOGUARD, K_UNDERO]),
 ]
 
 KILLERS = sorted({k for m in MUTANTS for k in m[5]})

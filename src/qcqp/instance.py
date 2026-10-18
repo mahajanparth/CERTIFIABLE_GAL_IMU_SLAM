@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import types
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -23,8 +23,50 @@ from . import fixture as F
 from . import gtsam_boundary as GB
 
 
+class FrozenDict(Mapping):
+    """A read-only mapping (item assignment raises TypeError) that, unlike
+    ``types.MappingProxyType``, survives ``pickle`` / ``copy.deepcopy`` (verifier pass 6, M3-F09 a).
+    ``__reduce__`` is load-bearing: the default slot-state restore goes through ``__setattr__``,
+    which is blocked."""
+    __slots__ = ("_d",)
+
+    def __init__(self, *args, **kw):
+        object.__setattr__(self, "_d", dict(*args, **kw))
+
+    def __getitem__(self, key):
+        return self._d[key]
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __len__(self):
+        return len(self._d)
+
+    def __repr__(self):
+        return f"FrozenDict({self._d!r})"
+
+    def __setattr__(self, name, value):
+        raise AttributeError("FrozenDict is read-only")
+
+    def __reduce__(self):
+        return (FrozenDict, (self._d,))
+
+
+def _rebuild(cls, kw):
+    """Unpickle / deepcopy target of EdgeData and Instance: rebuild, then re-freeze (unpickled
+    numpy arrays come back writable)."""
+    if cls is Instance:
+        return _frozen(cls(**kw))
+    return cls(**{k: _freeze(v) for k, v in kw.items()})
+
+
+class _Rebuilt:
+    def __reduce__(self):
+        return (_rebuild, (type(self), {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}))
+
+
 @dataclass(frozen=True)
-class EdgeData:
+class EdgeData(_Rebuilt):
     i: int
     j: int
     Dt: float
@@ -59,7 +101,7 @@ class EdgeData:
 
 
 @dataclass(frozen=True)
-class Instance:
+class Instance(_Rebuilt):
     bbar: np.ndarray
     g: np.ndarray
     edges: tuple
@@ -113,12 +155,16 @@ def build_instance(bbar) -> Instance:
 
 def _freeze(x):
     """Read-only view of the numpy content of ``x`` (arrays flagged write=False, dicts wrapped
-    in a read-only mapping, tuples rebuilt); other objects are returned unchanged."""
+    in a read-only mapping, tuples rebuilt); other objects are returned unchanged.  A view (an
+    array with a ``.base``, e.g. a preintMeasCov block) is replaced by an independent copy first,
+    so that no writable base stays reachable (verifier pass 6, M3-F09 b)."""
     if isinstance(x, np.ndarray):
+        if x.base is not None:
+            x = x.copy()
         x.setflags(write=False)
         return x
-    if isinstance(x, dict):
-        return types.MappingProxyType({k: _freeze(v) for k, v in x.items()})
+    if isinstance(x, Mapping):
+        return FrozenDict({k: _freeze(v) for k, v in x.items()})
     if isinstance(x, tuple):
         return tuple(_freeze(v) for v in x)
     return x

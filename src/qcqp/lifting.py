@@ -77,12 +77,14 @@ class Layout:
         return self.s + 1
 
     def rho_v(self, e):
-        assert self.aniso
+        if not self.aniso:
+            raise ValueError("Layout.rho_v exists only on the anisotropic layout (n = 136)")
         o = self.n_base + 6 * e
         return slice(o, o + 3)
 
     def rho_p(self, e):
-        assert self.aniso
+        if not self.aniso:
+            raise ValueError("Layout.rho_p exists only on the anisotropic layout (n = 136)")
         o = self.n_base + 6 * e + 3
         return slice(o, o + 3)
 

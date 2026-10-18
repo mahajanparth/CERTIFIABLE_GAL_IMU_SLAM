@@ -911,6 +911,232 @@ def test_cached_instance_arrays_are_read_only():
     assert np.array_equal(INST.instance("zero").bbar, np.zeros(6))
 
 
+# -- verifier pass 6 (M3-F08 / F09 / F10) ---------------------------------------------------
+
+
+@pytest.mark.claim("M3-C01")
+def test_decoder_promotes_to_float64():
+    """state_of_z decodes ANY real dtype to float64 blocks (M3-F08 #1): a float32 / float16 z
+    decodes to exactly the decoding of the same values upcast to float64 first, so the projected
+    rotations are orthogonal to <= 1e-14 (a float32 decode would give ~4e-8), and an integer z
+    decodes like its float copy."""
+    zt = z_ref(truth_ref(), ref("zero"))
+    cases = [zt.astype(np.float32), zt.astype(np.float16)]
+    zi = np.zeros(N_BASE, dtype=np.int64)
+    zi[S_IDX] = 2
+    zi[:40] = np.arange(1, 41)                              # integer R / v / p / b entries
+    cases.append(zi)
+    for zc in cases:
+        zf = zc.astype(np.float64)
+        for project in (False, True):
+            d = LF.state_of_z(zc, project=project)
+            w = LF.state_of_z(zf, project=project)
+            for f in ("R", "v", "p", "b"):
+                for k in range(3):
+                    blk = getattr(d, f)[k]
+                    assert blk.dtype == np.float64, (zc.dtype, project, f, k, blk.dtype)
+                    assert np.array_equal(blk, getattr(w, f)[k]), (zc.dtype, project, f, k)
+            if project and zc.dtype != np.int64:
+                for k in range(3):
+                    orth = np.abs(d.R[k].T @ d.R[k] - I3).max()
+                    assert orth <= 1e-14, (zc.dtype, k, orth)
+
+
+# NOT claim-bound: vech's ORDER is not claim content (C14 / C16 use only ranks); this pins the
+# documented "upper-triangular, row-major" order an M4 svec builder will rely on.
+def test_vech_order_is_row_major_upper_triangle():
+    A = np.arange(16, dtype=float).reshape(4, 4)
+    assert np.array_equal(CN.vech(A), np.array([0, 1, 2, 3, 5, 6, 7, 10, 11, 15], dtype=float))
+    B = np.arange(9, dtype=float).reshape(3, 3)
+    assert np.array_equal(CN.vech(B), np.array([0, 1, 2, 4, 5, 8], dtype=float))
+    assert np.array_equal(CN.vech(sp.csr_matrix(A)), CN.vech(A))
+
+
+# NOT claim-bound: the boundary helper's default time is a convention of the C05 domain, not a
+# numbered claim.
+def test_nav_to_gal3_default_time_is_zero():
+    import src.qcqp.gtsam_boundary as GB
+    X = GB.nav_to_gal3(gtsam.NavState())
+    assert X.matrix()[3, 4] == 0.0 and X.time() == 0.0
+    assert np.array_equal(X.matrix(), I5)
+    ns = gtsam.NavState(Rot3(rexp(np.array([0.1, -0.2, 0.3]))), np.array([1.0, 2.0, 3.0]),
+                        np.array([-0.5, 0.25, 0.75]))
+    X = GB.nav_to_gal3(ns)
+    assert X.matrix()[3, 4] == 0.0
+    assert np.array_equal(X.matrix()[0:3, 3], np.array([-0.5, 0.25, 0.75]))   # v, column 3
+    assert np.array_equal(X.matrix()[0:3, 4], np.array([1.0, 2.0, 3.0]))      # p, column 4
+    assert GB.nav_to_gal3(ns, 2.5).matrix()[3, 4] == 2.5
+
+
+# NOT claim-bound (as test_cached_instance_arrays_are_read_only).
+def test_build_instance_does_not_freeze_or_alias_callers_bbar():
+    """build_instance copies its argument: the caller's array stays writable, shares no memory
+    with Instance.bbar, and a later write to it does not reach the instance (M3-F08 #4).  The
+    cached instance("true") must not freeze the fixture's own BIAS_TRUE either."""
+    b = np.zeros(6)
+    I = INST.build_instance(b)
+    assert b.flags.writeable
+    assert not np.shares_memory(b, I.bbar)
+    b[0] = 1.0
+    assert I.bbar[0] == 0.0 and np.array_equal(I.bbar, np.zeros(6))
+    b2 = LIT.BIAS_TRUE.copy()
+    I2 = INST.build_instance(b2)
+    assert b2.flags.writeable and not np.shares_memory(b2, I2.bbar)
+    b2[:] = 0.0                                              # refill the same buffer, rebuild
+    I3 = INST.build_instance(b2)
+    assert np.array_equal(I2.bbar, LIT.BIAS_TRUE) and np.array_equal(I3.bbar, np.zeros(6))
+    INST.instance("true")
+    assert SRC_FX.BIAS_TRUE.flags.writeable
+
+
+def _reachable_arrays(x, path="I"):
+    """Test-side walk: every numpy array reachable from x through dataclass fields, tuples,
+    lists and mappings (the GTSAM PIMs are skipped, M3-F09 c)."""
+    import dataclasses
+    from collections.abc import Mapping
+    if isinstance(x, np.ndarray):
+        yield path, x
+    elif dataclasses.is_dataclass(x) and not isinstance(x, type):
+        for f in dataclasses.fields(x):
+            if f.name != "pims":
+                yield from _reachable_arrays(getattr(x, f.name), f"{path}.{f.name}")
+    elif isinstance(x, (tuple, list)):
+        for i, v in enumerate(x):
+            yield from _reachable_arrays(v, f"{path}[{i}]")
+    elif isinstance(x, Mapping):
+        for k, v in x.items():
+            yield from _reachable_arrays(v, f"{path}[{k!r}]")
+
+
+#: arrays per Instance: bbar g b_true rw (4), truth (9), prior (3), gnss (2), per edge
+#: dR dv dp J W_R G2 W_vp (7) + 9 cov blocks
+N_INSTANCE_ARRAYS = 4 + 9 + 3 + 2 + 2 * (7 + 9)
+
+
+def _assert_deeply_read_only(I, tag):
+    arrs = list(_reachable_arrays(I))
+    assert len(arrs) == N_INSTANCE_ARRAYS, (tag, len(arrs))
+    for name, a in arrs:
+        base, depth = a, 0
+        while isinstance(base, np.ndarray):                  # the array and its whole base chain
+            assert not base.flags.writeable, (tag, name, depth)
+            base, depth = base.base, depth + 1
+    with pytest.raises(TypeError):
+        I.gnss[1] = np.zeros(3)
+    with pytest.raises(TypeError):
+        I.edges[0].cov[("rot", "rot")] = np.zeros((3, 3))
+    return arrs
+
+
+# NOT claim-bound (M3-F09 b): no array reachable from the Instance is writable, through .base too.
+def test_instance_arrays_have_no_writable_base():
+    for which in ("true", "zero"):
+        I = INST.instance(which)
+        _assert_deeply_read_only(I, which)
+        for e, ed in enumerate(I.edges):
+            for key, blk in ed.cov.items():
+                if isinstance(blk.base, np.ndarray):
+                    with pytest.raises(ValueError, match="read-only"):
+                        blk.base[...] = 0.0
+            C = ref(which)["edges"][e]["C"]                    # values intact (NavState order)
+            nav = {"rot": slice(0, 3), "pos": slice(3, 6), "vel": slice(6, 9)}
+            for (a, b), blk in ed.cov.items():
+                assert np.array_equal(blk, C[nav[a], nav[b]]), (which, e, a, b)
+    _assert_deeply_read_only(INST.build_instance(np.zeros(6)), "fresh")
+
+
+def _assert_same_data(A, B, tag):
+    a, b = list(_reachable_arrays(A)), list(_reachable_arrays(B))
+    assert [n for n, _ in a] == [n for n, _ in b], tag
+    for (n, x), (_, y) in zip(a, b):
+        assert x.dtype == y.dtype and np.array_equal(x, y), (tag, n)
+        assert not np.shares_memory(x, y), (tag, n)
+    for f in ("sigma_prior", "sigma_gnss"):
+        assert getattr(A, f) == getattr(B, f), (tag, f)
+    for ea, eb in zip(A.edges, B.edges):
+        assert (ea.i, ea.j, ea.Dt, ea.tau_R, ea.tau_v, ea.tau_p) == \
+               (eb.i, eb.j, eb.Dt, eb.tau_R, eb.tau_v, eb.tau_p), tag
+
+
+# NOT claim-bound (M3-F09 a): the Instance pickles / deep-copies / asdict()s again, and the
+# copies keep the read-only guarantee.
+def test_instance_pickle_and_deepcopy_round_trip():
+    import copy
+    import dataclasses
+    import pickle
+    for which in ("true", "zero"):
+        I = INST.instance(which)
+        P = pickle.loads(pickle.dumps(I))
+        D = copy.deepcopy(I)
+        for tag, X in (("pickle", P), ("deepcopy", D)):
+            assert type(X) is type(I) and X is not I
+            _assert_same_data(I, X, (which, tag))
+            _assert_deeply_read_only(X, (which, tag))
+            assert len(X.pims) == 2 and X.pims[0].deltaTij() == I.pims[0].deltaTij()
+            with pytest.raises(dataclasses.FrozenInstanceError):
+                X.bbar = np.zeros(6)
+            Q0, Q1 = CO.assemble_Q(CO.terms(I)), CO.assemble_Q(CO.terms(X))
+            assert np.array_equal(Q0, Q1), (which, tag)
+        ed = pickle.loads(pickle.dumps(I.edges[1]))           # an edge on its own
+        assert all(not a.flags.writeable for _, a in _reachable_arrays(ed))
+        assert np.array_equal(ed.W_vp, I.edges[1].W_vp)
+        A = dataclasses.asdict(I)
+        assert set(A) == {f.name for f in dataclasses.fields(I)}
+        assert np.array_equal(A["edges"][0]["J"], I.edges[0].J)
+        assert np.array_equal(A["gnss"][2], I.gnss[2])
+    assert INST.instance("true").bbar.flags.writeable is False      # the cache is untouched
+
+
+@pytest.mark.claim("M3-C24")
+def test_aniso_guards_raise_value_error():
+    """The aniso cost on the n = 124 layout, and Layout.rho_v / rho_p on it, raise ValueError
+    with their own messages (M3-F10; not asserts, which python -O strips)."""
+    with pytest.raises(ValueError, match="anisotropic cost variant needs the n = 136 layout"):
+        CO.terms(inst("true"), LF.BASE, "aniso")
+    for name in ("rho_v", "rho_p"):
+        for e in (0, 1):
+            with pytest.raises(ValueError, match=f"Layout.{name} exists only"):
+                getattr(LF.BASE, name)(e)
+            sl = getattr(LF.ANISO, name)(e)
+            assert sl.stop - sl.start == 3 and N_BASE <= sl.start < N_ANISO
+
+
+_UNDER_O = r'''
+import sys
+assert sys.flags.optimize >= 1
+try:
+    assert False
+except AssertionError:
+    sys.exit("asserts are live: not running under -O")
+from src.qcqp import cost as CO, lifting as LF, instance as INST
+out = []
+for name, call in (("terms", lambda: CO.terms(INST.instance("true"), LF.BASE, "aniso")),
+                   ("rho_v", lambda: LF.BASE.rho_v(0)), ("rho_p", lambda: LF.BASE.rho_p(1))):
+    try:
+        call()
+        out.append(name + ":NO-RAISE")
+    except ValueError as exc:
+        out.append(name + ":ValueError:" + str(exc))
+    except Exception as exc:
+        out.append(name + ":" + type(exc).__name__)
+print("|".join(out))
+'''
+
+
+@pytest.mark.claim("M3-C24")
+def test_aniso_guards_raise_under_python_O():
+    import subprocess
+    import sys
+    root = pathlib.Path(__file__).resolve().parents[1]
+    proc = subprocess.run([sys.executable, "-O", "-c", _UNDER_O], cwd=root, capture_output=True,
+                          text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    got = proc.stdout.strip().splitlines()[-1].split("|")
+    assert got[0].startswith("terms:ValueError:the anisotropic cost variant needs"), got
+    assert got[1].startswith("rho_v:ValueError:Layout.rho_v exists only"), got
+    assert got[2].startswith("rho_p:ValueError:Layout.rho_p exists only"), got
+
+
 @pytest.mark.claim("M3-C02")
 def test_c02_count_and_jside_velocity_lifting_is_needed():
     assert 15 * 3 + 6 * 3 + 24 * 2 + 1 == 112

@@ -73,8 +73,8 @@ def edge_residual_forms(inst, layout: Layout, e: int):
 def terms(inst, layout: Layout = BASE, variant: str = "iso", W_vp=None) -> list[Term]:
     """``W_vp`` (aniso only): a 6x6 weight on [rho_v; rho_p] used for every edge instead of
     the instance's preintMeasCov-derived one (claim M3-C34's synthetic weight)."""
-    if variant == "aniso":
-        assert layout.aniso, "anisotropic variant needs the n = 136 layout"
+    if variant == "aniso" and not layout.aniso:
+        raise ValueError(f"the anisotropic cost variant needs the n = 136 layout, got n = {layout.n}")
     out = []
     for e, edge in enumerate(inst.edges):
         rR, rv, rp = edge_residual_forms(inst, layout, e)
