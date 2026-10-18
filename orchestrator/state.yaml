@@ -1358,10 +1358,10 @@ milestones:
 - id: M3
   title: QCQP derivation
   branch: stage-b/m3-qcqp-derivation
-  status: implementing
+  status: verifying
   claims: []
   seed:
-    id: M3-S07
+    id: M3-S08
     caught: null
     published: false
   agent_runs:
@@ -1533,10 +1533,20 @@ milestones:
   - role: implementer
     agent_id: impl-M3-009
     started: '2026-10-18T04:29:02+00:00'
+    finished: '2026-10-18T04:45:37+00:00'
+    outcome: completed
+    note: 'test_qcqp 87 passed in 98 s; harness 107/107 (10 new). 2072/2072 output groups bitwise identical.
+      dv/dp pins 1e-13 -> 1e-15 / 1.5e-15 (dp marginal: mutant 1.55e-15) plus a non-0.5 Dt test; FrozenDict
+      now an immutable tuple of pairs with _ro freezing values (copies of views/writable arrays), full
+      mapping contract tested, standalone round trips stay FrozenDict and read-only; pickle protocols
+      0/1 documented as a GTSAM abort. p8-in-fz-view-nocopy re-killed by a protocol-5 round trip. Root
+      conftest pins BLAS threads. Commit b4de3c3.'
+  - role: verifier
+    agent_id: verify-M3-008
+    started: '2026-10-18T04:45:37+00:00'
     finished: null
     outcome: running
-    note: Kill F11 (dv/dp pins; FrozenDict semantics); fix F12 (FrozenDict internal mutability, standalone
-      round trip); conftest BLAS pin.
+    note: Eighth pass with a fresh planted claim; rules on F11/F12 (b4de3c3).
   blocking_findings:
   - id: M3-F01
     resolved: true
@@ -1662,6 +1672,7 @@ milestones:
       arrays; pickle protocols 0/1 SIGABRT inside GTSAM PIM pickling (not a src regression). M4: P2 is
       the only handedness guard (pass-6 ''P2 or RH/RS'' was wrong); J FD error ~1e-14 uses 1/9 of C24''s
       budget at bbar = 0 (2/3 with C34''s 1e6 weight) -- h = 0.3 or an LS refit gives ~2e-15.'
+    note: Remediated in b4de3c3 (with F12); awaiting verifier ruling.
 - id: M4
   title: SDP certification
   branch: stage-b/m4-sdp-certification
