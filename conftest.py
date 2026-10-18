@@ -3,8 +3,16 @@
 Dependency-free on purpose: the orchestrator must be able to measure progress without
 pulling in a reporting plugin that could itself be missing or misconfigured.
 """
-import json
-import pathlib
+import os
+
+# One BLAS / OpenMP thread per process, set BEFORE any test module imports numpy: on this loaded
+# machine OpenBLAS oversubscription (a thread pool per pytest process and per mutation-harness
+# subprocess, which inherit this environment) makes runs crawl or hang (M3 pass 7 remediation).
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ[_var] = "1"
+
+import json  # noqa: E402
+import pathlib  # noqa: E402
 
 _EVIDENCE = pathlib.Path(__file__).parent / ".orchestrator_evidence.json"
 _results: dict[str, dict] = {}

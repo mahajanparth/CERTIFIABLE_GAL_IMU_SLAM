@@ -75,6 +75,11 @@ K_NOBASE = T + "test_instance_arrays_have_no_writable_base"
 K_PICKLE = T + "test_instance_pickle_and_deepcopy_round_trip"
 K_ANISOGUARD = T + "test_aniso_guards_raise_value_error"
 K_UNDERO = T + "test_aniso_guards_raise_under_python_O"
+K_INCDT = T + "test_increment_uses_the_pim_duration[120]"
+K_INCDT2 = T + "test_increment_uses_the_pim_duration[295]"
+K_FDMAP = T + "test_frozendict_mapping_contract"
+K_FDRT = T + "test_frozendict_standalone_round_trip_and_no_mutable_attribute"
+K_PROTO = T + "test_instance_pickles_with_every_protocol_from_2"
 
 #: (id, module, old, new, what it models, killers)
 MUTANTS = [
@@ -301,6 +306,31 @@ MUTANTS = [
     ("p8-lf-rho_p-guard-assert", "lifting.py",
      '        if not self.aniso:\n            raise ValueError("Layout.rho_p exists only on the anisotropic layout (n = 136)")',
      "        assert self.aniso", "the pre-F10 rho_p assert", [K_ANISOGUARD, K_UNDERO]),
+    # -- verifier pass 7 survivors (M3-F11), re-expressed on the M3-F12 FrozenDict --
+    ("p7v-gb-inc-Dt-literal", "gtsam_boundary.py", "Dt = pim.deltaTij()", "Dt = 0.5",
+     "G built from the nominal 0.5 s instead of the PIM's deltaTij", [K_INSTANCE, K_INSTANCE_Z, K_INCDT, K_INCDT2]),
+    ("p7v-in-fd-reduce-dict", "instance.py", "        return (FrozenDict, (self._d,))", "        return (dict, (self._d,))",
+     "a FrozenDict copied / pickled on its own becomes a plain mutable dict", [K_FDRT]),
+    ("p7v-in-fd-init-args0", "instance.py", "for k, v in dict(*args, **kw).items())",
+     "for k, v in args[0].items())", "constructor reads its first argument only (dict() semantics lost)", [K_FDMAP]),
+    ("p7v-in-fd-len", "instance.py", "        return len(self._d)\n", "        return len(self._d) + 1\n",
+     "wrong len", [K_FDMAP, K_FDRT]),
+    ("p7v-in-fd-getitem-get", "instance.py", "return dict(self._d)[key]", "return dict(self._d).get(key)",
+     "a missing key returns None: no KeyError, and `0 in fd` is True", [K_FDMAP, K_FDRT]),
+    # -- the M3-F12 fixes --
+    ("p9-fd-d-list", "instance.py", 'object.__setattr__(self, "_d", tuple((k, _ro(v))',
+     'object.__setattr__(self, "_d", list((k, _ro(v))', "the pairs held in a mutable list (F12 a)",
+     [K_FDRT, K_PROTO]),
+    ("p9-fd-ro-off", "instance.py",
+     "if isinstance(v, np.ndarray) and (v.flags.writeable or v.base is not None):",
+     "if False:", "FrozenDict keeps writable values: a standalone round trip returns writable arrays (F12 b)",
+     [K_FDMAP, K_FDRT]),
+    ("p9-fd-ro-nowrite", "instance.py", "(v.flags.writeable or v.base is not None)", "(v.base is not None)",
+     "a writable owning value kept as is: the caller's array aliased and writable", [K_FDMAP, K_FDRT]),
+    ("p9-fd-ro-nobase", "instance.py", "(v.flags.writeable or v.base is not None)", "(v.flags.writeable)",
+     "a read-only view over the caller's writable base kept (aliased)", [K_FDMAP]),
+    ("p9-fd-ro-nocopy", "instance.py", "        v = v.copy()\n        v.setflags(write=False)\n",
+     "        v.setflags(write=False)\n", "the caller's array frozen in place and aliased", [K_FDMAP]),
 ]
 
 KILLERS = sorted({k for m in MUTANTS for k in m[5]})

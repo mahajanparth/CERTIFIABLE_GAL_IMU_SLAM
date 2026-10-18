@@ -26,30 +26,51 @@ from . import gtsam_boundary as GB
 class FrozenDict(Mapping):
     """A read-only mapping (item assignment raises TypeError) that, unlike
     ``types.MappingProxyType``, survives ``pickle`` / ``copy.deepcopy`` (verifier pass 6, M3-F09 a).
-    ``__reduce__`` is load-bearing: the default slot-state restore goes through ``__setattr__``,
-    which is blocked."""
+
+    Self-contained (verifier pass 7, M3-F11 / M3-F12):
+
+    * the content is held as an immutable tuple of ``(key, value)`` pairs, built from a private
+      ``dict(*args, **kw)`` copy, so no attribute exposes a mutable container and later writes to
+      the caller's dict do not reach it;
+    * every numpy value that is writable or a view is replaced by a read-only copy (the caller's
+      own array is never frozen in place); a read-only owning array is kept as is;
+    * ``__reduce__`` is load-bearing: the default slot-state restore goes through ``__setattr__``,
+      which is blocked, and the rebuild re-runs ``__init__``, so a FrozenDict copied / deep-copied /
+      unpickled on its own is again a FrozenDict with read-only arrays.
+
+    Lookup goes through a throw-away dict of the pairs (the mappings here have <= 9 entries), so
+    it has exact dict semantics: a missing key raises KeyError, hence ``in`` and ``get`` behave
+    as for a dict."""
     __slots__ = ("_d",)
 
     def __init__(self, *args, **kw):
-        object.__setattr__(self, "_d", dict(*args, **kw))
+        object.__setattr__(self, "_d", tuple((k, _ro(v)) for k, v in dict(*args, **kw).items()))
 
     def __getitem__(self, key):
-        return self._d[key]
+        return dict(self._d)[key]
 
     def __iter__(self):
-        return iter(self._d)
+        return (k for k, _ in self._d)
 
     def __len__(self):
         return len(self._d)
 
     def __repr__(self):
-        return f"FrozenDict({self._d!r})"
+        return f"FrozenDict({dict(self._d)!r})"
 
     def __setattr__(self, name, value):
         raise AttributeError("FrozenDict is read-only")
 
     def __reduce__(self):
         return (FrozenDict, (self._d,))
+
+
+def _ro(v):
+    """FrozenDict's value freeze: a read-only, base-free array that the caller does not own."""
+    if isinstance(v, np.ndarray) and (v.flags.writeable or v.base is not None):
+        v = v.copy()
+        v.setflags(write=False)
+    return v
 
 
 def _rebuild(cls, kw):
@@ -112,6 +133,9 @@ class Instance(_Rebuilt):
     sigma_prior: float
     sigma_gnss: float
     rw_precision: np.ndarray         #: 6x6, project order
+    #: GTSAM PIMs.  Pickle the Instance with protocol >= 2 only: protocols 0 and 1 abort the
+    #: interpreter (SIGABRT) inside GTSAM 4.3.0's pybind11 pickling of
+    #: PreintegratedImuMeasurementsG, as a bare PIM does (verifier pass 7, M3-F12 c).
     pims: tuple = field(repr=False, default=())
 
 

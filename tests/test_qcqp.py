@@ -424,8 +424,10 @@ def test_instance_matches_independent_gtsam_reference(which):
         assert (ed.i, ed.j) == (er["i"], er["j"])
         assert abs(ed.Dt - er["Dt"]) == 0.0
         assert np.abs(ed.dR - er["dR"]).max() <= 1e-13
-        assert np.abs(ed.dv - er["dv"]).max() <= 1e-13
-        assert np.abs(ed.dp - er["dp"]).max() <= 1e-13
+        # measured src vs deltaXij: dv 0, dp 4.4e-16 (2 ulp of |dp| ~ 1.2), every edge, both bbar;
+        # a Dt-level defect in G moves dv by 3.6e-15 (verifier pass 7, M3-F11 #1)
+        assert np.abs(ed.dv - er["dv"]).max() <= 1e-15
+        assert np.abs(ed.dp - er["dp"]).max() <= 1.5e-15
         assert np.abs(ed.J - er["J"]).max() <= 1e-12
         for k in ("tau_R", "tau_v", "tau_p"):
             assert abs(getattr(ed, k) / er[k] - 1) <= 1e-12, k
@@ -1043,6 +1045,15 @@ def test_instance_arrays_have_no_writable_base():
             for (a, b), blk in ed.cov.items():
                 assert np.array_equal(blk, C[nav[a], nav[b]]), (which, e, a, b)
     _assert_deeply_read_only(INST.build_instance(np.zeros(6)), "fresh")
+    # Pickle protocol 5 unpickles every array as a view of a fresh WRITABLE ndarray buffer; the
+    # rebuild must copy those views, not freeze them in place.  (Since M3-F12 the FrozenDict copies
+    # its own values, so this rebuild path is where a view-freezing defect is still observable.)
+    import pickle
+    X = pickle.loads(pickle.dumps(INST.instance("true"), protocol=5))
+    _assert_deeply_read_only(X, "pickle5")
+    ed = pickle.loads(pickle.dumps(INST.instance("zero").edges[0], protocol=5))
+    for name, a in _reachable_arrays(ed, "edge"):
+        assert not a.flags.writeable and a.base is None, name
 
 
 def _assert_same_data(A, B, tag):
@@ -1085,6 +1096,138 @@ def test_instance_pickle_and_deepcopy_round_trip():
         assert np.array_equal(A["edges"][0]["J"], I.edges[0].J)
         assert np.array_equal(A["gnss"][2], I.gnss[2])
     assert INST.instance("true").bbar.flags.writeable is False      # the cache is untouched
+
+
+# NOT claim-bound (M3-F11 #1): the boundary's G uses the PIM's own duration, checked on PIMs whose
+# deltaTij is NOT the fixture's 0.5 s, so that a literal Dt cannot coincide with it.
+@pytest.mark.parametrize("steps", [120, 295])
+def test_increment_uses_the_pim_duration(steps):
+    import src.qcqp.gtsam_boundary as GB
+    gyro = np.tile(LIT.OMEGA_BODY[1] + LIT.B_G, (steps, 1))
+    acc = np.tile(LIT.F_BODY[1] + LIT.B_A, (steps, 1))
+    bbar = LIT.BIAS_TRUE
+    pim = make_pim(gyro, acc, LIT.DT, bbar)
+    Dt = pim.deltaTij()
+    assert abs(Dt - 0.5) > 0.1
+    for b in (bbar, bbar + np.array([0.01, -0.02, 0.005, 0.1, 0.05, -0.08])):
+        U = np.asarray(GB.increment(pim, G_W, b).matrix())
+        Uref = U_of(pim, b)                                     # own Gmat(deltaTij) and predict
+        assert U[3, 4] == Dt and Uref[3, 4] == Dt                # the time block is the duration
+        assert np.array_equal(U[3:5, 0:3], np.zeros((2, 3))) and U[3, 3] == 1 and U[4, 4] == 1
+        assert np.abs(U[0:3, 0:3] - Uref[0:3, 0:3]).max() <= 1e-15
+        assert np.abs(U[0:3, 3:5] - Uref[0:3, 3:5]).max() <= 2e-15, np.abs(U[0:3, 3:5] - Uref[0:3, 3:5]).max()
+    nav = pim.deltaXij()                                         # at b = bbar: GTSAM's own increment
+    U = np.asarray(GB.increment(pim, G_W, bbar).matrix())
+    assert np.abs(U[0:3, 3] - np.asarray(nav.velocity())).max() <= 1e-15
+    assert np.abs(U[0:3, 4] - np.asarray(nav.position())).max() <= 1.5e-15
+
+
+# NOT claim-bound (M3-F11 #2-#5, M3-F12 a/b): FrozenDict's own mapping contract, standalone.
+def test_frozendict_mapping_contract():
+    FD = INST.FrozenDict
+    x, y = np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0])
+    u = {1: x, 2: y}
+    fd = FD(u)
+    assert len(fd) == 2 and list(fd) == [1, 2] and list(fd.keys()) == [1, 2]
+    with pytest.raises(KeyError):
+        fd[0]
+    assert 0 not in fd and 1 in fd and fd.get(0) is None and fd.get(7, "dflt") == "dflt"
+    assert np.array_equal(fd[1], x) and np.array_equal(fd.get(2), y)
+    # no aliasing of the caller's dict, nor of its arrays; the caller's arrays are not frozen
+    u[1] = y
+    u[5] = y
+    x[0] = -1.0
+    assert len(fd) == 2 and 5 not in fd and np.array_equal(fd[1], [1.0, 2.0, 3.0])
+    assert x.flags.writeable and not np.shares_memory(fd[1], x) and not np.shares_memory(fd[2], y)
+    # a read-only VIEW over a writable base is copied too
+    base = np.arange(6.0)
+    view = base[0:3]
+    view.setflags(write=False)
+    fv = FD({"v": view})
+    assert not np.shares_memory(fv["v"], base) and fv["v"].base is None
+    base[0] = 9.0
+    assert fv["v"][0] == 0.0
+    # a read-only owning array is kept (no needless copy on the Instance path)
+    ro = np.ones(3)
+    ro.setflags(write=False)
+    assert FD({0: ro})[0] is ro
+    # keyword construction, as dict()
+    fk = FD({1: 1.0}, b=2.0)
+    assert dict(fk.items()) == {1: 1.0, "b": 2.0} and len(fk) == 2
+    # read-only: item assignment, deletion, attribute assignment
+    with pytest.raises(TypeError):
+        fd[1] = y
+    with pytest.raises(TypeError):
+        del fd[1]
+    with pytest.raises(AttributeError):
+        fd._d = ()
+    assert all(not a.flags.writeable for a in fd.values())
+
+
+def _assert_no_mutable_container(fd, tag):
+    """Every attribute of a FrozenDict is an immutable container whose arrays are read-only and
+    base-free (M3-F12 a): writing through ``_d`` cannot change the mapping."""
+    assert not hasattr(fd, "__dict__"), tag
+    for name in type(fd).__slots__:
+        held = getattr(fd, name)
+        assert type(held) is tuple, (tag, name, type(held))
+        for pair in held:
+            assert type(pair) is tuple and len(pair) == 2, (tag, name)
+            v = pair[1]
+            if isinstance(v, np.ndarray):
+                assert not v.flags.writeable and v.base is None, (tag, name, pair[0])
+        with pytest.raises(TypeError):
+            held[0] = (1, np.zeros(3))
+
+
+# NOT claim-bound (M3-F11 #2, M3-F12 a/b): a FrozenDict copied, deep-copied or pickled ON ITS OWN
+# is again a FrozenDict with read-only, base-free arrays; nothing mutable is exposed.
+def test_frozendict_standalone_round_trip_and_no_mutable_attribute():
+    import copy
+    import dataclasses
+    import pickle
+    I = INST.instance("true")
+    gnss_before = [a.copy() for a in I.gnss.values()]
+    cost_before = CO.factored_cost(LF.z_of_state(LF.truth_state(I), I, LF.BASE), terms("true"))
+    own = INST.FrozenDict({1: np.array([1.0, 2.0]), ("a", "b"): np.eye(2)})
+    for tag, fd in (("gnss", I.gnss), ("cov", I.edges[0].cov), ("own", own)):
+        _assert_no_mutable_container(fd, tag)
+        n = len(fd)
+        copies = [("copy", copy.copy(fd)), ("deepcopy", copy.deepcopy(fd))]
+        copies += [(f"pickle{proto}", pickle.loads(pickle.dumps(fd, protocol=proto)))
+                   for proto in range(pickle.HIGHEST_PROTOCOL + 1)]
+        for ctag, X in copies:
+            assert type(X) is INST.FrozenDict, (tag, ctag, type(X))
+            assert len(X) == n and list(X) == list(fd), (tag, ctag)
+            for k in fd:
+                assert np.array_equal(X[k], fd[k]) and X[k].dtype == fd[k].dtype, (tag, ctag, k)
+                assert not X[k].flags.writeable and X[k].base is None, (tag, ctag, k)
+            k0 = next(iter(fd))
+            with pytest.raises(TypeError):
+                X[k0] = np.zeros(3)
+            _assert_no_mutable_container(X, (tag, ctag))
+    assert len(I.gnss) == 2 and len(I.edges[0].cov) == 9 and len(I.edges[1].cov) == 9
+    with pytest.raises(KeyError):
+        I.gnss[0]
+    assert 0 not in I.gnss and I.gnss.get(0) is None
+    A = dataclasses.asdict(I)
+    assert type(A["gnss"]) is INST.FrozenDict and type(A["edges"][0]["cov"]) is INST.FrozenDict
+    # the cached instance and its GNSS cost term are untouched by all of the above
+    assert all(np.array_equal(a, b) for a, b in zip(I.gnss.values(), gnss_before))
+    assert CO.factored_cost(LF.z_of_state(LF.truth_state(I), I, LF.BASE), terms("true")) == cost_before
+
+
+# NOT claim-bound (M3-F12 c): pickle protocols 2..HIGHEST round-trip the Instance.  Protocols 0 and
+# 1 abort the interpreter inside GTSAM 4.3.0's own PIM pickling (as a bare PIM does); not tested
+# in-process for that reason, and documented on Instance.pims.
+def test_instance_pickles_with_every_protocol_from_2():
+    import pickle
+    I = INST.instance("zero")
+    for proto in range(2, pickle.HIGHEST_PROTOCOL + 1):
+        X = pickle.loads(pickle.dumps(I, protocol=proto))
+        _assert_same_data(I, X, proto)
+        _assert_deeply_read_only(X, proto)
+        _assert_no_mutable_container(X.gnss, proto)
 
 
 @pytest.mark.claim("M3-C24")
