@@ -206,7 +206,7 @@ milestones:
 - id: M1
   title: Gal(3) mechanics
   branch: m1-gal3-mechanics
-  status: verifying
+  status: implementing
   claims: []
   seed:
     id: M1-S01
@@ -438,9 +438,19 @@ milestones:
   - role: verifier
     agent_id: verify-M1-012
     started: '2026-10-17T01:44:41+00:00'
+    finished: '2026-10-18T04:07:19+00:00'
+    outcome: completed
+    note: 'Caught planted M1-C65 (claimed inverse position off up to 104.1; true -R^T(p - t v) to 5e-14).
+      55/55 confirmed; F24-F29 FIXED for named survivors (F19 equivalent under amended rule 4 anyway).
+      140 edits: 101 killed, 27 equivalent, 12 non-equivalent (F30-F32). S08 was not a hang: with one
+      BLAS thread it is killed in 37 s. Commit 2aee5da.'
+  - role: implementer
+    agent_id: impl-M1-012-remediation
+    started: '2026-10-18T04:07:19+00:00'
     finished: null
     outcome: running
-    note: Eleventh pass with a fresh planted claim; rules on F24-F29 (0ebd5aa) under amended rule 4.
+    note: Close the gravity-fixture class with literal backstops on every g-dependent function (F30, F31);
+      exact lift time (F32); platform-robust c2 pin (F33); pin BLAS threads in conftest.
   blocking_findings:
   - id: M1-F01
     resolved: true
@@ -642,7 +652,7 @@ milestones:
     resolution: Ruled FIXED for the named survivors by verify-M1-011 (docs/verification/m1-gal3-mechanics_pass10.md);
       remainder is M1-F25..F27.
   - id: M1-F24
-    resolved: false
+    resolved: true
     summary: 'Rounding-band survivors (verify-M1-010): B1/B2 so3_exp and batch Rodrigues Taylor c + th^6/200000
       (1.22e-15 vs clean 9.99e-16, 1 ulp), B3/B3b so3_log small branch at n < 3e-8 / 5e-8 (4.8e-16 / 9.7e-16
       vs 3.5e-16), B4 kappa1 t4/720.00002 (5.8e-16 vs 1.1e-16). The pass-8 pins (1.3x/2.3x/4.5x clean)
@@ -660,38 +670,66 @@ milestones:
       2 ulp of the quantity''s magnitude (2*eps*max|value|)''. Under it B1, B2, B3 are equivalent; B3b,
       B4, F19 still exceed 2 ulp and were added to impl-M1-011-remediation. Remediated in 0ebd5aa; awaiting
       verifier ruling.'
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F25
-    resolved: false
+    resolved: true
     summary: '8 per-function g=G_DEFAULT defaults never exercised (gravity_lift, gravity_lift_uncorrected,
       gravity_element, gravity_generator, endpoint_uncorrected, endpoint_right_time_shift, forster_endpoint,
       integrate_truth): D_* mutants (default -> -G_DEFAULT) survive. Kill: call each once without g against
       the retyped literal, or pin each default via inspect.signature.'
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F26
-    resolved: false
+    resolved: true
     summary: 'Gravity magnitude never guarded: H_MAG2 fixture (|g| = 9.81 on every draw, same directions)
       passes every guard and masks GNORM_* (g -> 9.81 g/|g| in gravity_lift, integrate_truth, forster_endpoint;
       killed alone at C31 3.145). Kill: require max|g|/min|g| >= 2 on blocks of >= 3 draws, or a retyped
       literal g set with several magnitudes.'
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F27
-    resolved: false
+    resolved: true
     summary: 'Per-draw antipodal flips (H_ODD: g -> -g where g_x g_y g_z < 0) pass every guard and mask
       PFLIP_* (lift, truth; killed alone at C31 12.45). Kill: run each random-g check on both g and -g,
       or add a retyped literal octant set.'
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F28
-    resolved: false
+    resolved: true
     summary: 'c2 accuracy pinned only at 1e-11: F20 (c2 rewritten 1/t2 - theta s/(2 omc t2), rel change
       1.14e-12) survives. Kill: c2 rel error <= 2.0e-12 on a fixed dense grid on [0.05, 0.055] (clean
       1.68e-12, F20 2.43e-12).'
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
   - id: M1-F29
-    resolved: false
+    resolved: true
     summary: 'Branch at exactly theta = THETA_SMALL untested: F41 (theta <= THETA_SMALL) gives kappa1
       7.75e-13 off and Gamma1inv Gamma1 - I = 1.3e-14 at 0.05. Kill: kappa1 rel error <= 1e-14 at theta
       = 0.05 exactly. Advisory A4 still open: C52 domain text ''in every implementation'' (deriver edit).'
     note: Remediated in 0ebd5aa; awaiting verifier ruling.
+    resolution: Ruled FIXED by verify-M1-012 (docs/verification/m1-gal3-mechanics_pass11.md).
+  - id: M1-F30
+    resolved: false
+    summary: 'Gravity guards check |g| ratio, not range: H_LOW (|g| in (2, 11.5)) passes every guard and
+      both literal backstops (G_LITERAL_SET components only reach 9.0/8.2/11.0), masking CLIP_* (g clipped
+      to +-11.5) in gravity_lift, integrate_truth, forster_endpoint, gravity_lift_uncorrected, gravity_element,
+      gravity_generator (each killed alone). Orchestrator direction: close the CLASS, not the instance
+      -- every g-dependent function gets an exact retyped-literal backstop spanning magnitudes ~2..20,
+      all octants, and one large (~19) component per axis and sign.'
+  - id: M1-F31
+    resolved: false
+    summary: 'C34 (uncorrected form) has no literal-g backstop and no octant coverage (only the two 4-g
+      datasets): H_ODD_DS masks PFLIP_UNC; GNORM_UNC (|g| hard-coded 9.81) survives with the magnitude
+      guard off. Kill: literal free-fall check on C34 (expected (R_i, v_i + g Dt, p_i + v_i Dt + 3 g Dt^2/2,
+      Dt)), and literal checks for gravity_element and gravity_generator.'
+  - id: M1-F32
+    resolved: false
+    summary: 'lift_navstate time block pinned only at 1e-12 although C38/C40 say 0 exactly: S43b/S43d
+      (time 5e-13) survive. Kill: lift_navstate(N)[3,4] == 0.0 exactly. Advisory M1-F33: the F28 c2 pin
+      passes only because libm sin is correctly rounded on all 4000 grid points; with any 1-ulp sin clean
+      gives 3.05e-12..3.72e-12 > 2e-12. Make it platform-robust: evaluate the reference on the same double
+      sin values src uses (clean 9.92e-13, rewrite 1.68e-12, bound 1.3e-12). B3b mean check has ~1 ulp
+      of arctan2 headroom against a biased libm (advisory).'
 - id: M2
   title: Baselines
   branch: stage-b/m2-baselines
